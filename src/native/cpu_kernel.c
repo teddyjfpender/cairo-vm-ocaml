@@ -62,9 +62,10 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
 
 /* Returns the number of completed instructions. State contains pc, ap, fp,
    execution-segment high-water mark, trace length, and next felt-pool slot. */
-value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
-                    value trace, value pool, value nsegs_arg, value tracing_arg, value spans, value ped_cache) {
-  const intnat cache_size = Wosize_val(cache), nsegs = Long_val(nsegs_arg);
+static inline __attribute__((always_inline))
+value batch(value state, value cache, value segs, value flags, value highs,
+            value trace, value pool, intnat nsegs, const int tracing, value spans, value ped_cache) {
+  const intnat cache_size = Wosize_val(cache);
   if (Wosize_val(state) < 9 || nsegs < 2 || (uintnat)nsegs > Wosize_val(segs) ||
       (uintnat)nsegs > Wosize_val(flags) || (uintnat)nsegs > Wosize_val(highs))
     return Val_int(0);
@@ -73,60 +74,74 @@ value cvm_cpu_batch(value state, value cache, value segs, value flags, value hig
   if (Long_val(Field(highs, 1)) > high) high = Long_val(Field(highs, 1));
   intnat used = Long_val(Field(state, 4)), slot = Long_val(Field(state, 5));
   const intnat slots = caml_string_length(pool) / 32;
-  const int tracing = Bool_val(tracing_arg);
   value stack_ba = Field(segs, 1), program_ba = Field(segs, 0);
   intnat *stack = CELLS(stack_ba), *program = CELLS(program_ba), *entries = CELLS(trace);
   const intnat length = CAPACITY(stack_ba), program_length = CAPACITY(program_ba);
   const intnat trace_length = CAPACITY(trace);
   if (used < 0 || used > trace_length || slot < 0 || slot > slots ||
       high < 0 || high > length || ap < 0 || fp < 0) return Val_int(0);
-  int completed = 0;
-  for (; completed < 8192 && fits(pc, cache_size); ++completed) {
+  /* A step records at most three trace words. */
+  const intnat budget = tracing && trace_length - used < 3*8192 ? (trace_length - used) / 3 : 8192;
+  intnat completed = 0;
+  for (; completed < budget && fits(pc, cache_size); ++completed) {
     uint64_t d = Long_val(Field(cache, pc));
-    if (!d || d >> 61 || (tracing && used > trace_length - 3)) break;
+    if (!d || d >> 61) break;
     intnat next_pc = pc + 1, next_ap = ap, next_fp = fp;
-    /* Consecutive frame arguments are pushed one cell per Cairo step.
-       A write-once program and its decoded hint bits fix the span. Only
-       copy an initialized, disjoint range into fresh stack space. */
-    const uint64_t copy_mask = ~UINT64_C(0x0000ffff00000000);
-    const uint64_t copy_fp = UINT64_C(0x1e0a00007fff8000);
-    if ((d & copy_mask) == copy_fp && fits(pc, Wosize_val(spans)) &&
-        ap >= high && fp > 0 && fp <= length && stack[fp-1]) {
-      intnat from = fp + (int)((d >> 32) & 65535) - 32768;
-      int n = Long_val(Field(spans, pc));
-      if (!n) {
-        n = 1;
-        while (n < 24 && pc+n < cache_size &&
-               (uint64_t)Long_val(Field(cache, pc+n)) == d + ((uint64_t)n << 32)) ++n;
-        /* A not-yet-decoded successor may extend this span on a later visit. */
-        if (n > 1 || (pc+1 < cache_size && Long_val(Field(cache, pc+1)) != 0))
-          Field(spans, pc) = Val_int(n);
-      }
-      if (n > 1 && completed+n <= 8192 && from >= 0 && from+n <= ap &&
-          ap <= length-n && (!tracing || (pc+n <= 65536 && (ap+n) < (1<<23) &&
-          fp < (1<<23) && used+n <= trace_length))) {
-        int ready = 1;
-        for (int k=0; k<n; ++k) if (!stack[from+k] || stack[ap+k]) { ready=0; break; }
-        if (ready) {
-          memcpy(stack+ap, stack+from, (size_t)n * sizeof(*stack));
-          if (tracing) for (int k=0; k<n; ++k) {
-            entries[used++] = ((uint64_t)(pc+k)<<47) | ((ap+k)<<24) | (fp<<1) | 1;
+    /* decode_word admits only the Stwo shapes, so flags alone identify the
+       canonical RET and CALL rel, whose offsets are fixed. */
+    const unsigned shape = (d >> 48) & 0xfff;
+    /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
+       for the otherwise unused op0, which must still be assigned. */
+    if ((shape == 0xe0a || shape == 0xe0e || shape == 0xe06) && (uint16_t)d == 0x8000) {
+      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1]) break;
+      intnat v, from = (shape == 0xe0a ? fp : ap) + (int)((d>>32)&65535) - 32768;
+      /* Consecutive frame arguments are pushed one cell per Cairo step.
+         A write-once program and its decoded hint bits fix the span. Only
+         copy an initialized, disjoint range into fresh stack space. */
+      if (shape == 0xe0a && ap >= high && fits(pc, Wosize_val(spans))) {
+        int n = Long_val(Field(spans, pc));
+        if (!n) {
+          n = 1;
+          while (n < 24 && pc+n < cache_size &&
+                 (uint64_t)Long_val(Field(cache, pc+n)) == d + ((uint64_t)n << 32)) ++n;
+          /* A not-yet-decoded successor may extend this span on a later visit. */
+          if (n > 1 || (pc+1 < cache_size && Long_val(Field(cache, pc+1)) != 0))
+            Field(spans, pc) = Val_int(n);
+        }
+        if (n > 1 && completed+n <= budget && from >= 0 && from+n <= ap && ap <= length-n &&
+            (!tracing || (pc+n <= 65536 && (ap+n) < (1<<23) && fp < (1<<23)))) {
+          int ready = 1;
+          for (int k=0; k<n; ++k) if (!stack[from+k] || stack[ap+k]) { ready=0; break; }
+          if (ready) {
+            memcpy(stack+ap, stack+from, (size_t)n * sizeof(*stack));
+            if (tracing) for (int k=0; k<n; ++k) {
+              entries[used++] = ((uint64_t)(pc+k)<<47) | ((ap+k)<<24) | (fp<<1) | 1;
+            }
+            pc += n; ap += n; high = ap; completed += n-1;
+            continue;
           }
-          pc += n; ap += n; high = ap; completed += n-1;
-          continue;
         }
       }
+      if (shape == 0xe06) {
+        if (!fits(pc+1, program_length)) break;
+        v = program[pc+1]; next_pc = pc+2;
+      } else {
+        if (!fits(from, length) || !stack[from]) goto general;
+        v = stack[from];
+      }
+      if (!v || (stack[ap] && !same_value(pool, stack[ap], v))) break;
+      stack[ap] = v; next_ap = ap+1;
+      if (next_ap > high) high = next_ap;
+      goto complete;
     }
-    /* Canonical Cairo CALL and RET account for two frame accesses each.
-       These forms use fixed offsets verified by decode_word. */
-    if (d == UINT64_C(0x184b7fff7fff7ffe)) {
+    if (shape == 0x84b) {
       if (fp < 2 || fp > length) break;
       intnat frame = stack[fp-2], ret = stack[fp-1];
       if ((frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != 0) break;
       next_fp = offset(frame); next_pc = offset(ret);
       goto complete;
     }
-    if (d == UINT64_C(0x1784800180018000)) {
+    if (shape == 0x784) {
       if (!fits(ap, length-1) || !fits(pc+1, program_length)) break;
       intnat rel = program[pc+1], frame = ADDRESS(1,fp), ret = ADDRESS(0,pc+2);
       if ((rel & 3) != 1 || (stack[ap] && stack[ap] != frame) ||
@@ -135,26 +150,6 @@ value cvm_cpu_batch(value state, value cache, value segs, value flags, value hig
       if (!fits(next_pc, cache_size)) break;
       stack[ap] = frame; stack[ap+1] = ret;
       next_ap = next_fp = ap+2;
-      if (next_ap > high) high = next_ap;
-      goto complete;
-    }
-    /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
-       for the otherwise unused op0, which must still be assigned. */
-    const unsigned shape = d >> 48;
-    if ((shape == 0x1e0a || shape == 0x1e0e || shape == 0x1e06) &&
-        (uint32_t)d == UINT32_C(0x7fff8000)) {
-      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1]) break;
-      intnat v;
-      if (shape == 0x1e06) {
-        if (!fits(pc+1, program_length)) break;
-        v = program[pc+1]; next_pc = pc+2;
-      } else {
-        intnat from = (shape == 0x1e0a ? fp : ap) + (int)((d>>32)&65535) - 32768;
-        if (!fits(from, length) || !stack[from]) goto general;
-        v = stack[from];
-      }
-      if (!v || (stack[ap] && !same_value(pool, stack[ap], v))) break;
-      stack[ap] = v; next_ap = ap+1;
       if (next_ap > high) high = next_ap;
       goto complete;
     }
@@ -167,23 +162,7 @@ general:;
     if (!fits(dst_at, length) || !fits(op0_at, length)) break;
     intnat dst = stack[dst_at], a = stack[op0_at];
     int delta = (int)((d >> 32) & 65535) - 32768;
-    if (op == 1) {
-      /* CALL rel immediate. decode_word has already verified the frame slots. */
-      if (src != 1 || result != 0 || pc_update != 2 || !fits(pc+1, program_length)) break;
-      intnat rel = program[pc+1], ret = ADDRESS(0, pc+2), frame = ADDRESS(1, fp);
-      if ((rel & 3) != 1 || (a && a != ret) || (dst && dst != frame)) break;
-      next_pc = pc + (rel >> 2);
-      if (!fits(next_pc, cache_size)) break;
-      stack[dst_at] = frame; stack[op0_at] = ret;
-      next_fp = next_ap = ap + 2;
-      if (next_ap > high) high = next_ap;
-    } else if (op == 2) {
-      intnat ret_at = fp + delta;
-      if (ap_update || !a || (dst & 3) != 2 || !fits(ret_at, length)) break;
-      intnat ret = stack[ret_at];
-      if ((ret & 3) != 2 || (ret >> 42) != 0) break;
-      next_pc = offset(ret); next_fp = offset(dst);
-    } else if (op == 0) {
+    if (op == 0) {
       /* Relative conditional jump, unconditional jump and ap += immediate. */
       if (src != 1 || !dst || !a || !fits(pc+1, program_length)) break;
       intnat imm = program[pc+1];
@@ -312,6 +291,13 @@ complete:
   Field(state, 2) = Val_long(fp); Field(state, 3) = Val_long(high);
   Field(state, 4) = Val_long(used); Field(state, 5) = Val_long(slot);
   return Val_int(completed);
+}
+
+value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
+                    value trace, value pool, value nsegs, value tracing, value spans, value ped_cache) {
+  return Bool_val(tracing)
+    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, spans, ped_cache)
+    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, spans, ped_cache);
 }
 
 value cvm_cpu_batch_byte(value *argv, int argc) {
