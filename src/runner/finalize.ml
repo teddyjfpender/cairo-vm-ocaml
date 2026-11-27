@@ -57,7 +57,12 @@ let finalize_segments r =
     Hashtbl.replace r.public_offsets r.zero_seg []
   end
 
-let verify_secure_runner r =
+(* [deduced]: verify_auto_deductions has just checked this memory. It
+   deduced the first output of every instance with an output below the used
+   size (Bitwise and Pedersen check the same inputs natively, more strictly).
+   A deduction fails on its instance's inputs alone or caches all of the
+   instance's outputs, so only the last instance can still fail here. *)
+let verify_secure_runner r ~deduced =
   let vm = r.vm in
   List.iter
     (fun b ->
@@ -78,23 +83,25 @@ let verify_secure_runner r =
           let n = used_size vm b.base in
           if n > 0 then begin
             let cpi = cells_per_instance k and nin = n_input_cells k in
-            let filled = ref 0 in
-            for i = 0 to n - 1 do
-              if read vm b.base i <> Felt.empty then incr filled
-            done;
-            let ninst = ((n - 1) / cpi) + 1 in
-            if ninst > !filled / nin then fail "Missing memory cells for builtin %s" (bname k);
+            let ninst = div_ceil n cpi in
+            (* one pass: count the filled cells and find the first missing input *)
+            let filled = ref 0 and missing = ref (-1) in
             for i = 0 to ninst - 1 do
-              for j = 0 to nin - 1 do
-                if read vm b.base ((cpi * i) + j) = Felt.empty then
-                  fail "Missing memory cells for builtin %s at offset %d" (bname k) ((cpi * i) + j)
-              done;
-              for j = nin to cpi - 1 do
+              for j = 0 to cpi - 1 do
                 let off = (cpi * i) + j in
-                if read vm b.base off = Felt.empty && is_deducing vm.seg_flag.(b.base) then
-                  ignore (deduce_builtin vm b b.base off)
+                if read vm b.base off <> Felt.empty then incr filled
+                else if j < nin && !missing < 0 then missing := off
               done
-            done
+            done;
+            if ninst > !filled / nin then fail "Missing memory cells for builtin %s" (bname k);
+            if !missing >= 0 then fail "Missing memory cells for builtin %s at offset %d" (bname k) !missing;
+            (* cairo-vm deduces the missing outputs only for their errors *)
+            if is_deducing vm.seg_flag.(b.base) then
+              for i = (if deduced then max 0 (div_ceil (n - nin) cpi) else 0) to ninst - 1 do
+                for off = (cpi * i) + nin to (cpi * i) + cpi - 1 do
+                  if read vm b.base off = Felt.empty then ignore (deduce_builtin vm b b.base off)
+                done
+              done
           end)
     vm.builtins;
   if r.proof then begin
@@ -127,11 +134,12 @@ let end_run ?(fill_holes=false) r ~secure ~allow_missing =
     pad ();
     read_return_values r ~allow_missing;
     finalize_segments r;
-    if secure then verify_secure_runner r
+    (* the padding steps may have written builtin memory since the deductions *)
+    if secure then verify_secure_runner r ~deduced:false
   end
   else begin
     if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";
     verify_auto_deductions ~fill_holes r.vm;
     read_return_values r ~allow_missing;
-    if secure then verify_secure_runner r
+    if secure then verify_secure_runner r ~deduced:true
   end
