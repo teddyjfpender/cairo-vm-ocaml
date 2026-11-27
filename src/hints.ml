@@ -636,16 +636,27 @@ let () =
         if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
         v
       in
-      let rec matches i j = j >= es || (Felt.equal (cell (i + j)) elm.(j) && matches i (j + 1)) in
-      let rec go i =
-        if i >= total then set_val vm c "is_elm_in_set" Felt.zero
-        else if matches i 0 then begin
-          set_val vm c "index" (Felt.small (i / es));
-          set_val vm c "is_elm_in_set" Felt.one
-        end
-        else go (i + es)
-      in
-      go 0);
+      let n_cells = slen a in
+      let e0 = elm.(0) in
+      let big0 = Felt.is_big e0 in
+      let found = ref (-1) and i = ref 0 in
+      while !found < 0 && !i < total do
+        let o = soff + !i in
+        if o + es > n_cells then fail "Unknown memory cell %d:%d" sseg o;
+        let v = sget a o in
+        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
+        if v = e0 || (big0 && Felt.equal v e0) then begin
+          let j = ref 1 in
+          while !j < es && Felt.equal (cell (!i + !j)) elm.(!j) do incr j done;
+          if !j >= es then found := !i
+        end;
+        i := !i + es
+      done;
+      if !found < 0 then set_val vm c "is_elm_in_set" Felt.zero
+      else begin
+        set_val vm c "index" (Felt.small (!found / es));
+        set_val vm c "is_elm_in_set" Felt.one
+      end);
   reg H.h82 (fun c vm ->
       let a = felt_z vm c "a" in
       set_val vm c "low" (zf (Z.logand a (mask 64)));
