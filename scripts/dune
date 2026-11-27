@@ -6,3 +6,8 @@
 (executable
  (name native_flags)
  (modules native_flags))
+
+(executable
+ (name hint_coverage)
+ (modules hint_coverage)
+ (libraries cairovm yojson))

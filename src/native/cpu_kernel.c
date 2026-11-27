@@ -69,15 +69,19 @@ value batch(value state, value cache, value segs, value flags, value highs,
   intnat fp = Long_val(Field(state, 2)), high = Long_val(Field(state, 3));
   intnat used = Long_val(Field(state, 4)), slot = Long_val(Field(state, 5));
   const intnat slots = CAPACITY(pool) / 32;
-  value stack_ba = Field(segs, 1), program_ba = Field(segs, 0);
+  intnat code_seg = Wosize_val(state) >= 12 ? Long_val(Field(state, 10)) : 0;
+  intnat code_base = Wosize_val(state) >= 12 ? Long_val(Field(state, 11)) : 0;
+  if (!fits(code_seg, nsegs)) return Val_int(0);
+  value stack_ba = Field(segs, 1), program_ba = Field(segs, code_seg);
   intnat *stack = CELLS(stack_ba), *program = CELLS(program_ba), *entries = CELLS(trace);
   const intnat length = CAPACITY(stack_ba), program_length = CAPACITY(program_ba);
   const intnat trace_length = CAPACITY(trace);
   if (used < 0 || used > trace_length || slot < 0 || slot > slots ||
       high < 0 || high > length || ap < 0 || fp < 0) return Val_int(0);
+  intnat last_trace = used;
   int completed = 0;
-  for (; completed < 8192 && fits(pc, cache_size); ++completed) {
-    uint64_t d = Long_val(Field(cache, pc));
+  for (; completed < 8192 && fits(pc - code_base, cache_size); ++completed) {
+    uint64_t d = Long_val(Field(cache, pc - code_base));
     /* The caller runs the hints of the first pc only. */
     if (d >> 61 && completed) break;
     d &= ~(UINT64_C(1) << 61);
@@ -107,17 +111,17 @@ value batch(value state, value cache, value segs, value flags, value highs,
     if (shape == 0x84b) {
       if (fp < 2 || fp > length) break;
       intnat frame = stack[fp-2], ret = stack[fp-1];
-      if ((frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != 0) break;
+      if ((frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != code_seg) break;
       next_fp = offset(frame); next_pc = offset(ret);
       goto complete;
     }
     if (shape == 0x784) {
       if (!fits(ap, length-1) || !fits(pc+1, program_length)) break;
-      intnat rel = program[pc+1], frame = ADDRESS(1,fp), ret = ADDRESS(0,pc+2);
+      intnat rel = program[pc+1], frame = ADDRESS(1,fp), ret = ADDRESS(code_seg,pc+2);
       if ((rel & 3) != 1 || (stack[ap] && stack[ap] != frame) ||
           (stack[ap+1] && stack[ap+1] != ret)) break;
       next_pc = pc+(rel>>2);
-      if (!fits(next_pc, cache_size)) break;
+      if (!fits(next_pc - code_base, cache_size)) break;
       stack[ap] = frame; stack[ap+1] = ret;
       next_ap = next_fp = ap+2;
       if (next_ap > high) high = next_ap;
@@ -255,15 +259,17 @@ general:;
     }
 complete:
     if (tracing) {
-      if (pc < 65536 && (ap | fp) < (1 << 23))
+      last_trace = used;
+      if (code_seg == 0 && pc < 65536 && (ap | fp) < (1 << 23))
         entries[used++] = ((uint64_t)pc << 47) | (ap << 24) | (fp << 1) | 1;
-      else { entries[used++] = ADDRESS(0,pc); entries[used++] = ap; entries[used++] = fp; }
+      else { entries[used++] = ADDRESS(code_seg,pc); entries[used++] = ap; entries[used++] = fp; }
     }
     pc = next_pc; ap = next_ap; fp = next_fp;
   }
   Field(state, 0) = Val_long(pc); Field(state, 1) = Val_long(ap);
   Field(state, 2) = Val_long(fp); Field(state, 3) = Val_long(high);
   Field(state, 4) = Val_long(used); Field(state, 5) = Val_long(slot);
+  if (tracing && Wosize_val(state) > 9) Field(state, 9) = Val_long(last_trace);
   return Val_int(completed);
 }
 

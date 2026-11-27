@@ -1,0 +1,57 @@
+name: build and parity
+on: pull_request
+permissions:
+  contents: read
+env:
+  OXCAML_SWITCH: 5.2.0+ox
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/oxcaml
+      - name: Build and test
+        run: |
+          eval "$(opam env --switch "$OXCAML_SWITCH")"
+          dune build --profile release
+          dune runtest --profile release
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux'
+        with:
+          repository: starkware-libs/cairo-vm
+          ref: v4.0.0
+          path: upstream
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.10'
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Linux'
+        with:
+          workspaces: upstream
+      - name: Build reference and compile corpus
+        if: runner.os == 'Linux'
+        working-directory: upstream
+        run: |
+          cargo build --locked --release -p cairo-vm-cli
+          pip install -r requirements.txt
+          make create-proof-programs-symlinks
+          for source in cairo_programs/*.cairo cairo_programs/proof_programs/*.cairo cairo_programs/stwo_exclusive_programs/*.cairo; do
+            make "${source%.cairo}.json"
+          done
+      - name: Compare execution, proof artifacts and PIEs
+        if: runner.os == 'Linux'
+        run: |
+          rust=upstream/target/release/cairo-vm-cli
+          vm=_build/default/bin/main.exe
+          programs=upstream/cairo_programs
+          for mode in '' --pie --from_pie; do
+            python test/parity.py "$rust" "$vm" "$programs" -j 1 $mode
+          done
+          python test/parity.py "$rust" "$vm" "$programs/proof_programs" --proof -j 1
+          python test/parity.py "$rust" "$vm" "$programs/stwo_exclusive_programs" --layout stwo_no_ecop -j 1

@@ -6,3 +6,6 @@ val compress : int array -> int array -> int -> int -> int -> int -> int array
     [f0, f1] (all 32-bit words). *)
 
 val register : Hintrt.registrar -> unit
+
+val modified_iv : unit -> int array
+(** Fresh initial state for BLAKE2s-256 with an empty key. *)

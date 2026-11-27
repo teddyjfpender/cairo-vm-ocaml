@@ -3,6 +3,30 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Starknet OS PIE replay on Apple M4 Max
+
+Rust cairo-vm v4.0.0 and the OCaml candidate ran sequentially with secure
+execution, the `all_cairo` layout and `--print_output`. Each timing is the
+median of three wall-clock runs, alternating order within each pair. Full
+runs also wrote a trace, relocated memory and a new PIE. All 12 full pairs
+matched on stdout, trace, memory and every uncompressed archive member.
+The four inputs replay previously executed OS blocks from their recorded
+memory. Direct OS execution with transaction and state inputs is a separate
+workload. [Raw pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/os-pie-m4-max-rust4.csv)
+
+| Input | Rust exec (s) | OCaml exec (s) | Speedup | Rust full (s) | OCaml full (s) | Speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SN_PIE_1.zip | 6.145 | 0.520 | 11.83× | 15.422 | 1.122 | 13.75× |
+| SN_PIE_2 | 2.952 | 0.278 | 10.61× | 7.714 | 0.573 | 13.46× |
+| SN_PIE_3 | 5.515 | 0.507 | 10.88× | 14.746 | 1.087 | 13.57× |
+| SN_PIE_4 | 5.635 | 0.460 | 12.24× | 14.315 | 1.096 | 13.06× |
+
+The Rust v3.2.0 comparison used its `mod_builtin` feature to support the OS layout.
+All twelve full replay pairs matched on stdout, trace, memory and every PIE member.
+Median paired speedups were 11.50×, 13.39×, 12.60× and 12.73× for SN_PIE_1 through
+SN_PIE_4. The slowest individual pair was 8.80×.
+[Raw v3.2.0 pairs](../bench/results/os-pie-m4-max-rust32.csv)
+
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at 2b07b77)
 
 After wave 3: a word-at-a-time program loader (load time about halved), cheaper end-of-run

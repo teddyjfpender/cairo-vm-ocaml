@@ -38,6 +38,8 @@ type t = {
   layout : Layout.t option;  (** proof mode only *)
   end_pc : int;  (** proof mode: offset of [__end__] in segment 0 *)
   initial_fp : int;
+  mutable output_pages : (int * (int * int)) list;
+  mutable output_attributes : (string * int list) list;
   mutable exec_public : int list;  (** reversed offsets of public execution memory *)
   mutable eff_sizes : int array option;  (** segment used sizes, fixed at end of run *)
   seg_sizes : (int, int) Hashtbl.t;  (** finalized segment sizes *)
@@ -50,7 +52,9 @@ type t = {
 val entry_pc : config -> Program.t -> int
 (** The pc of [config.entrypoint]. *)
 
-val initialize : ?layout_def:Layout.t -> ?proof:bool -> config -> Program.t -> t
+val initialize :
+  ?compile_hint:(Program.t -> Hintrt.scopes -> Program.hint -> Vm.vm -> unit) ->
+  ?layout_def:Layout.t -> ?proof:bool -> config -> Program.t -> t
 (** Validate the program's builtins against the layout, load the program and
     build the initial stack; [layout_def] overrides the proof-mode layout. *)
 

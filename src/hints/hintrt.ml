@@ -35,6 +35,10 @@ type dict_tracker = {
 }
 
 type dyn =
+  | Class_segment of Casm_segments.t
+  | Class_segments of Casm_segments.t list
+  | Patricia_node of Patricia_tree.update
+  | Patricia_descents of Patricia_tree.descents
   | Int of Z.t
   | Field of Secp_field.t
   | Value of Felt.t

@@ -52,6 +52,10 @@ let trace_entry t i =
     let pc = Felt.unsafe_of_int w in
     (i + 3, Felt.rseg pc, Felt.roff pc, raw_get t (i + 1), raw_get t (i + 2))
 
+external trace_access :
+  seg -> int -> int array -> seg -> Bytes.t array -> int array -> int array -> unit
+  = "cvm_trace_access_byte" "cvm_trace_access" [@@noalloc]
+
 let update_accessed r =
   let vm = r.vm and acc = r.acc in
   if acc.cursor = 0 then
@@ -59,41 +63,54 @@ let update_accessed r =
       mark acc 0 i
     done;
   let t = vm.trace in
-  let i = ref acc.cursor in
-  while !i < vm.tlen do
-    let next, pc_seg, pc, ap, fp = trace_entry t !i in
-    i := next;
-    let d = decoded vm pc_seg pc in
-    let f0 = d land 0xffff and f1 = (d lsr 16) land 0xffff and f2 = (d lsr 32) land 0xffff in
-    let lo = min f0 (min f1 f2) and hi = max f0 (max f1 f2) in
-    if lo < acc.rc_lo then acc.rc_lo <- lo;
-    if hi > acc.rc_hi then acc.rc_hi <- hi;
-    let off0 = f0 - 0x8000 and off1 = f1 - 0x8000 and off2 = f2 - 0x8000 in
-    let dst_addr = (if d land (1 lsl 48) <> 0 then fp else ap) + off0 in
-    let op0_addr = (if d land (1 lsl 49) <> 0 then fp else ap) + off1 in
-    mark acc 1 dst_addr;
-    mark acc 1 op0_addr;
-    (match (d lsr 50) land 3 with
-    | 0 ->
-        let op0 = read vm 1 op0_addr in
-        if Felt.is_reloc op0 then mark acc (Felt.rseg op0) (Felt.roff op0 + off2)
-    | 1 -> mark acc pc_seg (pc + 1)
-    | 2 -> mark acc 1 (fp + off2)
-    | _ -> mark acc 1 (ap + off2));
-    mark acc pc_seg pc;
-    (* Blake2s / BlakeFinalize write their 8 output words as accessed *)
-    let ext = (d lsr ext_shift) land 3 in
-    if ext = 1 || ext = 2 then begin
-      let out = read vm 1 ap in
-      if Felt.is_reloc out then
-        for k = 0 to 7 do
-          mark acc (Felt.rseg out) (Felt.roff out + k)
-        done
+  let state = [|acc.cursor; acc.rc_lo; acc.rc_hi|] in
+  while state.(0) < vm.tlen do
+    trace_access t vm.tlen vm.icache vm.segs.(1) acc.bits acc.count state;
+    if state.(0) < vm.tlen then begin
+      let next, pc_seg, pc, ap, fp = trace_entry t state.(0) in
+      state.(0) <- next;
+      let d = decoded vm pc_seg pc in
+      let f0 = d land 0xffff and f1 = (d lsr 16) land 0xffff and f2 = (d lsr 32) land 0xffff in
+      let lo = min f0 (min f1 f2) and hi = max f0 (max f1 f2) in
+      if lo < state.(1) then state.(1) <- lo;
+      if hi > state.(2) then state.(2) <- hi;
+      let off0 = f0 - 0x8000 and off1 = f1 - 0x8000 and off2 = f2 - 0x8000 in
+      let dst_addr = (if d land (1 lsl 48) <> 0 then fp else ap) + off0 in
+      let op0_addr = (if d land (1 lsl 49) <> 0 then fp else ap) + off1 in
+      mark acc 1 dst_addr;
+      mark acc 1 op0_addr;
+      (match (d lsr 50) land 3 with
+      | 0 ->
+          let op0 = read vm 1 op0_addr in
+          if Felt.is_reloc op0 then mark acc (Felt.rseg op0) (Felt.roff op0 + off2)
+      | 1 -> mark acc pc_seg (pc + 1)
+      | 2 -> mark acc 1 (fp + off2)
+      | _ -> mark acc 1 (ap + off2));
+      mark acc pc_seg pc;
+      (* Blake2s / BlakeFinalize write their 8 output words as accessed *)
+      let ext = (d lsr ext_shift) land 3 in
+      if ext = 1 || ext = 2 then begin
+        let out = read vm 1 ap in
+        if Felt.is_reloc out then
+          for k = 0 to 7 do
+            mark acc (Felt.rseg out) (Felt.roff out + k)
+          done
+      end
     end
   done;
-  acc.cursor <- !i;
+  acc.rc_lo <- state.(1);
+  acc.rc_hi <- state.(2);
+  acc.cursor <- state.(0);
   List.iter (fun (sg, o) -> mark acc sg o) !Builtins_ext.accessed_log;
   Builtins_ext.accessed_log := []
+
+let range_accessed r ptr length =
+  update_accessed r;
+  let seg = Felt.rseg ptr and off = Felt.roff ptr in
+  if seg < 0 || seg >= Array.length r.acc.bits then false else
+  let bits = r.acc.bits.(seg) in
+  off < Bytes.length bits && (match Bytes.index_from_opt bits off '\001' with
+    | Some i -> i - off < length | None -> false)
 
 let accessed_count r seg =
   update_accessed r;
@@ -104,6 +121,30 @@ let accessed_count r seg =
 external verified_bitwise : Felt.pool -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
 
 external verified_pedersen : Felt.pool -> seg -> int -> Felt.t array -> bool = "cvm_verify_pedersen" [@@noalloc]
+
+(* PIE memory is write-once. A verified, fully populated input triple
+   therefore remains valid through execution. Snapshot the segment words
+   so the worker never races stack writes, segment growth, or deduction.
+   Committed big felt slots are immutable for the lifetime of the run. *)
+external start_pedersen : Felt.pool -> Segment.seg -> nativeint = "cvm_start_pedersen"
+external join_pedersen : nativeint -> Segment.seg -> bool = "cvm_join_pedersen" [@@noalloc]
+
+let with_preverified_pedersen vm execute =
+  match List.find_opt (fun b -> b.kind = Pedersen) vm.builtins with
+  | Some b when used_size vm b.base >= 3 * 2048 ->
+      let n = used_size vm b.base in
+      let snapshot = Segment.snapshot vm.segs.(b.base) n in
+      let worker = start_pedersen Felt.pool snapshot in
+      let result = try execute () with ex -> ignore (join_pedersen worker snapshot); raise ex in
+      if join_pedersen worker snapshot then begin
+        for i = 0 to n / 3 - 1 do
+          let off = 3 * i in
+          let a = sget snapshot off and c = sget snapshot (off + 1) and out = sget snapshot (off + 2) in
+          if Felt.is_felt a && Felt.is_felt c && Felt.is_felt out then cache_set b (off + 2) out
+        done
+      end;
+      result
+  | _ -> execute ()
 
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
@@ -281,7 +322,8 @@ let memory_holes r =
   for seg = 0 to r.vm.nsegs - 1 do
     if not (is_builtin_seg r seg) then begin
       let a =
-        if seg = r.zero_seg && not (Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
+        (* only proof mode finalizes the zero segment; a run from a PIE sizes it without finalizing *)
+        if seg = r.zero_seg && not (r.proof && Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
       in
       if a > 0 then begin
         let size = segment_size r seg in

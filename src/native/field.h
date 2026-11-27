@@ -132,9 +132,9 @@ static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
 
 #define SLOT(pool, i) ((u64 *)Caml_ba_data_val(pool) + ((size_t)(i) << 2))
 
-static inline void load(value pool, intnat code, u64 out[4]) {
+static inline void load_limbs(const u64 *pool, intnat code, u64 out[4]) {
   if ((code & 3) == 3) {
-    memcpy(out, SLOT(pool, code >> 2), 32);
+    memcpy(out, pool + 4 * (code >> 2), 32);
   } else {
     i64 v = (i64)code >> 2;
     if (v >= 0) {
@@ -144,6 +144,10 @@ static inline void load(value pool, intnat code, u64 out[4]) {
       sub4(out, P, n);
     }
   }
+}
+
+static inline void load(value pool, intnat code, u64 out[4]) {
+  load_limbs(Caml_ba_data_val(pool), code, out);
 }
 
 /* Return the canonical code for x, storing it at [dst] when it is big. */
@@ -174,8 +178,17 @@ static inline void fmul_word(u64 r[4], const u64 x[4], i64 word) {
     product = (u128)x[i] * magnitude + (u64)(product >> 64);
     r[i] = (u64)product;
   }
-  u64 quotient = (u64)(product / P[3]);
-  r[3] = (u64)(product - (u128)quotient * P[3]);
+  /* P[3] = 2^59 + 17. Fold the top bits twice to obtain a
+     remainder in [0, 2^59 + 17*33], then correct by at most one.
+     This avoids a general 128-bit division on the hot word path. */
+  const u64 mask = (UINT64_C(1) << 59) - 1;
+  u64 quotient = (u64)(product >> 59);
+  __int128 rem = (i64)((u64)product & mask) - (__int128)17 * quotient;
+  i64 adjustment = (i64)(rem >> 59);
+  quotient += adjustment;
+  u64 reduced = ((u64)rem & mask) - 17 * adjustment;
+  if (reduced >= P[3]) { reduced -= P[3]; ++quotient; }
+  r[3] = reduced;
   u64 correction[4] = {quotient, 0, 0, 0};
   fsub(r, r, correction);
   if (word < 0 && !is_zero(r)) sub4(r, P, r);

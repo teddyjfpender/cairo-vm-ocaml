@@ -29,3 +29,6 @@ val raw_set : seg -> int -> int -> unit
 
 val seg_grow : seg -> int -> seg
 (** A copy of the segment with the new (larger) capacity. *)
+
+val snapshot : seg -> int -> seg
+(** Copy the first [n] words into independent storage. *)

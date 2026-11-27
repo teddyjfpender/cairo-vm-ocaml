@@ -51,6 +51,8 @@ type t = {
   layout : Layout.t option; (* proof mode only *)
   end_pc : int; (* proof mode: offset of __end__ in segment 0 *)
   initial_fp : int;
+  mutable output_pages : (int * (int * int)) list;
+  mutable output_attributes : (string * int list) list;
   mutable exec_public : int list; (* reversed offsets of public execution memory *)
   mutable eff_sizes : int array option; (* segment used sizes, fixed at end_run *)
   seg_sizes : (int, int) Hashtbl.t; (* finalized segment sizes *)
@@ -66,13 +68,13 @@ let rec is_subsequence xs ys =
   | _, [] -> false
   | x :: xs', y :: ys' -> if x = y then is_subsequence xs' ys' else is_subsequence xs ys'
 
-let compile_hints prog =
+let compile_hints compile prog =
   let scopes = Hintrt.new_scopes () in
   let hints = Array.make (Array.length prog.Program.data) [||] in
   List.iter
     (fun (pc, hs) ->
       if pc < Array.length hints then
-        hints.(pc) <- Array.of_list (List.map (fun h -> Hints.compile prog scopes h) hs))
+        hints.(pc) <- Array.of_list (List.map (fun h -> compile prog scopes h) hs))
     prog.hints;
   (scopes, hints)
 
@@ -92,7 +94,7 @@ let add_zero_segment r =
       let seg = Builtins_ext.add_zero_segment r.vm mods in
       { r with zero_seg = seg; zero_size = used_size r.vm seg }
 
-let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : t =
+let initialize ?(compile_hint = Hints.compile) ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : t =
   let prog_builtins =
     List.map
       (fun n -> match bkind_of_name n with Some k -> k | None -> fail "Unknown builtin %s" n)
@@ -149,7 +151,7 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
   let base =
     {
       vm; prog; end_seg = -1; hints = [||]; prog_builtins; scopes = Hintrt.new_scopes (); proof; layout = layout_def;
-      end_pc = -1; initial_fp = 0; exec_public = []; eff_sizes = None; seg_sizes = Hashtbl.create 16;
+      end_pc = -1; initial_fp = 0; exec_public = []; output_pages = []; output_attributes = []; eff_sizes = None; seg_sizes = Hashtbl.create 16;
       public_offsets = Hashtbl.create 16;
       acc = { bits = [||]; count = [||]; cursor = 0; rc_lo = max_int; rc_hi = min_int };
       zero_seg = -1; zero_size = 0;
@@ -184,7 +186,7 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
       { base with end_seg; initial_fp = n } |> add_zero_segment
     end
   in
-  let scopes, hints = compile_hints prog in
+  let scopes, hints = compile_hints compile_hint prog in
   { base with scopes; hints }
 
 (* ---- running ---- *)

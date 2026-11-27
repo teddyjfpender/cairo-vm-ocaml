@@ -1,0 +1,105 @@
+(* Cairo 0 hashes commit to CPython's json.dumps layout, including decimal
+   hint-PC ordering and the attributes omitted by older compiler releases. *)
+open Errors
+open Hintrt
+module U = Yojson.Safe.Util
+
+let python_string buf s =
+  Buffer.add_char buf '"';
+  let escape u = Printf.bprintf buf "\\u%04x" u in
+  let rec loop i =
+    if i < String.length s then begin
+      let scalar = String.get_utf_8_uchar s i in
+      if not (Uchar.utf_decode_is_valid scalar) then fail "Invalid UTF-8 in class definition";
+      let u = Uchar.to_int (Uchar.utf_decode_uchar scalar) in
+      (match u with
+       | 34 -> Buffer.add_string buf "\\\"" | 92 -> Buffer.add_string buf "\\\\"
+       | 8 -> Buffer.add_string buf "\\b" | 9 -> Buffer.add_string buf "\\t"
+       | 10 -> Buffer.add_string buf "\\n" | 12 -> Buffer.add_string buf "\\f"
+       | 13 -> Buffer.add_string buf "\\r"
+       | u when u < 32 -> escape u
+       | u when u < 128 -> Buffer.add_char buf (Char.chr u)
+       | u when u <= 65535 -> escape u
+       | u -> let v = u - 65536 in escape (0xd800 + (v lsr 10)); escape (0xdc00 + (v land 1023)));
+      loop (i + Uchar.utf_decode_length scalar)
+    end in
+  loop 0;
+  Buffer.add_char buf '"'
+
+let hinted_hash cls =
+  let p = U.member "program" cls in
+  let attributes = match U.member "attributes" p with
+    | `Null | `List [] -> None
+    | `List attrs -> Some (`List (List.map (fun a ->
+        `Assoc (List.filter (function "accessible_scopes", `List [] | "flow_tracking_data", `Null -> false
+                                      | _ -> true) (U.to_assoc a))) attrs))
+    | _ -> fail "Invalid deprecated class attributes" in
+  let fields = List.filter (fun (k,v) ->
+      k <> "attributes" && k <> "debug_info" && (k <> "compiler_version" || v <> `Null)) (U.to_assoc p) in
+  let program = ("debug_info", `Null) :: fields in
+  let program = match attributes with Some a -> ("attributes",a) :: program | None -> program in
+  let buf = Buffer.create 4096 in
+  let seq f xs = List.iteri (fun i x -> if i > 0 then Buffer.add_string buf ", "; f x) xs in
+  let rec write path = function
+    | `Assoc fields ->
+        Buffer.add_char buf '{';
+        let order (a,_) (b,_) = if path = ["hints";"program"] then compare (int_of_string a) (int_of_string b)
+          else String.compare a b in
+        seq (fun (k,v) -> python_string buf k; Buffer.add_string buf ": "; write (k :: path) v) (List.sort order fields);
+        Buffer.add_char buf '}'
+    | `List l -> Buffer.add_char buf '['; seq (write ("" :: path)) l; Buffer.add_char buf ']'
+    | `String s -> python_string buf s
+    | v -> Buffer.add_string buf (Yojson.Safe.to_string v) in
+  write [] (`Assoc ["abi",U.member "abi" cls; "program",`Assoc program]);
+  let raw = Buffer.contents buf in
+  let raw =
+    if U.member "compiler_version" p <> `Null then raw else
+    let pairs = Str.regexp "\\([^: \t,]+\\):[ \t]*\\([^, \t)]+\\)" in
+    let fix s = Str.global_replace pairs "\\1 : \\2" s in
+    let fix_field s =
+      let field = Str.matched_group 1 s and v = Str.matched_group 2 s in
+      let v = if field = "cairo_type" && String.starts_with ~prefix:"(" v then fix v
+        else if field = "value" then Str.global_substitute (Str.regexp "([^()]+)") (fun s -> fix (Str.matched_string s)) v
+        else v in
+      "\"" ^ field ^ "\": \"" ^ v ^ "\"" in
+    Str.global_substitute (Str.regexp "\"\\(cairo_type\\|value\\)\": \"\\([^\"]*\\)\"") fix_field raw in
+  let digest = Keccak.keccak256 (Bytes.of_string raw) in
+  Felt.of_z (Z.extract (z_of_be (Bytes.unsafe_to_string digest)) 0 250)
+
+let register ~classes ~felt ~compile reg =
+  let remaining = ref [] and loaded = ref None in
+  reg "LoadDeprecatedClassFacts" (fun c vm ->
+      remaining := List.sort (fun (a,_) (b,_) -> Z.compare (Z.of_string a) (Z.of_string b)) classes;
+      set_val vm c "n_compiled_class_facts" (Felt.small (List.length classes));
+      enter c.scopes []);
+  reg "LoadDeprecatedClassInner" (fun c vm ->
+      match !remaining with
+      | [] -> fail "End of deprecated class iterator"
+      | (hash,j) :: rest ->
+          remaining := rest;
+          let base = Felt.reloc (Vm.add_segment vm) 0 in
+          let entries kind =
+            let ep = U.member kind (U.member "entry_points_by_type" j) in
+            let rows = if ep = `Null then [] else U.to_list ep in
+            let values = List.concat_map (fun row -> [felt (U.member "selector" row); felt (U.member "offset" row)]) rows in
+            [Felt.small (List.length rows); gen_arg vm values] in
+          let external_ = entries "EXTERNAL" in
+          let l1 = entries "L1_HANDLER" in
+          let ctor = entries "CONSTRUCTOR" in
+          let p = Program.load_json (U.member "program" j) in
+          let names = gen_arg vm (List.map Os_block_hash.ascii p.builtins) in
+          let code = gen_arg vm (Array.to_list (Array.map Felt.of_z p.data)) in
+          write_arg vm base ([Felt.of_z (const_z c "DEPRECATED_COMPILED_CLASS_VERSION")] @ external_ @ l1 @ ctor
+            @ [Felt.small (List.length p.builtins); names; hinted_hash j; Felt.small (Array.length p.data); code]);
+          loaded := Some (felt (`String hash), p, code);
+          set_val vm c "compiled_class" base);
+  reg "LoadDeprecatedClass" (fun c vm ->
+      match !loaded with
+      | None -> fail "Missing deprecated class"
+      | Some (hash, p, code) ->
+          if not (Felt.equal hash (get_member vm c "compiled_class_fact" ["hash"])) then
+            fail "Inconsistent deprecated class hash";
+          List.iter (fun (pc,hints) ->
+              Cpu.register_runtime_hints vm ~segment:(Felt.rseg code) ~pc
+                (Array.of_list (List.map (compile p c.scopes) hints))) p.hints;
+          loaded := None)

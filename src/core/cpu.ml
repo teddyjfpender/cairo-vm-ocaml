@@ -14,8 +14,23 @@ let decode_at vm seg off =
   try decode_word z
   with Generic_instruction -> fail "Unsupported generic instruction at pc %d:%d: 0x%s" seg off (Z.format "%x" z)
 
+(* Dynamic contract bytecode can occupy a small region far into a segment.
+   Allocate decoded words only in pages actually executed. *)
+let contract_page vm =
+  let base = vm.pc land lnot 1023 in
+  if vm.code_seg <> vm.pc_seg || vm.code_base <> base then begin
+    let key = vm.pc_seg, base in
+    let page = match Hashtbl.find_opt vm.code_pages key with
+      | Some page -> page
+      | None -> let page = Array.make 1024 0 in Hashtbl.add vm.code_pages key page; page
+    in
+    vm.code_seg <- vm.pc_seg; vm.code_base <- base; vm.code_page <- page
+  end;
+  vm.code_page
+
 let[@inline never] fetch_slow vm =
   if vm.pc_seg = 0 then begin
+    let d = decode_at vm 0 vm.pc in
     if vm.pc >= Array.length vm.icache then begin
       let n = ref (max 64 (Array.length vm.icache)) in
       while !n <= vm.pc do
@@ -25,11 +40,19 @@ let[@inline never] fetch_slow vm =
       Array.blit vm.icache 0 na 0 (Array.length vm.icache);
       vm.icache <- na
     end;
-    let d = decode_at vm 0 vm.pc in
     if d land ext_mask = 0 then vm.icache.(vm.pc) <- d;
     d
   end
-  else decode_at vm vm.pc_seg vm.pc
+  else if vm.pc_seg < 0 || vm.relocating then decode_at vm vm.pc_seg vm.pc
+  else begin
+    let page = contract_page vm and index = vm.pc land 1023 in
+    let cached = page.(index) in
+    if cached <> 0 then cached land lnot (1 lsl 61) else
+      let d = decode_at vm vm.pc_seg vm.pc in
+      if d land ext_mask = 0 then
+        page.(index) <- (if Hashtbl.mem vm.runtime_hints (vm.pc_seg, vm.pc) then d lor (1 lsl 61) else d);
+      d
+  end
 
 (* ---------------- step ---------------- *)
 
@@ -43,6 +66,7 @@ let[@inline] record_trace vm pc_seg pc ap fp =
   let i = vm.tlen in
   if i + 3 > slen vm.trace then trace_grow vm;
   let t = vm.trace in
+  vm.last_trace <- i;
   if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
     raw_set t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
     vm.tlen <- i + 1
@@ -292,6 +316,14 @@ let hint_steps = ref 0
 external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
   seg -> pool -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
+let register_runtime_hints vm ~segment ~pc handlers =
+  if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
+  Hashtbl.replace vm.runtime_hints (segment, pc) handlers;
+  match Hashtbl.find_opt vm.code_pages (segment, pc land lnot 1023) with
+  | Some page when page.(pc land 1023) <> 0 ->
+      let i = pc land 1023 in page.(i) <- page.(i) lor hint_bit
+  | _ -> ()
+
 let batch_max = 8192 (* cvm_cpu_batch's steps per call *)
 
 let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array array) =
@@ -300,7 +332,7 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
   if cached <> 0 then vm.icache.(stop_pc) <- cached lor hint_bit;
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
-  let registers = Array.make 9 0 in
+  let registers = Array.make 12 0 in
   let first = vm.steps in
   while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
@@ -309,15 +341,24 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
       incr hint_steps;
       Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
     end;
+    if vm.pc_seg > 0 && Hashtbl.length vm.runtime_hints <> 0 then begin
+      match Hashtbl.find_opt vm.runtime_hints (vm.pc_seg, pc) with
+      | None -> ()
+      | Some handlers -> incr hint_steps; Array.iter (fun run -> run vm) handlers
+    end;
     let count =
-      if vm.pc_seg <> 0 || vm.relocating || steps - (vm.steps - first) < batch_max then 0
+      if vm.pc_seg < 0 || (vm.pc_seg <> 0 && vm.pc_seg = stop_seg) || vm.relocating || steps - (vm.steps - first) < batch_max then 0
       else begin
         registers.(0) <- pc; registers.(1) <- vm.ap; registers.(2) <- vm.fp;
         registers.(3) <- vm.hi.(1); registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
-        let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
+        let cache = if vm.pc_seg = 0 then vm.icache else contract_page vm in
+        registers.(10) <- vm.pc_seg;
+        registers.(11) <- if vm.pc_seg = 0 then 0 else vm.code_base;
+        let count = cpu_batch registers cache vm.segs vm.seg_flag vm.hi vm.trace
           pool vm.nsegs vm.trace_on (match pedersen with Some b -> b.cache | None -> [||]) in
         vm.pc <- registers.(0); vm.ap <- registers.(1); vm.fp <- registers.(2);
         vm.hi.(1) <- registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
+        if count > 0 && vm.trace_on then vm.last_trace <- registers.(9);
         vm.steps <- vm.steps + count;
         count
       end

@@ -63,6 +63,20 @@ let to_u32 v =
 let modified_iv () = let v = Array.copy iv in v.(0) <- v.(0) lxor 0x01010020; v
 
 let register reg =
+  (* The bootloader's Blake encoder splits every third word at successive
+     byte boundaries before packing it into 32-bit limbs. *)
+  for bytes = 1 to 7 do
+    let index = 3 * bytes in
+    let high = Printf.sprintf "high%d" index and low = Printf.sprintf "low%d" index in
+    let divisor = if bytes = 1 then "256" else Printf.sprintf "256 ** %d" bytes in
+    let code = Printf.sprintf "ids.%s, ids.%s = divmod(memory[ids.felt_array + %d], %s)"
+        high low index divisor in
+    reg code (fun c vm ->
+        let word = z_at vm (get_ptr vm c "felt_array") index in
+        let bits = 8 * bytes in
+        set_int vm c high (Z.shift_right word bits);
+        set_int vm c low (Z.extract word 0 bits))
+  done;
   reg C.blake2s_compute (fun c vm ->
       let out = get_ptr vm c "output" in
       let at k = mem_at vm (Felt.reloc (Felt.rseg out) 0) (Felt.roff out + k) in

@@ -19,6 +19,8 @@ let table =
      if Sys.getenv_opt "CAIRO_VM_CAIRO0_SECP_HINTS" = Some "1" then Secp.register_cairo0 reg;
      t)
 
+let mem code = Hashtbl.mem (Lazy.force table) code
+
 let compile prog scopes (h : Program.hint) =
   let ctx = Hintrt.make_ctx prog scopes h in
   match Hashtbl.find_opt (Lazy.force table) h.code with

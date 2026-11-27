@@ -339,7 +339,10 @@ let read_json src : J.t =
     let q = string_end st in
     pos := q + 1;
     let raw = String.sub src st (q - st) in
-    if String.contains raw '\\' then U.to_string (J.from_string ("\"" ^ raw ^ "\"")) else raw
+    if String.contains raw '\\' then
+      (try U.to_string (J.from_string ("\"" ^ raw ^ "\""))
+       with Yojson.Json_error msg -> json_error "Invalid string at byte %d: %s" (st - 1) msg)
+    else raw
   in
   (* the end of the object or array starting at i *)
   let skip_container i =
@@ -388,7 +391,10 @@ let read_json src : J.t =
         let tok = String.sub src st (!pos - st) in
         if tok <> "" && String.for_all (function '0' .. '9' -> true | _ -> false) tok && (tok.[0] <> '0' || tok = "0")
         then match int_of_string_opt tok with Some i -> `Int i | None -> `Intlit tok
-        else J.from_string tok
+        else if tok = "" then json_error "Expected a JSON value at byte %d" st
+        else
+          (try J.from_string tok
+           with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
   in
   let v = value ~top:true in
   match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v

@@ -19,7 +19,8 @@ let relocation_table r =
   let vm = r.vm in
   let t = Array.make (vm.nsegs + 1) 1 in
   for s = 0 to vm.nsegs - 1 do
-    let size = if r.proof then segment_size r s else used_size vm s in
+    (* proof runs and runs from a PIE finalize their segment sizes *)
+    let size = if r.proof || Hashtbl.length r.seg_sizes > 0 then segment_size r s else used_size vm s in
     t.(s + 1) <- t.(s) + size
   done;
   t
@@ -74,16 +75,12 @@ let with_artifacts r ~trace ~memory k =
 let trace_bounds r =
   let vm = r.vm in
   if vm.tlen = 0 then None
-  else begin
-    let i = ref 0 and first = ref None and last = ref (0, 0, 0, 0) in
-    while !i < vm.tlen do
-      let next, s, pc, ap, fp = trace_entry vm.trace !i in
-      if !first = None then first := Some (s, pc, ap, fp);
-      last := (s, pc, ap, fp);
-      i := next
-    done;
-    Option.map (fun f -> (f, !last)) !first
-  end
+  else
+    let entry i =
+      let _, seg, pc, ap, fp = trace_entry vm.trace i in
+      seg, pc, ap, fp
+    in
+    Some (entry 0, entry vm.last_trace)
 
 let output_segment r =
   List.find_opt (fun b -> b.kind = Output) r.vm.builtins

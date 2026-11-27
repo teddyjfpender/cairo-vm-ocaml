@@ -41,3 +41,6 @@ val run : ?stop:int * int -> ?steps:int -> Vm.vm -> (Vm.vm -> unit) array array 
     program-segment pc, until pc = [seg:pc] or after [steps] steps (by
     default neither). Once a hint adds a relocation rule, the remaining
     steps take the generic path. *)
+
+val register_runtime_hints : Vm.vm -> segment:int -> pc:int -> (Vm.vm -> unit) array -> unit
+(** Install the hint actions for a dynamically loaded instruction. *)

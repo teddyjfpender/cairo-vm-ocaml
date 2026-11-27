@@ -43,3 +43,9 @@ val check_used_cells : Runner.t -> unit
 
 val run_until_next_power_of_2 : Runner.t -> unit
 (** Step until the step count is a power of two. *)
+
+val with_preverified_pedersen : Vm.vm -> (unit -> 'a) -> 'a
+(** Verify preloaded Pedersen triples concurrently with execution. *)
+
+val range_accessed : Runner.t -> Felt.t -> int -> bool
+(** Was any cell in this range accessed by an executed instruction? Requires tracing. *)

@@ -1,0 +1,4 @@
+(test
+ (name pie_roundtrip)
+ (deps rust4-bitwise.zip)
+ (libraries cairovm unix))

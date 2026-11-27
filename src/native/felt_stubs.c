@@ -3,8 +3,11 @@
 
    All entry points are [@@noalloc] with untagged arguments. */
 #include <stdlib.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <caml/fail.h>
+#include <caml/alloc.h>
+#include <caml/memory.h>
 #include <caml/hash.h>
 #include "field.h"
 #include "constants.h"
@@ -502,10 +505,22 @@ static void ped_accum(jac *acc, const aff low[31][255], const aff high[15], cons
   if (top) jac_add_aff(acc, acc, &high[top - 1]);
 }
 
-static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  /* Fixed namespaces frequently hash different keys under the same prefix.
-     Keep only canonical coordinates, independent of any VM's felt pool. */
+static void pedersen_point(jac *acc, const u64 a[4], const u64 b[4]) {
+  /* Adjacent hashes often share the first input. */
   static _Thread_local struct { u64 key[4]; jac point; int valid; } previous;
+  if (previous.valid && eq4(previous.key, a)) {
+    *acc = previous.point;
+  } else {
+    memcpy(acc->x, ped_shift.x, 32); memcpy(acc->y, ped_shift.y, 32); memcpy(acc->z, ONE_M, 32);
+    ped_accum(acc, ped_a, ped_a_high[0], a);
+    memcpy(previous.key, a, 32);
+    previous.point = *acc;
+    previous.valid = 1;
+  }
+  ped_accum(acc, ped_b, ped_b_high[0], b);
+}
+
+static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
   static _Thread_local struct { struct pair_entry ways[4]; unsigned next; } pairs[32];
   u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
@@ -519,16 +534,7 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   }
   struct pair_entry *entry = &pairs[index].ways[pairs[index].next++ & 3];
   jac acc;
-  if (previous.valid && eq4(previous.key, a)) {
-    acc = previous.point;
-  } else {
-    memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
-    ped_accum(&acc, ped_a, ped_a_high[0], a);
-    memcpy(previous.key, a, 32);
-    previous.point = acc;
-    previous.valid = 1;
-  }
-  ped_accum(&acc, ped_b, ped_b_high[0], b);
+  pedersen_point(&acc, a, b);
   u64 zi[4], x[4];
   mont_inv(zi, acc.z);
   mont_sqr(zi, zi);
@@ -540,29 +546,122 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   entry->valid = 1;
 }
 
+static int verify_pedersen_range(const u64 *pool, const intnat *cells, intnat first,
+                                 intnat end, const value *cache, size_t cache_size) {
+  for (intnat i=first; i+2<end; i+=3) {
+    intnat a = cells[i], b = cells[i+1], out = cells[i+2];
+    if ((a && !(a&1)) || (b && !(b&1))) return 0;
+    if (!a || !b || !out) continue;
+    if (!(out&1)) return 0;
+    if ((uintnat)(i+2) < cache_size) {
+      intnat verified = Long_val(cache[i+2]);
+      if (verified) {
+        if (verified != out && !((verified & out & 3) == 3 && eq4(pool + 4*(verified >> 2), pool + 4*(out >> 2))))
+          return 0;
+        continue;
+      }
+    }
+    /* Compare X = out * Z^2 in Jacobian coordinates, saving one
+       inversion per preloaded output. Preserve the scalar path's x=0
+       convention for the point at infinity. */
+    u64 x[4], y[4], actual[4], z2[4], scaled[4];
+    load_limbs(pool, a, x); load_limbs(pool, b, y); load_limbs(pool, out, actual);
+    jac point;
+    pedersen_point(&point, x, y);
+    if (is_zero(point.z)) {
+      if (!is_zero(actual)) return 0;
+    } else {
+      to_mont(scaled, actual);
+      mont_sqr(z2, point.z);
+      mont_mul(scaled, scaled, z2);
+      if (!eq4(point.x, scaled)) return 0;
+    }
+  }
+  return 1;
+}
+
+/* Preloaded PIE outputs have no deduction cache. Verify disjoint ranges
+   against immutable limbs; workers never touch the OCaml heap. */
+struct pedersen_job {
+  const u64 *pool;
+  const intnat *cells;
+  intnat first, end;
+  int ok;
+};
+
+static void *verify_pedersen_job(void *arg) {
+  struct pedersen_job *j = arg;
+  j->ok = verify_pedersen_range(j->pool, j->cells, j->first, j->end, NULL, 0);
+  return NULL;
+}
+
+static int verify_preloaded(const u64 *limbs, const intnat *cells, intnat n) {
+  enum { workers = 4 };
+  struct pedersen_job jobs[workers];
+  pthread_t threads[workers - 1];
+  int started[workers - 1];
+  const intnat group = 3 * (n / 3 / workers);
+  for (int i = 0; i < workers; ++i) {
+    jobs[i] = (struct pedersen_job){limbs, cells, i * group, i+1 == workers ? n : (i+1)*group, 0};
+    if (i + 1 == workers) verify_pedersen_job(&jobs[i]);
+    else {
+      started[i] = pthread_create(&threads[i], NULL, verify_pedersen_job, &jobs[i]) == 0;
+      if (!started[i]) verify_pedersen_job(&jobs[i]);
+    }
+  }
+  int ok = 1;
+  for (int i = 0; i < workers; ++i) {
+    if (i + 1 < workers && started[i]) pthread_join(threads[i], NULL);
+    ok &= jobs[i].ok;
+  }
+  return ok;}
+
+/* The OCaml caller keeps the non-moving snapshot and pool alive until join. */
+struct pending_pedersen {
+  pthread_t thread;
+  struct pedersen_job job;
+};
+
+static void *verify_snapshot(void *arg) {
+  struct pedersen_job *j = arg;
+  j->ok = verify_preloaded(j->pool, j->cells, j->end);
+  return NULL;
+}
+
+value cvm_start_pedersen(value pool, value snapshot) {
+  CAMLparam2(pool, snapshot);
+  CAMLlocal1(handle);
+  handle = caml_copy_nativeint(0);
+  struct pending_pedersen *p = malloc(sizeof *p);
+  if (!p) CAMLreturn(handle);
+  p->job = (struct pedersen_job){Caml_ba_data_val(pool), Caml_ba_data_val(snapshot),
+                                 0, Caml_ba_array_val(snapshot)->dim[0], 0};
+  if (pthread_create(&p->thread, NULL, verify_snapshot, &p->job)) free(p);
+  else Nativeint_val(handle) = (intnat)p;
+  CAMLreturn(handle);
+}
+
+value cvm_join_pedersen(value handle, value snapshot) {
+  (void)snapshot; /* keep the backing bigarray rooted across execution */
+  struct pending_pedersen *p = (void *)Nativeint_val(handle);
+  if (!p) return Val_false;
+  pthread_join(p->thread, NULL);
+  int ok = p->job.ok;
+  free(p);
+  Nativeint_val(handle) = 0;
+  return Val_bool(ok);
+}
+
 value cvm_verify_pedersen(value pool, value segment, value size, value cache) {
   intnat n = Long_val(size);
   if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
   const intnat *cells = Caml_ba_data_val(segment);
-  for (intnat i=0; i+2<n; i+=3) {
-    intnat a = cells[i], b = cells[i+1], out = cells[i+2];
-    if ((a && !(a&1)) || (b && !(b&1))) return Val_false;
-    if (!a || !b || !out) continue;
-    if (!(out&1)) return Val_false;
-    if ((uintnat)(i+2) < Wosize_val(cache)) {
-      intnat verified = Long_val(Field(cache, i+2));
-      if (verified) {
-        if (verified != out && !((verified & out & 3) == 3 && cvm_big_eq(pool, verified, out)))
-          return Val_false;
-        continue;
-      }
-    }
-    u64 x[4], y[4], expected[4], actual[4];
-    load(pool, a, x); load(pool, b, y); load(pool, out, actual);
-    pedersen(expected, x, y);
-    if (!eq4(expected, actual)) return Val_false;
-  }
-  return Val_true;
+  const u64 *limbs = Caml_ba_data_val(pool);
+  if (n < 3 * 2048 || Wosize_val(cache) != 0)
+    return Val_bool(verify_pedersen_range(limbs, cells, 0, n, Op_val(cache), Wosize_val(cache)));
+
+  return Val_bool(verify_preloaded(limbs, cells, n));
+
 }
 
 intnat cvm_pedersen(value pool, intnat a, intnat b, intnat dst) {
@@ -931,7 +1030,6 @@ value cvm_zalloc(value vn) {
    unmodified until the join. */
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <caml/signals.h>
 #define OFF_MASK ((1LL << 40) - 1)
@@ -1108,3 +1206,25 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   return cvm_finish_artifact(cvm_start_trace(path, trace, vlen, table));
 }
 
+
+/* Canonical lowercase 0x-prefixed hex into a caller-owned 66-byte array. */
+intnat cvm_hex_felt(value pool, intnat code, value buffer) {
+  static const char digits[] = "0123456789abcdef";
+  u64 limbs[4];
+  load(pool, code, limbs);
+  char *out = (char *)Bytes_val(buffer);
+  out[0] = '0';
+  out[1] = 'x';
+  int end = 2;
+  for (int i = 3; i >= 0; --i) {
+    for (int bit = 60; bit >= 0; bit -= 4) {
+      unsigned nibble = (limbs[i] >> bit) & 15;
+      if (nibble || end > 2) out[end++] = digits[nibble];
+    }
+  }
+  if (end == 2) out[end++] = '0';
+  return end;
+}
+value cvm_hex_felt_byte(value pool, value code, value buffer) {
+  return Val_long(cvm_hex_felt(pool, Long_val(code), buffer));
+}

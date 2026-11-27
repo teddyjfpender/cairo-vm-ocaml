@@ -10,6 +10,11 @@ module C = Hint_codes
 let p_over_3 = Z.div Felt.p (z 3) and p_over_2 = Z.div Felt.p (z 2) and max_div = Z.div Felt.p rc_bound
 
 let register reg =
+  reg "from starkware.python.math_utils import log2_ceil\nids.res = log2_ceil(ids.value)"
+    (fun c vm ->
+      let value = get_z vm c "value" in
+      check (Z.sign value > 0) "log2_ceil requires a positive integer";
+      set_val vm c "res" (Felt.small (Z.numbits (Z.pred value))));
   (* assert_nn *)
   reg C.assert_nn (fun c vm ->
       let a = get_felt vm c "a" in

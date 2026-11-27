@@ -21,9 +21,15 @@ type vm = {
   mutable fp : int;
   mutable steps : int;
   mutable icache : int array;  (** decoded words of segment 0, 0 = not decoded *)
+  runtime_hints : ((int * int), (vm -> unit) array) Hashtbl.t;
+  code_pages : ((int * int), int array) Hashtbl.t;
+  mutable code_seg : int;
+  mutable code_base : int;
+  mutable code_page : int array;
   trace_on : bool;
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
+  mutable last_trace : int;  (* starting word of the last trace entry *)
   mutable builtins : Builtin.builtin list;
   mutable tsegs : Segment.seg array;  (** temporary segments *)
   mutable thi : int array;

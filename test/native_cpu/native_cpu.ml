@@ -139,3 +139,22 @@ let () =
   assert (vm.steps = 1 && vm.pc = 2 && vm.icache.(2) = decode_word jump);
   run ~steps:10_001 vm [||];
   assert (vm.steps = 10_002 && vm.pc = 0 && vm.tlen = 10_002)
+
+(* Install CASM hints after the contract's instruction page has been decoded.
+   Both jumps stay in the same segment and cross the native batch boundary. *)
+let () =
+  let vm = create ~trace:false in
+  ignore (add_segment vm); ignore (add_segment vm);
+  let code = add_segment vm in
+  let jump = Felt.of_z (Z.of_string "0x10780017fff7fff") in
+  Array.iteri (write vm code) [|jump; Felt.small 2; jump; Felt.small (-2)|];
+  write vm 1 0 Felt.one;
+  vm.ap <- 1; vm.fp <- 1; vm.pc_seg <- code;
+  run ~steps:8200 vm [||];
+  assert (vm.pc = 0);
+  let counters = Array.make 2 0 in
+  Array.iteri (fun i pc ->
+      register_runtime_hints vm ~segment:code ~pc
+        [|(fun current -> assert (current.pc = pc); counters.(i) <- counters.(i) + 1)|]) [|0; 2|];
+  run ~steps:18000 vm [||];
+  assert (vm.pc = 0 && counters = [|9000; 9000|])

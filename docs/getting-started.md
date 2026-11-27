@@ -2,6 +2,8 @@
 
 ## Install
 
+PIE archives use zlib. On Linux install the zlib development headers (`zlib1g-dev` on Debian and Ubuntu). On macOS the SDK provides them.
+
 The VM builds with OxCaml, an OCaml compiler with extra optimisations, installed through opam:
 
 ```sh
@@ -50,8 +52,17 @@ cairo-vm-cli program_proof.json --layout starknet_with_keccak --proof_mode \
   --trace_file run.trace --memory_file run.mem
 ```
 
-`--cairo_pie_output`, `--layout dynamic --cairo_layout_params_file FILE` and `--fill-holes`
-work as they do in the Rust CLI.
+`--cairo_pie_output`, `--run_from_cairo_pie`, `--layout dynamic --cairo_layout_params_file FILE`
+and `--fill-holes` work as they do in the Rust CLI. To re-execute a Cairo PIE, pass the zip as the
+input file:
+
+```sh
+cairo-vm-cli os_run.pie.zip --run_from_cairo_pie --layout all_cairo --print_output
+```
+
+The PIE's program has no hints, so its recorded memory supplies every hinted value. The run is
+bounded by the PIE's step count, and with the default secure run the PIE it would write must
+match the input.
 
 ## Use it as a library
 
@@ -93,3 +104,23 @@ it off.
    absorbing hundreds of megabytes; see [Benchmarks](benchmarks.md).
 
 </details>
+
+## Embed a PIE replay
+
+From OCaml, pass the input archive and the desired output paths to the library.
+
+```ocaml
+Cairovm.Pie_run.replay_file ~trace:"trace.bin" ~memory:"memory.bin"
+  ~output:"validated.zip" "input.zip"
+```
+
+The replay uses secure execution and the `all_cairo` layout by default.
+Each artifact path is optional. Serialize VM calls within the process because
+the felt pool and builtin state are shared.
+
+For a standalone C or Rust process, build the shared library with
+`dune build --profile release bindings/c/oxcairo.so`. The
+[header](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bindings/c/oxcairo.h)
+declares `oxcairo_replay_v1`. The first call initializes the embedded OCaml
+runtime. Make all calls from the same OS thread. The function returns zero on
+success and can copy an error message into a caller-owned buffer.

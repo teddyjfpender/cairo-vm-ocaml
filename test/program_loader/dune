@@ -1,0 +1,3 @@
+(test
+ (name program_loader)
+ (libraries cairovm))

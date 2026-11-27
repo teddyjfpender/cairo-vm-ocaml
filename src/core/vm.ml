@@ -17,9 +17,15 @@ type vm = {
   (* decoded instruction cache for segment 0: 0 = not decoded *)
   mutable icache : int array;
   (* trace *)
+  runtime_hints : ((int * int), (vm -> unit) array) Hashtbl.t;
+  code_pages : ((int * int), int array) Hashtbl.t;
+  mutable code_seg : int;
+  mutable code_base : int;
+  mutable code_page : int array;
   trace_on : bool;
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
+  mutable last_trace : int;  (* starting word of the last trace entry *)
   mutable builtins : builtin list;
   (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
      rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
@@ -47,12 +53,16 @@ let create ~trace =
     fp = 0;
     steps = 0;
     icache = [||];
+    runtime_hints = Hashtbl.create 8;
+    code_pages = Hashtbl.create 8;
+    code_seg = -1; code_base = 0; code_page = [||];
     trace_on = trace;
     (* lazily committed; the two extra words are record_trace's headroom, so
        a power-of-two run of packed entries (a padded proof run) fits without
        doubling at every size *)
     trace = (if trace then seg_make ((1 lsl 26) + 2) else empty_seg);
     tlen = 0;
+    last_trace = 0;
     builtins = [];
     tsegs = [||];
     thi = [||];

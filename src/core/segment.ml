@@ -8,3 +8,8 @@ let[@inline] sset (a : seg) i (v : Felt.t) = BA.unsafe_set a i (v :> int)
 let[@inline] raw_get (a : seg) i = BA.unsafe_get a i
 let[@inline] raw_set (a : seg) i (v : int) = BA.unsafe_set a i v
 let seg_grow (a : seg) n = let na = seg_make n in BA.blit a (BA.sub na 0 (BA.dim a)); na
+
+let snapshot a n =
+  let copy = seg_make n in
+  BA.blit (BA.sub a 0 n) copy;
+  copy
