@@ -3,7 +3,7 @@ open Cairovm
 let runner builtins =
   let prog = {
     Program.data = [||]; builtins; main = Some 0; start = None; end_ = None; hints = [];
-    references = [||]; identifiers = Hashtbl.create 1; prime = Felt.p
+    references = [||]; identifiers = Hashtbl.create 1
   } in
   Runner.initialize { Runner.layout = "all_cairo"; trace = false; secure_run = true;
                       allow_missing_builtins = false; entrypoint = "main" } prog

@@ -1,8 +1,3 @@
-(* Cairo PIE output (cairo-vm v4.0.0 vm/src/vm/runners/cairo_pie.rs and
-   CairoRunner::get_cairo_pie; unchanged in v4.0.0). The archive holds the same five members with
-   the same contents as cairo-vm's; entries are stored uncompressed, so the
-   zip container bytes differ from cairo-vm's deflated archive. *)
-
 open Errors
 open Builtin
 open Vm

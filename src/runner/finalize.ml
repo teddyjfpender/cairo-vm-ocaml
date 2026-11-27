@@ -1,6 +1,3 @@
-(* End of run: return values, segment finalization and the secure-run
-   checks (cairo-vm end_run / read_return_values / verify_secure_runner). *)
-
 open Errors
 open Builtin
 open Vm
@@ -138,5 +135,3 @@ let end_run ?(fill_holes=false) r ~secure ~allow_missing =
     read_return_values r ~allow_missing;
     if secure then verify_secure_runner r
   end
-
-(* ---- relocation & outputs ---- *)

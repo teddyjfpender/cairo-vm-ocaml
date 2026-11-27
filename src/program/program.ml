@@ -1,5 +1,3 @@
-(* CairoZero compiled-program JSON (cairo-compile output). *)
-
 module J = Yojson.Safe
 module U = Yojson.Safe.Util
 
@@ -36,7 +34,6 @@ type ident = {
   i_destination : string option;
   i_members : (string * int) list; (* struct member offsets *)
   i_member_types : (string * string) list;
-  i_size : int option;
 }
 
 type t = {
@@ -48,7 +45,6 @@ type t = {
   hints : (int * hint list) list;
   references : reference array;
   identifiers : (string, ident) Hashtbl.t;
-  prime : Z.t;
 }
 
 (* ---- expression parser ---- *)
@@ -215,9 +211,8 @@ let load_json (j : J.t) : t =
                 List.filter_map (fun (m, mv) -> match U.member "cairo_type" mv with `String t -> Some (m, t) | _ -> None) ms
             | _ -> []
           in
-          let size = to_int_opt (U.member "size" v) in
           Hashtbl.replace identifiers name
-            { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types; i_size = size })
+            { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types })
         l
   | _ -> ());
   let rec resolve name depth =
@@ -276,7 +271,6 @@ let load_json (j : J.t) : t =
     hints;
     references = refs;
     identifiers;
-    prime;
   }
 
 (* debug_info is typically >95% of a compiled program and is never needed to

@@ -1,5 +1,3 @@
-(* Builtin auto-deduction of output cells (cairo-vm deduce_memory_cell). *)
-
 open Felt
 open Errors
 open Builtin

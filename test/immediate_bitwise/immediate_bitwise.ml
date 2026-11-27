@@ -3,7 +3,7 @@ open Cairovm
 let () =
   let vm = Vm.create ~trace:false in
   let base = Vm.add_segment vm in
-  let b = {Builtin.kind = Builtin.Bitwise; base; included = true; stop_ptr = 0; cache = [||]} in
+  let b = {Builtin.kind = Builtin.Bitwise; base; stop_ptr = 0; cache = [||]} in
   let at = ref 0 in
   let check x y =
     let off = !at in

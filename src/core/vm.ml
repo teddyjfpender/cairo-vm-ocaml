@@ -1,11 +1,3 @@
-(* Machine state, write-once memory and Cairo value arithmetic.
-
-   Semantics follow a formal executable model of
-   starkware-libs/cairo-vm v4.0.0: operand addresses are computed from the
-   original memory, missing op0/op1 are first deduced by the owning builtin,
-   then by the Stone inverse rules; dst is deduced only from res (ASSERT_EQ) or
-   fp (CALL).  Deduced cells are written in op0, op1, dst order. *)
-
 open Felt
 open Errors
 open Segment
@@ -14,7 +6,7 @@ open Builtin
 type vm = {
   mutable segs : seg array;
   mutable nsegs : int;
-  mutable seg_flag : int array;
+  mutable seg_flag : flag array;
   mutable hi : int array; (* used size: max written offset + 1 *)
   mutable seg_builtin : builtin option array;
   mutable pc_seg : int;
@@ -46,7 +38,7 @@ let create ~trace =
   {
     segs = Array.make 16 empty_seg;
     nsegs = 0;
-    seg_flag = Array.make 16 0;
+    seg_flag = Array.make 16 k_plain;
     hi = Array.make 16 0;
     seg_builtin = Array.make 16 None;
     pc_seg = 0;
@@ -72,7 +64,7 @@ let add_segment vm =
   if n >= Array.length vm.segs then begin
     let grow a d = Array.append a (Array.make (Array.length a) d) in
     vm.segs <- grow vm.segs empty_seg;
-    vm.seg_flag <- grow vm.seg_flag 0;
+    vm.seg_flag <- grow vm.seg_flag k_plain;
     vm.hi <- grow vm.hi 0;
     vm.seg_builtin <- grow vm.seg_builtin None
   end;
@@ -177,7 +169,7 @@ let[@inline] write vm seg off v =
   if cur = Felt.empty then begin
     sset a off v;
     if off >= Array.unsafe_get vm.hi seg then Array.unsafe_set vm.hi seg (off + 1);
-    if Array.unsafe_get vm.seg_flag seg <> 0 then validate vm seg off v
+    if Array.unsafe_get vm.seg_flag seg <> k_plain then validate vm seg off v
   end
   else if not (Felt.equal cur v) then
     fail "Inconsistent memory assignment at address %d:%d. %s != %s" seg off (value_to_string cur)

@@ -3,7 +3,7 @@ open Cairovm
 let () =
   let vm = Vm.create ~trace:false in
   let base = Vm.add_segment vm in
-  let builtin : Builtin.builtin = { kind = Builtin.Pedersen; base; included = true; stop_ptr = 0; cache = [||] } in
+  let builtin : Builtin.builtin = { kind = Builtin.Pedersen; base; stop_ptr = 0; cache = [||] } in
   let x () = Felt.of_z (Z.shift_left Z.one 210) in
   let put i a b = Vm.write vm base (3*i) a; Vm.write vm base (3*i+1) b in
   let deduce i = Deduce.deduce_builtin vm builtin base (3*i+2) in

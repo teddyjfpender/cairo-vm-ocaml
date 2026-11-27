@@ -1,6 +1,3 @@
-(* Memory-access accounting, auto-deduction verification and the proof-mode
-   layout resource checks that drive trace padding (cairo-vm cairo_runner.rs). *)
-
 open Errors
 open Segment
 open Builtin

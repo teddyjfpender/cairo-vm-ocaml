@@ -1,6 +1,3 @@
-(* The Cairo CPU: instruction fetch, the generic deduction step and the
-   fast interpreter loop (with the native batch kernel). *)
-
 open Felt
 open Errors
 open Segment
@@ -290,7 +287,7 @@ exception Relocating
 let generic_steps = ref 0
 let hint_steps = ref 0
 
-external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
+external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
   seg -> bytes -> int -> bool -> int array -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
 (* JNZ's unconstrained result: tag 3 with an impossible pool index, so it

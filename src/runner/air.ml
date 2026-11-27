@@ -1,6 +1,3 @@
-(* AIR public and private inputs (cairo-vm v4.0.0 air_public_input.rs,
-   air_private_input.rs), serialized like serde_json::to_string_pretty. *)
-
 open Errors
 open Builtin
 open Vm
