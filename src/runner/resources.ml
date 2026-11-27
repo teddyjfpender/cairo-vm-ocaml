@@ -37,7 +37,7 @@ let mark acc seg off =
     end
   end
 
-(* cached words are Stone instructions whose bit 61 may be run_fast's hint
+(* cached words are Stone instructions whose bit 61 may be Cpu.run's hint
    flag; extension words are never cached and decode with their extension *)
 let decoded vm pc_seg pc =
   if pc_seg = 0 && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then vm.icache.(pc) land lnot ext_mask

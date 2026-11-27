@@ -73,10 +73,10 @@ checked against the Rust CLI with `test/parity.py`.
 <details markdown>
 <summary>Solutions</summary>
 
-1. `Runner.run_until_end` calls `Cpu.run`, which calls `Cpu.run_fast`. A cached instruction word
-   with the hint bit set makes the C batch stop before that `pc`. `run_fast` runs the compiled
-   hint closures in OCaml, then calls the kernel again, which executes the hinted instruction
-   itself.
+1. `Runner.run_until_end` calls `Cpu.run` (in both modes; proof mode passes `__end__` as the stop
+   pc). A cached instruction word with the hint bit set makes the C batch stop before that `pc`.
+   `run` runs the compiled hint closures in OCaml, then calls the kernel again, which executes
+   the hinted instruction itself.
 2. Each `builtin` record has a `cache : Felt.t array` indexed by cell offset. `Felt.poseidon`
    returns all three outputs, and `cache_outputs` stores them, so later reads of the other two
    outputs hit the cache.

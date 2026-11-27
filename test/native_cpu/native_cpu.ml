@@ -125,5 +125,17 @@ let () =
   let vm = make_vm words (Array.make 16 Felt.one) in
   vm.pc <- 2;
   vm.icache <- [|0; 0; decode_word jump; 0|];
-  run_fast vm (Array.make 4 [||]) 0;
+  run ~stop:(0, 0) vm (Array.make 4 [||]);
   assert (vm.steps = 1 && vm.pc_seg = 0 && vm.pc = 0 && vm.tlen = 1)
+
+let () =
+  (* Bounded runs end exactly, beyond one batch too; a cached stop pc stops
+     the kernel and stays unflagged afterwards. *)
+  let jump = encode 0x0107 (-1) (-1) 1 in
+  let words = [|Felt.of_z jump; Felt.small 2; Felt.of_z jump; Felt.small (-2)|] in
+  let vm = make_vm words (Array.make 16 Felt.one) in
+  vm.icache <- [|decode_word jump; 0; decode_word jump; 0|];
+  run ~stop:(0, 2) vm [||];
+  assert (vm.steps = 1 && vm.pc = 2 && vm.icache.(2) = decode_word jump);
+  run ~steps:10_001 vm [||];
+  assert (vm.steps = 10_002 && vm.pc = 0 && vm.tlen = 10_002)

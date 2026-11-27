@@ -60,7 +60,9 @@ The same semantics run at two speeds:
 | Native batch | `src/native/cpu_kernel.c` | up to 8,192 cached instructions per call. It dispatches on the Stwo instruction shape, deduces `dst`, `op0` and builtin inputs (including big values written to range checks), and stops at the next hinted pc, uncached code, segment growth or anything unusual. |
 | Generic step | `Cpu.step` | everything else: full deduction, extensions, temporary segments, error reporting |
 
-`Cpu.run_fast` drives the loop. At a pc that carries hints it first runs the hints in OCaml,
+`Cpu.run` drives the loop, until a stop pc (execution: the end segment; proof mode: `__end__`)
+or for a step count (proof-mode padding, whose last partial batch is generic). At a pc that
+carries hints it first runs the hints in OCaml,
 then hands that instruction to the kernel. When the kernel declines an instruction, it has
 changed nothing, and the generic step (the reference implementation) executes it instead.
 That's why the tiers can't disagree.
