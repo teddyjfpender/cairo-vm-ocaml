@@ -184,3 +184,45 @@ let () =
   match relocate_temp_memory vm with
   | exception Errors.Vm_error _ -> ()
   | () -> failwith "accepted cyclic temporary segment relocation"
+
+external batch_poseidon : int array -> int array -> seg array -> flag array -> int array ->
+  seg -> Felt.pool -> int -> bytes array -> Felt.t array -> Felt.t array -> int
+  = "cvm_cpu_batch_poseidon_byte" "cvm_cpu_batch_poseidon" [@@noalloc]
+
+let () =
+  (* A run copies each independent result onto the execution stack twice.
+     The last instruction consumes a copy arithmetically, forcing the batch
+     to expose the exact synchronous state at that boundary. *)
+  let n = 96 in
+  let words = Array.init (2*n+2) (fun i ->
+      if i = 2*n then encode 0x4824 0 (-1) 1
+      else if i = 2*n+1 then Z.one
+      else if i mod 2 = 0 then encode 0x4802 0 (-3) (6*(i/2)+3)
+      else encode 0x4812 0 (-1) (-1)) in
+  let cache = Array.mapi (fun i z -> if i = 2*n+1 then 0 else decode_word z) words in
+  let make () =
+    let stack = Array.make (2*n+32) Felt.empty in
+    stack.(3) <- Felt.reloc 2 0;
+    stack.(5) <- Felt.one;
+    let vm = {(make_vm (Array.map Felt.of_z words) stack) with trace_on=false} in
+    let cells = seg_make (6*n) in
+    for i = 0 to n-1 do
+      for k = 0 to 2 do sset cells (6*i+k) (Felt.small (4*i+k)) done
+    done;
+    vm.segs.(2) <- cells;
+    vm.hi.(2) <- 6*n-3;
+    let builtin = {kind=Poseidon; base=2; stop_ptr=(-1); cache=Array.make (6*n) Felt.empty} in
+    vm.builtins <- [builtin]; vm.seg_builtin.(2) <- Some builtin;
+    vm.seg_flag.(2) <- flag_of Poseidon;
+    vm,builtin
+  in
+  let vm,b = make () and ref_vm,ref_b = make () in
+  let state = [|0;8;6;vm.hi.(1);0;!Felt.pool_n;0;0;0;0;0;0;1|] in
+  let steps = batch_poseidon state cache vm.segs vm.seg_flag vm.hi vm.trace Felt.pool 3 [||] [||] b.cache in
+  assert (steps = 2*n);
+  Felt.pool_n := state.(5);
+  for _ = 1 to steps do Cpu.step_instr ref_vm cache.(ref_vm.pc) done;
+  assert (state.(0) = ref_vm.pc && state.(1) = ref_vm.ap && state.(3) = ref_vm.hi.(1));
+  assert (Array.for_all2 Felt.equal b.cache ref_b.cache);
+  Array.iteri (fun s seg ->
+      for i = 0 to slen seg-1 do assert (Felt.equal (sget seg i) (sget ref_vm.segs.(s) i)) done) vm.segs

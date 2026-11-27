@@ -167,14 +167,24 @@ let with_preverified_pedersen vm execute =
       result
   | _ -> execute ()
 
+external segment_full : seg -> int -> bool = "cvm_segment_full" [@@noalloc]
+
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
     (fun b ->
-      if is_deducing vm.seg_flag.(b.base) &&
-         (fill_holes || not (match b.kind with
-          | Bitwise -> verified_bitwise Felt.pool vm.segs.(b.base) (used_size vm b.base)
-          | Pedersen -> verified_pedersen Felt.pool vm.segs.(b.base) (used_size vm b.base) b.cache
-          | _ -> false)) then begin
+      let fast_verify () =
+        let n = used_size vm b.base and cells = vm.segs.(b.base) in
+        let complete width = not fill_holes || (n mod width = 0 && segment_full cells n) in
+        match b.kind with
+        | Bitwise when complete 5 -> verified_bitwise Felt.pool cells n
+        | Pedersen when complete 3 && verified_pedersen Felt.pool cells n b.cache ->
+            if fill_holes then
+              for i = 0 to n/3-1 do
+                let off = 3*i+2 in cache_set b off (sget cells off)
+              done;
+            true
+        | _ -> false in
+      if is_deducing vm.seg_flag.(b.base) && not (fast_verify ()) then begin
         let n = used_size vm b.base in
         let width = cells_per_instance b.kind and inputs = n_input_cells b.kind in
         let limit = if fill_holes then ((n + width - 1) / width) * width else n in

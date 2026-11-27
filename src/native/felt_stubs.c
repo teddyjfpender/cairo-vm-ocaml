@@ -691,15 +691,25 @@ value cvm_join_pedersen(value handle, value snapshot) {
   return Val_bool(ok);
 }
 
+value cvm_segment_full(value segment, value size) {
+  intnat n = Long_val(size);
+  if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
+  const intnat *cells = Caml_ba_data_val(segment);
+  for (intnat i = 0; i < n; i++) if (!cells[i]) return Val_false;
+  return Val_true;
+}
+
 value cvm_verify_pedersen(value pool, value segment, value size, value cache) {
   intnat n = Long_val(size);
   if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
   const intnat *cells = Caml_ba_data_val(segment);
   const u64 *limbs = Caml_ba_data_val(pool);
-  if (n < 3 * 2048 || Wosize_val(cache) != 0)
-    return Val_bool(verify_pedersen_range(limbs, cells, 0, n, Op_val(cache), Wosize_val(cache)));
-
-  return Val_bool(verify_preloaded(limbs, cells, n));
+  /* A nested PIE may follow a handful of hashes produced by the bootloader.
+     A small verified prefix should not serialize the remaining block. */
+  size_t cached = Wosize_val(cache);
+  if (n >= 3*2048 && cached < (size_t)n/2)
+    return Val_bool(verify_preloaded(limbs, cells, n));
+  return Val_bool(verify_pedersen_range(limbs, cells, 0, n, Op_val(cache), cached));
 
 }
 
@@ -784,19 +794,18 @@ static void hades(u64 s[3][4]) {
 }
 
 /* inputs/outputs: pool slots in canonical form */
-void cvm_poseidon(value pool, intnat i0, intnat o0) {
+static void poseidon_limbs(const u64 *input, u64 *output) {
   /* Independent calls can revisit the same node of a Merkle tree. Keys
      and values own their limbs, so pool growth and VM lifetimes are irrelevant. */
   struct entry { u64 input[3][4], output[3][4]; int valid; };
   static _Thread_local struct { struct entry ways[4]; unsigned next; } recent[64];
-  const u64 *input = SLOT(pool, i0);
   u64 h = input[0] ^ (input[4] * UINT64_C(0x9e3779b97f4a7c15)) ^
           (input[8] * UINT64_C(0xbf58476d1ce4e5b9)) ^ input[3] ^ input[7] ^ input[11];
   unsigned index = (h ^ (h >> 32)) & 63;
   for (int way = 0; way < 4; ++way) {
     struct entry *e = &recent[index].ways[way];
     if (e->valid && memcmp(e->input, input, sizeof e->input) == 0) {
-      memcpy(SLOT(pool, o0), e->output, sizeof e->output);
+      memcpy(output, e->output, sizeof e->output);
       return;
     }
   }
@@ -804,11 +813,58 @@ void cvm_poseidon(value pool, intnat i0, intnat o0) {
   memcpy(e->input, input, sizeof e->input);
   u64 s[3][4];
   poseidon_init();
-  for (int k = 0; k < 3; k++) to_mont(s[k], SLOT(pool, i0 + k));
+  for (int k = 0; k < 3; k++) to_mont(s[k], input + 4*k);
   hades(s);
   for (int k = 0; k < 3; k++) from_mont(e->output[k], s[k]);
   e->valid = 1;
-  memcpy(SLOT(pool, o0), e->output, sizeof e->output);
+  memcpy(output, e->output, sizeof e->output);
+}
+
+#include <pthread.h>
+#include "poseidon_batch.h"
+
+struct poseidon_range { struct poseidon_job *jobs; unsigned count; };
+
+static void *compute_poseidon_range(void *argument) {
+  struct poseidon_range *range = argument;
+  for (unsigned i = 0; i < range->count; i++)
+    poseidon_limbs(range->jobs[i].input, range->jobs[i].output);
+  return NULL;
+}
+
+void cvm_poseidon_jobs(struct poseidon_job *jobs, unsigned n) {
+  /* Never create workers for short dependency chains. */
+  struct poseidon_range ranges[3];
+  unsigned workers = n >= 48 ? 3 : 1;
+  pthread_t threads[2];
+  int launched[2] = {0};
+  poseidon_init();
+  for (unsigned i = 0; i < workers; i++) {
+    unsigned first = n*i/workers;
+    ranges[i] = (struct poseidon_range){jobs+first,n*(i+1)/workers-first};
+    if (i+1 < workers)
+      launched[i] = pthread_create(&threads[i], NULL, compute_poseidon_range, &ranges[i]) == 0;
+  }
+  compute_poseidon_range(&ranges[workers-1]);
+  for (unsigned i = 0; i+1 < workers; i++) {
+    if (launched[i]) pthread_join(threads[i], NULL);
+    else compute_poseidon_range(&ranges[i]);
+  }
+}
+
+void cvm_poseidon(value pool, intnat i0, intnat o0) {
+  poseidon_limbs(SLOT(pool,i0),SLOT(pool,o0));
+}
+
+void cvm_poseidon_codes(value pool, const intnat *inputs, value cache, intnat base, intnat *slot) {
+  u64 input[12], output[12];
+  for (int i = 0; i < 3; i++) load(pool, inputs[i], input+4*i);
+  poseidon_limbs(input,output);
+  for (int i = 0; i < 3; i++) {
+    intnat code = store(pool, output+4*i, *slot);
+    if ((code & 3) == 3) ++*slot;
+    Field(cache,base+i) = Val_long(code);
+  }
 }
 value cvm_poseidon_byte(value pool, value i, value o) {
   cvm_poseidon(pool, Long_val(i), Long_val(o));

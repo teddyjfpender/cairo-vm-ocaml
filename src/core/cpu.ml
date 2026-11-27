@@ -323,6 +323,10 @@ external cpu_batch_watched : int array -> int array -> seg array -> flag array -
   seg -> pool -> int -> Bytes.t array -> Felt.t array -> int
   = "cvm_cpu_batch_watched_byte" "cvm_cpu_batch_watched" [@@noalloc]
 
+external cpu_batch_poseidon : int array -> int array -> seg array -> flag array -> int array ->
+  seg -> pool -> int -> Bytes.t array -> Felt.t array -> Felt.t array -> int
+  = "cvm_cpu_batch_poseidon_byte" "cvm_cpu_batch_poseidon" [@@noalloc]
+
 let register_runtime_hints vm ~segment ~pc handlers =
   if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
   Hashtbl.replace vm.runtime_hints (segment, pc) handlers;
@@ -339,7 +343,8 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
   if cached <> 0 then vm.icache.(stop_pc) <- cached lor hint_bit;
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
-  let registers = Array.make 12 0 in
+  let poseidon = if vm.trace_on then None else List.find_opt (fun b -> b.kind = Poseidon) vm.builtins in
+  let registers = Array.make 13 0 in
   let first = vm.steps in
   while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
@@ -363,9 +368,12 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
         registers.(11) <- if vm.pc_seg = 0 then 0 else vm.code_base;
         let ped_cache = match pedersen with Some b -> b.cache | None -> [||] in
         let count =
-          if Array.length vm.watched = 0 then
+          match poseidon with
+          | Some b -> cpu_batch_poseidon registers cache vm.segs vm.seg_flag vm.hi vm.trace pool
+                        vm.nsegs vm.watched ped_cache b.cache
+          | None when Array.length vm.watched = 0 ->
             cpu_batch registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs vm.trace_on ped_cache
-          else
+          | None ->
             cpu_batch_watched registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs vm.watched ped_cache in
         vm.pc <- registers.(0); vm.ap <- registers.(1); vm.fp <- registers.(2);
         vm.hi.(1) <- registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);

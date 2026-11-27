@@ -69,11 +69,61 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
   return kind == 1 ? arith(pool, 1, dst, known, slot) : cvm_binop(pool, 3, dst, known, slot);
 }
 
+#include "poseidon_batch.h"
+
+#define POSE_JOBS 128
+#define POSE_COPIES 2048
+struct pending_poseidon {
+  struct poseidon_job jobs[POSE_JOBS];
+  intnat *copies[POSE_COPIES];
+  unsigned count, used;
+};
+
+/* Nonzero codes with both low bits clear are private to this C invocation.
+   Only copies may propagate them. Every live copy is replaced before the
+   generic interpreter, hint processor or artifact writer can see memory. */
+static inline int pending(intnat v) { return v && (v & 3) == 0; }
+static inline void copy_cell(struct pending_poseidon *queue, intnat *cell, intnat v) {
+  *cell = v;
+  if (queue && pending(v)) queue->copies[queue->used++] = cell;
+}
+
+static void queue_poseidon(struct pending_poseidon *q, value pool, const intnat *cells,
+                           value cache, intnat base, intnat *slot) {
+  struct poseidon_job *job = &q->jobs[q->count];
+  job->cache_base = base; job->slot = *slot;
+  for (unsigned i = 0; i < 3; i++) {
+    load(pool,cells[i],job->input+4*i);
+    Field(cache,base+i) = Val_long((q->count*3+i+1) << 2);
+  }
+  *slot += 3; ++q->count;
+}
+
+static void finish_poseidon(struct pending_poseidon *q, value pool, value cache) {
+  if (!q->count) return;
+  cvm_poseidon_jobs(q->jobs,q->count);
+  for (unsigned j = 0; j < q->count; j++) {
+    struct poseidon_job *job = &q->jobs[j];
+    for (unsigned i = 0; i < 3; i++) {
+      intnat v = store(pool, job->output+4*i, job->slot+i);
+      job->codes[i] = v;
+      Field(cache,job->cache_base+i) = Val_long(v);
+    }
+  }
+  for (unsigned i = 0; i < q->used; i++) {
+    intnat *cell = q->copies[i];
+    if (pending(*cell)) {
+      unsigned pos = ((unsigned)*cell >> 2)-1;
+      *cell = q->jobs[pos/3].codes[pos%3];
+    }
+  }
+}
+
 /* Returns the number of completed instructions. State contains pc, ap, fp,
    execution-segment high-water mark, trace length, and next felt-pool slot. */
 static inline __attribute__((always_inline))
 value batch(value state, value cache, value segs, value flags, value highs,
-            value trace, value pool, intnat nsegs, const int tracing, value ped_cache, value watched) {
+            value trace, value pool, intnat nsegs, const int tracing, value ped_cache, value watched, value pose_cache, struct pending_poseidon *queue) {
   const intnat cache_size = Wosize_val(cache);
   if (Wosize_val(state) < 9 || nsegs < 2 || (uintnat)nsegs > Wosize_val(segs) ||
       (uintnat)nsegs > Wosize_val(flags) || (uintnat)nsegs > Wosize_val(highs))
@@ -92,8 +142,9 @@ value batch(value state, value cache, value segs, value flags, value highs,
   if (used < 0 || used > trace_length || slot < 0 || slot > slots ||
       high < 0 || high > length || ap < 0 || fp < 0) return Val_int(0);
   intnat last_trace = used;
-  int completed = 0;
+  int completed = 0, permutations = 0;
   for (; completed < 8192 && fits(pc - code_base, cache_size); ++completed) {
+    if (queue && (queue->used > POSE_COPIES-8 || queue->count == POSE_JOBS)) break;
     uint64_t d = Long_val(Field(cache, pc - code_base));
     /* The caller runs the hints of the first pc only. */
     if (d >> 61 && completed) break;
@@ -119,7 +170,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
         v = stack[from];
       }
       if (!v || temporary(v) || temporary(stack[ap]) || (stack[ap] && !same_value(pool, stack[ap], v))) break;
-      stack[ap] = v; next_ap = ap+1;
+      copy_cell(queue, stack+ap, v); next_ap = ap+1;
       if (next_ap > high) high = next_ap;
       goto complete;
     }
@@ -172,7 +223,7 @@ general:;
     intnat op0_at = ((d & (UINT64_C(1) << 49)) ? fp : ap) + (int16_t)(offsets >> 16);
     if (!fits(dst_at, length) || !fits(op0_at, length)) break;
     intnat dst = stack[dst_at], a = stack[op0_at];
-    if (temporary(dst) || temporary(a)) break;
+    if (temporary(dst) || temporary(a) || (queue && (pending(dst) || pending(a)))) break;
     int delta = (int16_t)(offsets >> 32);
     if (op == 0) {
       /* Relative conditional jump, unconditional jump and ap += immediate. */
@@ -235,6 +286,17 @@ general:;
               Field(state, 8) = Val_long(b);
             }
             Field(ped_cache, at) = Val_long(b);
+          } else if (kind == 7 && pose_cache) {
+            intnat base = at-idx;
+            if (dst || result || !fits(base+5, Wosize_val(pose_cache))) break;
+            b = Long_val(Field(pose_cache,at));
+            if (!b) {
+              if (!(cells[base] & cells[base+1] & cells[base+2] & 1) || slot > slots-3) break;
+              ++permutations;
+              if (queue) queue_poseidon(queue,pool,cells+base,pose_cache,base+3,&slot);
+              else cvm_poseidon_codes(pool,cells+base,pose_cache,base+3,&slot);
+              b = Long_val(Field(pose_cache,at));
+            }
           } else if (kind == 5) {
             /* Complete only the requested cell. Siblings remain holes. */
             if (idx < 2 || slot >= slots || dst || result) break;
@@ -252,7 +314,7 @@ general:;
           missing = cells+at; missing_at = at; missing_seg = sg;
         }
       }
-      if (temporary(b)) break;
+      if (temporary(b) || (queue && pending(b) && (result || !a))) break;
       intnat value_code = b;
       if (!a) {
         if (!result || !b || !dst) break;
@@ -266,7 +328,7 @@ general:;
       } else if (missing) {
         if (!b) b = inverse_operand(pool, result, dst, a, slot, slots);
         if (!b) break;
-        *missing = b;
+        copy_cell(queue, missing, b);
         if ((b & 3) == 3 && (b >> 2) == slot) ++slot;
         if (missing_seg == 1) { if (missing_at >= high) high = missing_at+1; }
         else if (missing_at >= Long_val(Field(highs, missing_seg))) Field(highs, missing_seg) = Val_long(missing_at+1);
@@ -297,7 +359,7 @@ general:;
          limbs used to verify it can be overwritten by the next operation. */
       if (!dst) {
         if ((value_code & 3) == 3 && (value_code >> 2) == slot) ++slot;
-        stack[dst_at] = value_code;
+        copy_cell(queue, stack+dst_at, value_code);
         if (dst_at >= high) high = dst_at+1;
       }
       next_ap = ap + (ap_update == 2);
@@ -315,6 +377,8 @@ complete:
     }
     pc = next_pc; ap = next_ap; fp = next_fp;
   }
+  if (queue) finish_poseidon(queue,pool,pose_cache);
+  if (pose_cache && permutations >= 8 && Wosize_val(state) > 12) Field(state,12) = Val_long(1);
   Field(state, 0) = Val_long(pc); Field(state, 1) = Val_long(ap);
   Field(state, 2) = Val_long(fp); Field(state, 3) = Val_long(high);
   Field(state, 4) = Val_long(used); Field(state, 5) = Val_long(slot);
@@ -325,8 +389,8 @@ complete:
 value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
                     value trace, value pool, value nsegs, value tracing, value ped_cache) {
   return Bool_val(tracing)
-    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, 0)
-    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, 0);
+    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, 0, 0, NULL)
+    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, 0, 0, NULL);
 }
 
 value cvm_cpu_batch_byte(value *argv, int argc) {
@@ -336,11 +400,34 @@ value cvm_cpu_batch_byte(value *argv, int argc) {
 
 value cvm_cpu_batch_watched(value state, value cache, value segs, value flags, value highs,
                             value trace, value pool, value nsegs, value watched, value ped_cache) {
-  return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched);
+  return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched, 0, NULL);
 }
 
 value cvm_cpu_batch_watched_byte(value *argv, int argc) {
   (void)argc;
   return cvm_cpu_batch_watched(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
                                argv[6], argv[7], argv[8], argv[9]);
+}
+
+/* Keep the larger batch buffer outside the ordinary interpreter stack frame. */
+static __attribute__((noinline)) value batch_independent_poseidon(value state,value cache,value segs,value flags,
+    value highs,value trace,value pool,value nsegs,value watched,value ped,value pose) {
+  struct pending_poseidon queue;
+  queue.count = queue.used = 0;
+  return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,
+               Wosize_val(watched) ? watched : 0,pose,&queue);
+}
+
+value cvm_cpu_batch_poseidon(value state, value cache, value segs, value flags, value highs,
+                             value trace, value pool, value nsegs, value watched, value ped, value pose) {
+  if (Wosize_val(state) > 12 && Long_val(Field(state,12)))
+    return batch_independent_poseidon(state,cache,segs,flags,highs,trace,pool,nsegs,watched,ped,pose);
+  if (Wosize_val(watched))
+    return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,watched,pose,NULL);
+  return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,0,pose,NULL);
+}
+
+value cvm_cpu_batch_poseidon_byte(value *v, int argc) {
+  (void)argc;
+  return cvm_cpu_batch_poseidon(v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10]);
 }
