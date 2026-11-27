@@ -129,3 +129,13 @@ Run `python3 test/fixtures/aggregator/check.py OCAML_CLI AGGREGATOR_JSON` with
 the compiled aggregator from sequencer commit
 `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. The Rust reference entry point is
 [aggregator_reference.rs](../bench/aggregator_reference.rs).
+
+## Native virtual OS
+
+Use the sequencer's compiled `virtual_os_bytes` as the program and pass
+`--virtual_os_hints INPUT --layout all_cairo`. This selects the virtual OS runner, which checks Sierra gas tracking on root and nested
+calls before executing. The message, execution-info and multicall fixtures
+reproduce the pinned sequencer's five PIE members. The two multicall witnesses
+contain sixteen and sixty-four repetitions of Keccak, EC and SHA-512 calls within one
+transaction. Run the virtual suite with
+`python3 test/fixtures/os/check.py OCAML_CLI VIRTUAL_OS_JSON --virtual-os`.

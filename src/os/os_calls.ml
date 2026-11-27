@@ -15,6 +15,20 @@ let execution_projection =
   Only ["validate_call_info", call; "execute_call_info", call; "fee_transfer_call_info", call;
         "actual_fee", Json; "revert_error", Json]
 
+(* The sequencer's virtual runner checks every root and nested call before
+   executing its program. The general OS also supports Cairo-step tracking. *)
+let validate_virtual_resources info =
+  let rec visit = function
+    | [] -> ()
+    | call :: rest ->
+        if U.member "tracked_resource" call <> `String "SierraGas" then
+          fail "Virtual OS calls must use SierraGas";
+        visit (List.rev_append (U.to_list (U.member "inner_calls" call)) rest) in
+  let roots = List.filter_map (fun name ->
+      match U.member name info with `Null -> None | call -> Some call)
+      ["validate_call_info"; "execute_call_info"; "fee_transfer_call_info"] in
+  visit roots
+
 type call = {
   witness : Yojson.Safe.t;
   execution_info : Felt.t;

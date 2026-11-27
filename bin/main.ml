@@ -29,6 +29,10 @@ let () =
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let from_pie = ref false and os_hints = ref None and bootloader_input = ref None in
+  let virtual_os = ref false in
+  let set_os_hints virtual_mode path =
+    if Option.is_some !os_hints then raise (Arg.Bad "only one OS hint input may be selected");
+    virtual_os := virtual_mode; os_hints := Some path in
   let aggregator_input = ref None and aggregator_da = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
@@ -53,7 +57,8 @@ let () =
       ("--aggregator_input", Arg.String (fun s -> aggregator_input := Some s), "FILE  read sequencer aggregator input");
       ("--aggregator_da_output", Arg.String (fun s -> aggregator_da := Some s), "FILE  write aggregated blob coefficients");
       ("--bootloader_input", Arg.String (fun s -> bootloader_input := Some s), "FILE  read simple bootloader tasks");
-      ("--os_hints", Arg.String (fun s -> os_hints := Some s), "FILE  read sequencer OS hints and block inputs");
+      ("--virtual_os_hints", Arg.String (set_os_hints true), "FILE  read virtual OS hints and verify Sierra gas tracking");
+      ("--os_hints", Arg.String (set_os_hints false), "FILE  read sequencer OS hints and block inputs");
       ("--run_from_cairo_pie", Arg.Set from_pie, " the input file is a Cairo PIE zip to re-execute");
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
@@ -138,7 +143,7 @@ let () =
               let on_da = Option.map (fun _ words -> da_words := Some words) !aggregator_da in
               Aggregator.initialize ?layout_def ?on_da ~proof ~path cfg (Program.load_file file)
           | None, Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg (Program.load_file file)
-          | None, _, Some path -> Os_hints.initialize_files ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
+          | None, _, Some path -> Os_hints.initialize_files ~virtual_os:!virtual_os ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
           | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         Runner.run_until_end r;

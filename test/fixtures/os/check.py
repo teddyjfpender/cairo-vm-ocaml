@@ -13,11 +13,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("program", type=Path)
+    parser.add_argument("--virtual-os", action="store_true", help="check the compiled virtual OS")
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
-    for name in ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
+    cases = ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
                  "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
-                 "storage-2048", "storage-4096", "syscalls-scaled-32"):
+                 "storage-2048", "storage-4096", "syscalls-scaled-32")
+    if args.virtual_os:
+        cases = ("virtual-message", "virtual-execution-info", "virtual-multicall-16", "virtual-multicall-64")
+    mode = "--virtual_os_hints" if args.virtual_os else "--os_hints"
+    for name in cases:
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"
@@ -25,7 +30,7 @@ def main():
                 source = Path(directory) / source.name
                 source.write_bytes(gzip.decompress((fixture / f"{name}.json.gz").read_bytes()))
             pie = Path(directory) / f"{name}.zip"
-            command = [args.binary.resolve(), args.program, "--os_hints", source,
+            command = [args.binary.resolve(), args.program, mode, source,
                             "--layout", "all_cairo", "--cairo_pie_output", pie]
             if name in ("storage-2048", "storage-4096", "syscalls-scaled-32"):
                 command.append("--merge_extra_segments")
@@ -41,6 +46,17 @@ def main():
             if hashes != expected:
                 raise SystemExit(f"{name}: sequencer PIE member mismatch")
             print(f"Native {name} matches all sequencer PIE members")
+            if name == "virtual-multicall-16":
+                witness = json.loads(source.read_bytes())
+                info = witness["os_input"]["os_block_inputs"][0]["tx_execution_infos"][0]
+                root = info["execute_call_info"]
+                for call in (root, root["inner_calls"][0]):
+                    call["tracked_resource"] = "CairoSteps"
+                    source.write_text(json.dumps(witness))
+                    rejected = subprocess.run(command, capture_output=True, text=True)
+                    if rejected.returncode == 0 or "SierraGas" not in rejected.stderr:
+                        raise SystemExit("Virtual OS did not enforce Sierra gas tracking")
+                    call["tracked_resource"] = "SierraGas"
 
 
 if __name__ == "__main__":

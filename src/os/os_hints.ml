@@ -22,13 +22,20 @@ let felt = function
   | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
   | j -> felt_slow j
 
-let read_input path =
+let read_input ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
-  let block_fields = Fields ["transactions", Elements Encoded; "tx_execution_infos", Elements Encoded] in
+  let info = if virtual_os then Os_calls.execution_projection else Encoded in
+  let block_fields = Fields ["transactions", Elements Encoded; "tx_execution_infos", Elements info] in
   let projection = Fields ["os_input", Fields ["os_block_inputs", Elements block_fields]] in
-  Json_reader.from_file ~projection path
+  let hints = Json_reader.from_file ~projection path in
+  if virtual_os then begin
+    let blocks = U.to_list (U.member "os_block_inputs" (U.member "os_input" hints)) in
+    List.iter (fun block ->
+        List.iter Os_calls.validate_virtual_resources (U.to_list (U.member "tx_execution_infos" block))) blocks
+  end;
+  hints
 
 let register ~os_program ~watch ~accessed ~set_pages hints =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
@@ -139,15 +146,15 @@ let initialize_input ?image ?layout_def ?(record_trace=true) ~proof hints cfg pr
   runner := Some r;
   r
 
-let initialize ?image ?layout_def ?record_trace ~proof ~path cfg prog =
-  initialize_input ?image ?layout_def ?record_trace ~proof (read_input path) cfg prog
+let initialize ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
+  initialize_input ?image ?layout_def ?record_trace ~proof (read_input ~virtual_os path) cfg prog
 
-let initialize_files ?layout_def ?record_trace ~proof ~path cfg program_path =
+let initialize_files ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path cfg program_path =
   (* Parsing only produces immutable program and witness data. VM setup and
      all accesses to its felt pool remain on the caller's domain. *)
   let worker =
     if Domain.recommended_domain_count () < 2 then None
-    else try Some (Domain.spawn (fun () -> read_input path)) with Failure _ -> None in
+    else try Some (Domain.spawn (fun () -> read_input ~virtual_os path)) with Failure _ -> None in
   let program =
     match Program.load_file program_path with
     | p -> p
@@ -155,12 +162,12 @@ let initialize_files ?layout_def ?record_trace ~proof ~path cfg program_path =
         let backtrace = Printexc.get_raw_backtrace () in
         Option.iter (fun d -> try ignore (Domain.join d) with _ -> ()) worker;
         Printexc.raise_with_backtrace exn backtrace in
-  let input = match worker with Some d -> Domain.join d | None -> read_input path in
+  let input = match worker with Some d -> Domain.join d | None -> read_input ~virtual_os path in
   initialize_input ?layout_def ?record_trace ~proof input cfg program
 
-let run_output_file ?image ~path cfg prog =
+let run_output_file ?virtual_os ?image ~path cfg prog =
   Felt.with_temporary_slots (fun () ->
-      let r = initialize ?image ~proof:false ~record_trace:false ~path cfg prog in
+      let r = initialize ?virtual_os ?image ~proof:false ~record_trace:false ~path cfg prog in
       Runner.run_until_end r;
       Finalize.end_run r ~secure:cfg.Runner.secure_run ~allow_missing:cfg.allow_missing_builtins;
       Artifacts.output_lines r)
