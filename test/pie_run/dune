@@ -2,3 +2,8 @@
  (name pie_roundtrip)
  (deps rust4-bitwise.zip)
  (libraries cairovm unix))
+
+(rule
+ (alias runtest)
+ (deps rust4-bitwise.zip stream_members.py)
+ (action (run python3 %{dep:stream_members.py} %{exe:pie_roundtrip.exe})))

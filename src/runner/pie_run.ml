@@ -30,7 +30,7 @@ let addr_of_word w = ((w lsr n_offset_bits) land 0xffff, w land offset_mask)
 external address_bounds : bytes -> int array -> int array -> int -> bool
   = "cvm_pie_address_bounds" [@@noalloc]
 
-let validity_checks pie =
+let metadata_sizes pie =
   let nb = List.length pie.builtins in
   if pie.main > Array.length pie.data then pie_error "Invalid main() address.";
   if Array.length pie.data <> pie.program_segment.size then
@@ -54,11 +54,15 @@ let validity_checks pie =
   List.iter (fun s ->
       if s.index >= Array.length sizes then pie_error "Invalid segment index";
       sizes.(s.index) <- s.size) infos;
-  let occupied = Array.make (Array.length sizes) 0 in
-  if not (address_bounds pie.memory sizes occupied Vm.max_off) then pie_error "Invalid address";
   if List.length pie.builtin_instance_counter <> nb
      || not (List.for_all (fun b -> List.mem_assoc b pie.builtin_instance_counter) pie.builtins)
   then pie_error "Builtin list mismatch in builtin_segments.";
+  sizes
+
+let validity_checks pie =
+  let sizes = metadata_sizes pie in
+  let occupied = Array.make (Array.length sizes) 0 in
+  if not (address_bounds pie.memory sizes occupied Vm.max_off) then pie_error "Invalid address";
   occupied
 
 (* ---- memory ---- *)
@@ -291,8 +295,10 @@ external load_nested_run :
 
 (* The bootloader nests the task's segments in the caller's VM. In particular,
    a builtin can start at a nonzero offset or be represented by an integer. *)
-let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
-  let occupied = validity_checks pie in
+let load_subtask ?source vm pie ~code ~stack ~ret_fp ~ret_pc =
+  let sizes = metadata_sizes pie in
+  let occupied = Array.make (Array.length sizes) 0 in
+  let chunks f = match source with None -> f pie.memory | Some src -> iter_memory src f in
   let bases = Array.make (Array.length occupied) Felt.empty in
   let map index target =
     if index < 0 || index >= Array.length bases || bases.(index) <> Felt.empty then
@@ -303,18 +309,23 @@ let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
   map pie.ret_fp_segment.index ret_fp;
   map pie.ret_pc_segment.index ret_pc;
   let nb = List.length pie.builtins in
-  let mapped = ref 0 and i = ref 0 in
-  while !mapped < nb && !i < n_cells pie do
-    let pos = !i * cell_bytes in
-    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le pie.memory pos)) in
-    if seg = pie.execution_segment.index && off < nb then begin
-      let ptr = decode_value pie.memory (pos + 8) in
-      if not (Felt.is_reloc ptr) then fail "Expected task builtin pointer";
-      map (Felt.rseg ptr) (Hintrt.mem_at vm stack off);
-      incr mapped
-    end;
-    incr i
-  done;
+  let mapped = ref 0 in
+  let exception Mapped in
+  if nb <> 0 then begin
+    try chunks (fun bytes ->
+        for i = 0 to Bytes.length bytes / cell_bytes - 1 do
+          let pos = i*cell_bytes in
+          let seg,off = addr_of_word (Int64.to_int (Bytes.get_int64_le bytes pos)) in
+          if seg = pie.execution_segment.index && off < nb then begin
+            let ptr = decode_value bytes (pos+8) in
+            if not (Felt.is_reloc ptr) then fail "Expected task builtin pointer";
+            map (Felt.rseg ptr) (Hintrt.mem_at vm stack off);
+            incr mapped;
+            if !mapped = nb then raise Mapped
+          end
+        done)
+    with Mapped -> ()
+  end;
   if !mapped <> nb then fail "Missing builtin pointers on task stack";
   List.iter (fun info -> map info.index (Felt.reloc (Vm.add_segment vm) 0)) pie.extra_segments;
   let relocate seg off =
@@ -331,29 +342,31 @@ let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
             | _ -> fail "Task signature address is outside the ECDSA builtin");
            Builtins_ext.add_signature vm ptr rs) (signature_data segment.index j)
    | _ -> ());
-  let state = [|0; !Felt.pool_n; 0|] in
-  while state.(0) < n_cells pie do
-    let i = state.(0) in
-    let pos = i * cell_bytes in
-    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le pie.memory pos)) in
-    let dest = relocate seg off in
-    if not (Felt.is_reloc dest) then fail "Task memory address is not relocatable";
-    let target = Felt.rseg dest and offset = Felt.roff dest in
-    if Vm.seg_ok vm target && vm.seg_flag.(target) = k_plain && offset >= vm.hi.(target) then begin
-      (* Grow only for addresses actually present in the validated archive. *)
-      let base = Felt.roff bases.(seg) in
-      let last = base + occupied.(seg) - 1 in
-      if last <= Vm.max_off && last >= Segment.slen vm.segs.(target) then Vm.grow_seg vm target last;
-      state.(1) <- !Felt.pool_n;
-      state.(2) <- vm.hi.(target);
-      load_nested_run pie.memory seg vm.segs.(target) Felt.pool state bases;
-      Felt.pool_n := state.(1);
-      vm.hi.(target) <- state.(2)
-    end;
-    if state.(0) = i then begin
-      let value = decode_value pie.memory (pos + 8) in
-      let value = if Felt.is_reloc value then relocate (Felt.rseg value) (Felt.roff value) else value in
-      Vm.write_checked vm target offset value;
-      state.(0) <- i + 1
-    end
-  done
+  chunks (fun bytes ->
+    if not (address_bounds bytes sizes occupied Vm.max_off) then pie_error "Invalid address";
+    let state = [|0; !Felt.pool_n; 0|] in
+    while state.(0) < Bytes.length bytes / cell_bytes do
+      let i = state.(0) in
+      let pos = i * cell_bytes in
+      let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le bytes pos)) in
+      let dest = relocate seg off in
+      if not (Felt.is_reloc dest) then fail "Task memory address is not relocatable";
+      let target = Felt.rseg dest and offset = Felt.roff dest in
+      if Vm.seg_ok vm target && vm.seg_flag.(target) = k_plain && offset >= vm.hi.(target) then begin
+        (* Grow only for addresses actually present in the validated archive. *)
+        let base = Felt.roff bases.(seg) in
+        let last = base + occupied.(seg) - 1 in
+        if last <= Vm.max_off && last >= Segment.slen vm.segs.(target) then Vm.grow_seg vm target last;
+        state.(1) <- !Felt.pool_n;
+        state.(2) <- vm.hi.(target);
+        load_nested_run bytes seg vm.segs.(target) Felt.pool state bases;
+        Felt.pool_n := state.(1);
+        vm.hi.(target) <- state.(2)
+      end;
+      if state.(0) = i then begin
+        let value = decode_value bytes (pos + 8) in
+        let value = if Felt.is_reloc value then relocate (Felt.rseg value) (Felt.roff value) else value in
+        Vm.write_checked vm target offset value;
+        state.(0) <- i + 1
+      end
+    done)

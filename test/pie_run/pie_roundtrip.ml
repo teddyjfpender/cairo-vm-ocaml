@@ -23,6 +23,22 @@ let run_pie ?(secure = true) path =
 
 let fails f = match f () with exception Errors.Vm_error _ -> true | _ -> false
 
+let check_stream path =
+  let all = Pie_file.read path in
+  let metadata,source = Pie_file.read_deferred path in
+  assert (metadata = {all with memory=Bytes.empty});
+  let exception Stop in
+  (try Pie_file.iter_memory source (fun _ -> raise Stop) with Stop -> ());
+  for _ = 1 to 2 do
+    let pos = ref 0 in
+    Pie_file.iter_memory source (fun bytes ->
+        let n = Bytes.length bytes in
+        assert (n mod Pie_file.cell_bytes = 0);
+        assert (bytes = Bytes.sub all.memory !pos n);
+        pos := !pos+n);
+    assert (!pos = Bytes.length all.memory)
+  done
+
 let () =
   let config = { Cairo_run.default_config with layout = "small"; trace = true } in
   let first = Cairo_run.run ~config (Program.load_json image) in
@@ -61,6 +77,7 @@ let () =
   Sys.remove again
 
 let () =
+  check_stream "rust4-bitwise.zip";
   let pie = Pie_file.read "rust4-bitwise.zip" in
   let result = Pie_run.run ~layout:"all_cairo" ~trace:true ~secure:true
       ~allow_missing_builtins:false ~fill_holes:false pie in
@@ -79,3 +96,13 @@ let () =
        ignore (Felt.of_z (Z.shift_left Z.one 200)); raise Exit) with
    | exception Exit -> () | _ -> assert false);
   assert (!Felt.pool_n = first)
+
+
+let () = match Array.to_list Sys.argv with
+  | [_; "--stream"; path] -> check_stream path
+  | [_; "--invalid-stream"; path] ->
+      let _,source = Pie_file.read_deferred path in
+      (match Pie_file.iter_memory source ignore with
+       | exception (Errors.Vm_error _ | Failure _) -> ()
+       | () -> failwith "Invalid memory member accepted")
+  | _ -> ()

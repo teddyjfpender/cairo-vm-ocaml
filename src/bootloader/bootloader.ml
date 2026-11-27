@@ -4,25 +4,25 @@ open Hintrt
 module U = Yojson.Safe.Util
 module Code = Bootloader_codes
 
-type task = { program : Program.t; hash_function : int; pie : Pie_file.t option }
+type task = { program : Program.t; hash_function : int; pie : Pie_file.t option; source : Pie_file.memory_source option }
 
 let read_task j =
   let member name = U.member name j in
-  let program, pie = match member "type" with
+  let program, pie, source = match member "type" with
     | `String "RunProgramTask" ->
         let p = match member "program", member "path" with
           | `Assoc _ as p, _ -> Program.load_json p
           | `Null, `String path -> Program.load_file path
           | _ -> fail "RunProgramTask needs a compiled program or path" in
-        p, None
+        p, None, None
     | `String "CairoPiePath" ->
-        let pie = Pie_file.read (U.to_string (member "path")) in
-        Pie_run.stripped_program pie, Some pie
+        let pie,source = Pie_file.read_deferred (U.to_string (member "path")) in
+        Pie_run.stripped_program pie, Some pie, Some source
     | _ -> fail "Unsupported bootloader task type" in
   let hash_function = match String.lowercase_ascii (U.to_string (member "program_hash_function")) with
     | "pedersen" -> 0 | "poseidon" -> 1 | "blake" -> 2
     | value -> fail "Unknown program hash function %s" value in
-  { program; hash_function; pie }
+  { program; hash_function; pie; source }
 
 let initialize ?(on_pie_loaded=ignore) ?layout_def ~proof ~path cfg prog =
   let input = Yojson.Safe.from_file path in
@@ -76,11 +76,11 @@ let initialize ?(on_pie_loaded=ignore) ?layout_def ~proof ~path cfg prog =
             | Some { Program.i_pc = Some pc; _ } -> pc
             | _ -> fail "Missing bootloader label %s" label in
           let return = vm.Vm.pc + pc "ret_pc_label" - pc "call_task" in
-          Pie_run.load_subtask vm pie ~code:!address ~stack:(Felt.reloc 1 (vm.ap - List.length p.builtins))
+          Pie_run.load_subtask ?source:(current ()).source vm pie ~code:!address ~stack:(Felt.reloc 1 (vm.ap - List.length p.builtins))
             ~ret_fp:(Felt.reloc 1 vm.fp) ~ret_pc:(Felt.reloc vm.pc_seg return);
           on_pie_loaded vm;
-          (* Only metadata is needed for subsequent builtin and topology checks. *)
-          active := Some { (current ()) with pie = Some { pie with memory = Bytes.empty } }) (current ()).pie;
+          (* Release the compressed mapping after the task memory is loaded. *)
+          active := Some { (current ()) with source = None }) (current ()).pie;
       enter c.scopes [];
       List.iter (fun (offset, hints) ->
           Cpu.register_runtime_hints vm ~segment:(Felt.rseg !address) ~pc:(Felt.roff !address + offset)

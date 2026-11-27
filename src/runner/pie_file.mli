@@ -27,6 +27,13 @@ val cell_bytes : int
 
 val n_cells : t -> int
 
+type memory_source
+val read_deferred : string -> t * memory_source
+(** Open the archive and decode its metadata, leaving [memory] empty. *)
+val iter_memory : memory_source -> (bytes -> unit) -> unit
+(** Visit serialized cells in file order and check the member CRC. A chunk
+    is valid only during its callback. *)
+
 val read : string -> t
 (** Read a PIE zip. Fails on a malformed archive, a missing member, a
     member whose CRC does not match, or an unknown builtin name. *)

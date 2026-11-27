@@ -91,11 +91,15 @@ let central_directory s =
   in
   loop cd 0 []
 
-let member_bytes s m =
+let member_start s m =
   let o = m.local in
   if not (fits ~limit:(BA.dim s) o 30) || u32 s o <> 0x04034b50 then bad "bad local header for %s" m.name;
   let start = o + 30 + u16 s (o + 26) + u16 s (o + 28) in
   if not (fits ~limit:(BA.dim s) start m.csize) then bad "%s is truncated" m.name;
+  start
+
+let member_bytes s m =
+  let start = member_start s m in
   let b =
     match m.meth with
     | 0 -> if m.csize <> m.usize then bad "%s: stored sizes differ" m.name else stored s start m.csize
@@ -136,19 +140,28 @@ let strip_suffix k =
 let builtin_name k =
   match Builtin.bkind_of_name k with Some _ -> k | None -> fail "Invalid Cairo PIE: unknown builtin %s" k
 
-let read path =
+type memory_source = { archive : archive; member : member }
+external iter_member : archive -> int array -> (bytes -> unit) -> int = "cvm_pie_iter_member"
+
+let iter_memory source consume =
+  let s = source.archive and m = source.member in
+  let offset = member_start s m in
+  let crc = iter_member s [|offset;m.csize;m.usize;m.meth|] consume in
+  if crc <> m.crc then bad "%s: CRC mismatch" m.name
+
+let read_deferred path =
   let s = In_channel.with_open_bin path (fun channel ->
       let length = in_channel_length channel in
       if length < 22 then bad "no end of central directory";
       Unix.map_file (Unix.descr_of_in_channel channel) Bigarray.char Bigarray.c_layout false [|length|]
       |> Bigarray.array1_of_genarray) in
   let members = central_directory s in
-  let get name =
+  let find name =
     match List.find_opt (fun m -> m.name = name) members with
-    | Some m -> member_bytes s m
+    | Some m -> m
     | None -> fail "Invalid Cairo PIE: missing %s" name
   in
-  let json name = Yojson.Safe.from_string (Bytes.unsafe_to_string (get name)) in
+  let json name = Yojson.Safe.from_string (Bytes.unsafe_to_string (member_bytes s (find name))) in
   (match List.find_opt (fun m -> m.name = "version.json") members with
    | None -> ()
    | Some m -> (
@@ -158,8 +171,8 @@ let read path =
   let meta = json "metadata.json" in
   let prog = U.member "program" meta in
   if not (Z.equal (z_of_json (U.member "prime" prog)) Felt.p) then fail "Invalid Cairo PIE: unexpected field prime";
-  let memory = get "memory.bin" in
-  if Bytes.length memory mod cell_bytes <> 0 then fail "Invalid Cairo PIE: memory.bin length is not a multiple of 40";
+  let member = find "memory.bin" in
+  if member.usize mod cell_bytes <> 0 then fail "Invalid Cairo PIE: memory.bin length is not a multiple of 40";
   let resources = json "execution_resources.json" in
   {
     data = Array.of_list (List.map z_of_json (U.to_list (U.member "data" prog)));
@@ -172,11 +185,15 @@ let read path =
     builtin_segments =
       List.map (fun (k, v) -> (builtin_name k, seg_info v)) (assoc "builtin_segments" (U.member "builtin_segments" meta));
     extra_segments = List.map seg_info (U.to_list (U.member "extra_segments" meta));
-    memory;
+    memory = Bytes.empty;
     n_steps = int_of_json (U.member "n_steps" resources);
     builtin_instance_counter =
       List.map
         (fun (k, v) -> (builtin_name (strip_suffix k), int_of_json v))
         (assoc "builtin_instance_counter" (U.member "builtin_instance_counter" resources));
     additional = List.map (fun (k, v) -> (builtin_name (strip_suffix k), v)) (assoc "additional_data" (json "additional_data.json"));
-  }
+  }, {archive=s; member}
+
+let read path =
+  let pie,source = read_deferred path in
+  {pie with memory=member_bytes source.archive source.member}
