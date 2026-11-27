@@ -301,19 +301,18 @@ let () =
       (match keys with
       | k :: _ -> set_val vm c "big_keys" (of_bool (Felt.is_felt k && Z.geq (Felt.to_z k) rc_bound))
       | [] -> fail "squash_dict: no keys");
-      let rec split_last = function [ x ] -> ([], x) | x :: r -> let r', l = split_last r in (x :: r', l) | [] -> assert false in
-      let rest, first = split_last keys in
+      (* Python pops the smallest key from the end. Keep the next key at the
+         head so each subsequent pop shares the tail of the OCaml list. *)
+      let first, rest = match List.rev keys with k :: rest -> (k, rest) | [] -> assert false in
       set c.scopes "access_indices" (Access_indices idx);
       set c.scopes "keys" (Values rest);
       set c.scopes "key" (Value first);
       set_val vm c "first_key" first);
-  let pop_last name scopes =
+  let pop_next name scopes =
     match var scopes name with
-    | Values l | Ints l ->
-        let rec split = function [ x ] -> ([], x) | x :: r -> let r', l = split r in (x :: r', l) | [] -> fail "pop from empty list" in
-        let rest, last = split l in
-        (match var scopes name with Ints _ -> set scopes name (Ints rest) | _ -> set scopes name (Values rest));
-        last
+    | Values (x :: xs) -> set scopes name (Values xs); x
+    | Ints (x :: xs) -> set scopes name (Ints xs); x
+    | Ints [] | Values [] -> fail "pop from empty list"
     | _ -> fail "%s is not a list" name
   in
   let access_list scopes =
@@ -322,16 +321,16 @@ let () =
     | _ -> fail "squash_dict scope corrupted"
   in
   reg H.h25 (fun c vm ->
-      let l = List.rev (List.sort compare (access_list c.scopes)) in
-      set c.scopes "current_access_indices" (Ints l);
-      let cur = pop_last "current_access_indices" c.scopes in
+      (* The collection loop already restores increasing access order. *)
+      set c.scopes "current_access_indices" (Ints (access_list c.scopes));
+      let cur = pop_next "current_access_indices" c.scopes in
       set c.scopes "current_access_index" (Int (z cur));
       let rc = get_ptr vm c "range_check_ptr" in
       write_checked vm (Felt.rseg rc) (Felt.roff rc) (Felt.small cur));
   let nonempty scopes name = match var scopes name with Ints l | Values l -> l <> [] | _ -> fail "not a list" in
   reg H.h26 (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
   reg H.h27 (fun c vm ->
-      let nw = pop_last "current_access_indices" c.scopes in
+      let nw = pop_next "current_access_indices" c.scopes in
       let cur = Z.to_int (var_z c.scopes "current_access_index") in
       set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (nw - cur - 1));
       set c.scopes "current_access_index" (Int (z nw)));
@@ -342,7 +341,7 @@ let () =
   reg H.h31 (fun c _ -> check (not (nonempty c.scopes "keys")) "assert len(keys) == 0");
   reg H.h32 (fun c vm ->
       if not (nonempty c.scopes "keys") then fail "No keys left but remaining_accesses > 0.";
-      let k = pop_last "keys" c.scopes in
+      let k = pop_next "keys" c.scopes in
       set c.scopes "key" (Value k);
       set_val vm c "next_key" k);
   (* dict_new *)
@@ -383,6 +382,27 @@ let () =
       let t = get_tracker c.scopes (get_ptr vm c "squashed_dict_start") in
       t.current_ptr <- get_ptr vm c "squashed_dict_end");
   reg H.h39 (fun c vm -> write_ap vm (new_dict vm c.scopes None (Some (get_val vm c "default_value"))))
+
+(* Rows before the last result were strictly below its key. Write-once
+   memory preserves that fact, even for an unsorted array. A larger query
+   can resume at the result itself; a smaller one must restart. *)
+let search_lower cursor vm arr width length key =
+  let start =
+    match !cursor with
+    | Some (owner, base, stride, last_key, index)
+      when owner == vm && arr = base && width = stride && Felt.compare key last_key >= 0 ->
+        min length index
+    | _ -> 0
+  in
+  let rec scan i =
+    if i = length then i
+    else
+      let v = mem_at vm arr (width * i) in
+      if Felt.is_reloc v || Felt.compare v key >= 0 then i else scan (i + 1)
+  in
+  let index = scan start in
+  cursor := Some (vm, arr, width, key, index);
+  index
 
 let () =
   (* unsafe_keccak *)
@@ -470,32 +490,28 @@ let () =
       set_val vm c "r" (zf r);
       set_val vm c "biased_q" (zf (Z.add q bound)));
   (* find_element *)
-  reg H.h54 (fun c vm ->
-      let arr = get_ptr vm c "array_ptr" in
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      if es <= 0 then fail "Invalid value for elm_size.";
-      let key = get_val vm c "key" in
-      let n = Felt.to_nat (get_felt vm c "n_elms") in
-      if n < 0 then fail "Invalid value for n_elms.";
-      let rec go i =
-        if i >= n then fail "Key %s was not found." (value_to_string key)
-        else if Felt.equal (mem_at vm arr (es * i)) key then set_val vm c "index" (Felt.small i)
-        else go (i + 1)
-      in
-      go 0);
-  reg H.h55 (fun c vm ->
-      let arr = get_ptr vm c "array_ptr" in
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      if es <= 0 then fail "Invalid value for elm_size.";
-      let n = Felt.to_nat (get_felt vm c "n_elms") in
-      if n < 0 then fail "Invalid value for n_elms.";
-      let key = get_felt vm c "key" in
-      let rec go i =
-        if i >= n then set_val vm c "index" (Felt.small n)
-        else if compare_values (mem_at vm arr (es * i)) key >= 0 then set_val vm c "index" (Felt.small i)
-        else go (i + 1)
-      in
-      go 0);
+  reg H.h54 (fun c ->
+      let cache = ref None in
+      fun vm ->
+        let arr = get_ptr vm c "array_ptr" in
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        if es <= 0 then fail "Invalid value for elm_size.";
+        let key = get_val vm c "key" in
+        let n = Felt.to_nat (get_felt vm c "n_elms") in
+        if n < 0 then fail "Invalid value for n_elms.";
+        let index = Find_element.lookup cache vm arr es n key in
+        set_val vm c "index" (Felt.small index));
+  reg H.h55 (fun c ->
+      let cursor = ref None in
+      fun vm ->
+        let arr = get_ptr vm c "array_ptr" in
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        if es <= 0 then fail "Invalid value for elm_size.";
+        let n = Felt.to_nat (get_felt vm c "n_elms") in
+        if n < 0 then fail "Invalid value for n_elms.";
+        let key = get_felt vm c "key" in
+        let index = search_lower cursor vm arr es n key in
+        set_val vm c "index" (Felt.small index));
   reg H.h56 (fun c _ -> enter c.scopes [ ("__usort_max_size", Nothing) ]);
   reg H.h57 (fun c vm ->
       let inp = get_ptr vm c "input" in
@@ -520,11 +536,17 @@ let () =
       set c.scopes "last_pos" (Int Z.zero);
       let pos = match var c.scopes "positions_dict" with Positions p -> p | _ -> fail "positions_dict missing" in
       let l = match Hashtbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
-      set c.scopes "positions" (Ints (List.rev l)));
+      (* h57 stores positions in increasing order. Consume that immutable list
+         from the head, preserving positions_dict for subsequent lookups. *)
+      set c.scopes "positions" (Ints l));
   reg H.h59 (fun c _ -> match var c.scopes "positions" with Ints [] -> () | _ -> fail "assert len(positions) == 0");
   reg H.h60 (fun c vm ->
-      let rec split = function [ x ] -> ([], x) | x :: r -> let r', l = split r in (x :: r', l) | [] -> fail "pop from empty list" in
-      let rest, cur = match var c.scopes "positions" with Ints l -> split l | _ -> fail "positions" in
+      let cur, rest =
+        match var c.scopes "positions" with
+        | Ints (cur :: rest) -> (cur, rest)
+        | Ints [] -> fail "pop from empty list"
+        | _ -> fail "positions"
+      in
       set c.scopes "positions" (Ints rest);
       let last = Z.to_int (var_z c.scopes "last_pos") in
       set_val vm c "next_item_index" (Felt.small (cur - last));
@@ -535,6 +557,71 @@ let () =
   in
   reg H.h61 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 10))));
   reg H.h62 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 2))))
+
+(* ---- set membership ---- *)
+
+(* Cairo memory is write-once. A row whose first word has been read can
+   be ruled out for any different first word, even if its suffix has holes.
+   Cache the earliest row for each first word and check matching rows with
+   the ordinary element comparison. Keep just one range per compiled hint. *)
+module Set_words = Hashtbl.Make (struct
+  type t = int
+  let equal = Felt.equal
+  let hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
+end)
+
+type set_index = {
+  owner : vm;
+  base : int;
+  width : int;
+  first : int Set_words.t;
+  mutable scanned : int; (* cell offset of the next unindexed row *)
+}
+
+let find_set_element cache vm base total elm =
+  let es = Array.length elm and e0 = elm.(0) in
+  let seg = Felt.rseg base and start = Felt.roff base in
+  let mem = vm.segs.(seg) in
+  let capacity = slen mem in
+  let cell off =
+    let v = sget mem off in
+    if v = 0 then fail "Unknown memory cell %d:%d" seg off;
+    v
+  in
+  let index =
+    if total / es < 32 then None
+    else match !cache with
+      | Some t when t.owner == vm && t.base = base && t.width = es -> !cache
+      | _ ->
+          let t = { owner = vm; base; width = es; first = Set_words.create 32; scanned = 0 } in
+          cache := Some t;
+          (* A single lookup pays only for the scan. Start indexing if this
+             hint sees the same range again. *)
+          None
+  in
+  let from = match index with
+    | None -> 0
+    | Some t -> Option.value (Set_words.find_opt t.first e0) ~default:t.scanned
+  in
+  let rec search i =
+    if i >= total then -1
+    else begin
+      let off = start + i in
+      if off + es > capacity then fail "Unknown memory cell %d:%d" seg off;
+      let v = cell off in
+      (match index with
+      | Some t when i = t.scanned ->
+          if not (Set_words.mem t.first v) then Set_words.add t.first v i;
+          t.scanned <- i + es
+      | _ -> ());
+      if Felt.equal v e0 then begin
+        let j = ref 1 in
+        while !j < es && Felt.equal (cell (off + !j)) elm.(!j) do incr j done;
+        if !j = es then i / es else search (i + es)
+      end else search (i + es)
+    end
+  in
+  search from
 
 (* ---- secp ---- *)
 let () =
@@ -619,44 +706,21 @@ let () =
       let y = Z.powm ys (Z.div (Z.succ secp_p) (z 4)) secp_p in
       let v = felt_z vm c "v" in
       setz c "value" (if Z.equal (Z.erem v (z 2)) (Z.erem y (z 2)) then y else Z.erem (Z.neg y) secp_p));
-  (* set_add *)
-  reg H.h81 (fun c vm ->
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      check (es > 0) "assert ids.elm_size > 0";
-      let sp = get_ptr vm c "set_ptr" and se = get_ptr vm c "set_end_ptr" in
-      check (Felt.rseg sp = Felt.rseg se && Felt.roff sp <= Felt.roff se) "assert ids.set_ptr <= ids.set_end_ptr";
-      let ep = get_ptr vm c "elm_ptr" in
-      let elm = Array.of_list (read_range vm ep es) in
-      let total = Felt.roff se - Felt.roff sp in
-      let sseg = Felt.rseg sp and soff = Felt.roff sp in
-      let a = vm.segs.(sseg) in
-      let cell k =
-        let o = soff + k in
-        let v = if o < slen a then sget a o else 0 in
-        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
-        v
-      in
-      let n_cells = slen a in
-      let e0 = elm.(0) in
-      let big0 = Felt.is_big e0 in
-      let found = ref (-1) and i = ref 0 in
-      while !found < 0 && !i < total do
-        let o = soff + !i in
-        if o + es > n_cells then fail "Unknown memory cell %d:%d" sseg o;
-        let v = sget a o in
-        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
-        if v = e0 || (big0 && Felt.equal v e0) then begin
-          let j = ref 1 in
-          while !j < es && Felt.equal (cell (!i + !j)) elm.(!j) do incr j done;
-          if !j >= es then found := !i
-        end;
-        i := !i + es
-      done;
-      if !found < 0 then set_val vm c "is_elm_in_set" Felt.zero
-      else begin
-        set_val vm c "index" (Felt.small (!found / es));
-        set_val vm c "is_elm_in_set" Felt.one
-      end);
+  reg H.h81 (fun c ->
+      let cache = ref None in
+      fun vm ->
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        check (es > 0) "assert ids.elm_size > 0";
+        let sp = get_ptr vm c "set_ptr" and se = get_ptr vm c "set_end_ptr" in
+        check (Felt.rseg sp = Felt.rseg se && Felt.roff sp <= Felt.roff se) "assert ids.set_ptr <= ids.set_end_ptr";
+        let ep = get_ptr vm c "elm_ptr" in
+        let elm = Array.of_list (read_range vm ep es) in
+        let found = find_set_element cache vm sp (Felt.roff se - Felt.roff sp) elm in
+        if found < 0 then set_val vm c "is_elm_in_set" Felt.zero
+        else begin
+          set_val vm c "index" (Felt.small found);
+          set_val vm c "is_elm_in_set" Felt.one
+        end);
   reg H.h82 (fun c vm ->
       let a = felt_z vm c "a" in
       set_val vm c "low" (zf (Z.logand a (mask 64)));
@@ -681,7 +745,7 @@ let () =
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in
   match Hashtbl.find_opt table h.code with
-  | Some f -> fun vm -> f ctx vm
+  | Some f -> f ctx
   | None ->
       fun _ ->
         fail "Unknown hint: %s" (if String.length h.code > 80 then String.sub h.code 0 80 ^ "..." else h.code)

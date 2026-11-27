@@ -109,7 +109,7 @@ type vm = {
   mutable icache : int array;
   (* trace *)
   trace_on : bool;
-  mutable trace : seg; (* pc_off, ap, fp triples; pc segment assumed 0, else tagged *)
+  mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable builtins : builtin list;
 }
@@ -128,7 +128,7 @@ let create ~trace =
     steps = 0;
     icache = [||];
     trace_on = trace;
-    trace = (if trace then seg_make (3 lsl 26) else empty_seg);
+    trace = (if trace then seg_make (1 lsl 26) else empty_seg);
     tlen = 0;
     builtins = [];
   }
@@ -280,6 +280,17 @@ let input_felts vm seg inst n =
   done;
   if !ok then Some r else None
 
+(* Inputs and raw outputs occupy reserved, uncommitted slots at the end of
+   the pool. Compact the canonical outputs forward, starting at the input
+   base: the write cursor can never overtake an unread output. Only big
+   results advance pool_n. The caller reserved space for the whole block. *)
+let cache_outputs b off first_output count =
+  for i = 0 to count - 1 do
+    let result = c_code_of_slot !pool (first_output + i) !pool_n in
+    commit result;
+    cache_set b (off + i) result
+  done
+
 let deduce_builtin vm (b : builtin) seg off =
   let cpi = cells_per_instance b.kind in
   let idx = off mod cpi in
@@ -295,9 +306,20 @@ let deduce_builtin vm (b : builtin) seg off =
       | Some inp -> (
           match b.kind with
           | Pedersen ->
-              reserve 1;
-              let r = c_pedersen !pool inp.(0) inp.(1) !pool_n in
-              commit r;
+              (* Equal adjacent inputs have equal hashes. Reuse only an
+                 output already computed by this builtin, never a memory
+                 value supplied by the program. *)
+              let prev = if inst >= cpi then cache_get b (off - cpi) else 0 in
+              let r =
+                if prev <> 0 && Felt.equal inp.(0) (read vm seg (inst - cpi))
+                   && Felt.equal inp.(1) (read vm seg (inst - cpi + 1)) then prev
+                else begin
+                  reserve 1;
+                  let result = c_pedersen !pool inp.(0) inp.(1) !pool_n in
+                  commit result;
+                  result
+                end
+              in
               cache_set b off r;
               r
           | Bitwise ->
@@ -321,13 +343,7 @@ let deduce_builtin vm (b : builtin) seg off =
                 c_load_slot !pool inp.(i) (s + i)
               done;
               c_poseidon !pool s (s + 3);
-              pool_n := s + 6;
-              for i = 0 to 2 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 3 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 3 + i) r
-              done;
+              cache_outputs b (inst + 3) (s + 3) 3;
               cache_get b off
           | Keccak ->
               Array.iteri
@@ -339,13 +355,7 @@ let deduce_builtin vm (b : builtin) seg off =
                 c_load_slot !pool inp.(i) (s + i)
               done;
               c_keccak !pool s (s + 8);
-              pool_n := s + 16;
-              for i = 0 to 7 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 8 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 8 + i) r
-              done;
+              cache_outputs b (inst + 8) (s + 8) 8;
               cache_get b off
           | Ec_op ->
               reserve 7;
@@ -357,13 +367,7 @@ let deduce_builtin vm (b : builtin) seg off =
               if rc = 2 then fail "EcOp builtin: point not on curve";
               if rc = 1 then fail "EcOp builtin: EcOpSameXCoordinate";
               if rc <> 0 then fail "EcOp builtin: invalid point";
-              pool_n := s + 7;
-              for i = 0 to 1 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 5 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 5 + i) r
-              done;
+              cache_outputs b (inst + 5) (s + 5) 2;
               cache_get b off
           | _ -> 0)
     end
@@ -445,20 +449,30 @@ let[@inline never] fetch_slow vm =
 let[@inline never] trace_grow vm =
   vm.trace <- seg_grow vm.trace (2 * slen vm.trace)
 
+(* Pack common register triples with low bit 1. A full triple starts
+   with a relocatable PC code, whose low bit is always 0.
+   Keep this layout in sync with cvm_write_trace. *)
+let[@inline] record_trace vm pc_seg pc ap fp =
+  let i = vm.tlen in
+  if i + 3 > slen vm.trace then trace_grow vm;
+  let t = vm.trace in
+  if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
+    sset t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
+    vm.tlen <- i + 1
+  end else begin
+    sset t i (reloc pc_seg pc);
+    sset t (i + 1) ap;
+    sset t (i + 2) fp;
+    vm.tlen <- i + 3
+  end
+
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off
 
 let[@inline never] slow_operand_read vm seg off = if seg_ok vm seg then read vm seg off else fail "Unknown segment %d" seg
 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
-  if vm.trace_on then begin
-    if vm.tlen + 3 > slen vm.trace then trace_grow vm;
-    let t = vm.trace and i = vm.tlen in
-    sset t i (reloc pc_seg pc);
-    sset t (i + 1) ap;
-    sset t (i + 2) fp;
-    vm.tlen <- i + 3
-  end;
+  if vm.trace_on then record_trace vm pc_seg pc ap fp;
   let off0 = (d land 0xffff) - 0x8000 in
   let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
   let off2 = ((d lsr 32) land 0xffff) - 0x8000 in
@@ -818,14 +832,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                   else (-1, 0)
             in
             if new_fp >= 0 && new_ap >= 0 && new_pc >= 0 then begin
-              if vm.trace_on then begin
-                if vm.tlen + 3 > slen vm.trace then trace_grow vm;
-                let t = vm.trace and i = vm.tlen in
-                sset t i (reloc !pc_seg pcv);
-                sset t (i + 1) apv;
-                sset t (i + 2) fpv;
-                vm.tlen <- i + 3
-              end;
+              if vm.trace_on then record_trace vm !pc_seg pcv apv fpv;
               pc := new_pc;
               pc_seg := new_seg;
               ap := new_ap;

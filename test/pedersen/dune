@@ -1,0 +1,3 @@
+(test
+ (name adjacent_hash)
+ (libraries cairovm zarith))

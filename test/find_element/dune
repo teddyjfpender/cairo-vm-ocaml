@@ -1,0 +1,3 @@
+(test
+ (name element_lookup)
+ (libraries cairovm zarith))

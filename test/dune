@@ -1,0 +1,3 @@
+(test
+ (name set_lookup)
+ (libraries cairovm))

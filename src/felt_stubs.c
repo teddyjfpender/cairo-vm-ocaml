@@ -72,11 +72,36 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
 static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
+/* For T = high * R + low, REDC(T) = high + REDC(low) before
+   the final conditional subtraction. Reduce only the low half in the four
+   cancellation rounds, then add high once. Since p = 1 + P3 * 2^192,
+   m = -x0 cancels the bottom word, carrying (x0 != 0) into x1. */
+static inline void mont_reduce(u64 r[4], u64 x0, u64 x1, u64 x2, u64 x3,
+                               u64 h0, u64 h1, u64 h2, u64 h3) {
+  u128 c;
+#define CANCEL(a, b, d, e) do {                                  \
+    u64 m = -(a);                                                 \
+    c = (u128)(b) + ((a) != 0); (b) = (u64)c;                    \
+    c = (u128)(d) + (u64)(c >> 64); (d) = (u64)c;                \
+    c = (u128)m * P[3] + (e) + (u64)(c >> 64);                    \
+    (e) = (u64)c; (a) = (u64)(c >> 64);                          \
+  } while (0)
+  CANCEL(x0, x1, x2, x3);
+  CANCEL(x1, x2, x3, x0);
+  CANCEL(x2, x3, x0, x1);
+  CANCEL(x3, x0, x1, x2);
+#undef CANCEL
+  const u64 low[4] = {x0, x1, x2, x3}, high[4] = {h0, h1, h2, h3};
+  add4(r, low, high);
+  /* T < p^2 and p < R, so the unreduced result is below 2p < R. */
+  if (geq_p(r)) sub4(r, r, P);
+}
+
 static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   /* 512-bit product, then four reduction rounds exploiting p = 1 + P3*2^192:
      adding m*p with m = -t[i] clears limb i (carry = t[i] != 0) and adds
      m*P3 at limb i+3 - one multiplication per round. */
-  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8;
+  u64 t0, t1, t2, t3, t4, t5, t6, t7;
   u128 c;
   u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
 #define ROW(bi, x0, x1, x2, x3, x4)                                   \
@@ -91,35 +116,14 @@ static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   ROW(b[2], t2, t3, t4, t5, t6)
   ROW(b[3], t3, t4, t5, t6, t7)
 #undef ROW
-  t8 = 0;
-  const u64 P3 = 0x0800000000000011ULL;
-#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
-  { u64 m = -x0; u64 cy = x0 != 0;                                    \
-    c = (u128)x1 + cy; x1 = (u64)c;                                   \
-    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
-    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
-    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
-    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
-    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
-    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
-    x8 += (u64)(c >> 64); }
-  { u64 d9 = 0;
-    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
-    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
-    { u64 d10 = 0; RED(t2, t3, t4, t5, t6, t7, t8, d9, d10) (void)d10; }
-    { u64 d11 = 0; RED(t3, t4, t5, t6, t7, t8, d9, d9, d11) (void)d11; }
-  }
-#undef RED
-  u64 t[4] = {t4, t5, t6, t7}; /* t8 == 0: result < 2p < 2^256 */
-  if (geq_p(t)) sub4(t, t, P);
-  r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
+  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 /* Montgomery squaring: 6 cross products doubled + 4 squares, then the same
    specialised reduction as mont_mul. */
 static inline void mont_sqr(u64 r[4], const u64 a[4]) {
   u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8 = 0;
+  u64 t0, t1, t2, t3, t4, t5, t6, t7;
   u128 c;
   c = (u128)a0 * a1; t1 = (u64)c;
   c = (u128)a0 * a2 + (u64)(c >> 64); t2 = (u64)c;
@@ -145,27 +149,7 @@ static inline void mont_sqr(u64 r[4], const u64 a[4]) {
   u128 s3 = (u128)a3 * a3;
   c = (u128)t6 + (u64)s3 + (u64)(c >> 64); t6 = (u64)c;
   c = (u128)t7 + (u64)(s3 >> 64) + (u64)(c >> 64); t7 = (u64)c;
-  const u64 P3 = 0x0800000000000011ULL;
-#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
-  { u64 m = -x0; u64 cy = x0 != 0;                                    \
-    c = (u128)x1 + cy; x1 = (u64)c;                                   \
-    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
-    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
-    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
-    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
-    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
-    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
-    x8 += (u64)(c >> 64); }
-  { u64 d9 = 0, d10 = 0, d11 = 0;
-    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
-    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
-    RED(t2, t3, t4, t5, t6, t7, t8, d9, d10)
-    RED(t3, t4, t5, t6, t7, t8, d9, d10, d11)
-    (void)d11; }
-#undef RED
-  u64 t[4] = {t4, t5, t6, t7};
-  if (geq_p(t)) sub4(t, t, P);
-  r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
+  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 static void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
@@ -759,7 +743,7 @@ value cvm_zalloc(value vn) {
 static inline intnat rel_seg(intnat c) { return c >> 42; }
 static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
 
-/* trace: bigarray of (pc code, ap, fp) triples; table: OCaml int array of segment bases */
+/* Decode Vm.record_trace entries to ordinary relocated (ap, fp, pc) triples. */
 value cvm_write_trace(value path, value trace, value vlen, value table) {
   FILE *f = fopen(String_val(path), "wb");
   if (!f) caml_failwith("cannot open trace file");
@@ -769,12 +753,22 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   intnat n = Long_val(vlen);
   intnat base1 = Long_val(Field(table, 1));
   size_t pos = 0;
-  for (intnat i = 0; i < n; i += 3) {
-    intnat pc = t[i];
+  const u64 offset_mask = (1ULL << 23) - 1;
+  const u64 base0 = Long_val(Field(table, 0));
+  for (intnat i = 0; i < n;) {
+    intnat word = t[i++];
     u64 e[3];
-    e[0] = (u64)(base1 + t[i + 1]);
-    e[1] = (u64)(base1 + t[i + 2]);
-    e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    if (word & 1) {
+      u64 packed = (u64)word;
+      e[0] = base1 + ((packed >> 24) & offset_mask);
+      e[1] = base1 + ((packed >> 1) & offset_mask);
+      e[2] = base0 + ((packed >> 47) & 0xffff);
+    } else {
+      intnat pc = word;
+      e[0] = (u64)(base1 + t[i++]);
+      e[1] = (u64)(base1 + t[i++]);
+      e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    }
     memcpy(buf + pos, e, 24);
     pos += 24;
     if (pos + 24 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }
