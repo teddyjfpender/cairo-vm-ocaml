@@ -10,6 +10,7 @@ external c_limb86 : bytes -> bytes -> (int[@untagged]) -> (int[@untagged]) -> (i
   = "cvm_sf_limb86_byte" "cvm_sf_limb86" [@@noalloc]
 
 let of_z z =
+  assert (Z.sign z >= 0 && Z.numbits z <= 256);
   let b = Bytes.make 32 '\000' and s = Z.to_bits z in
   Bytes.blit_string s 0 b 0 (min 32 (String.length s));
   b

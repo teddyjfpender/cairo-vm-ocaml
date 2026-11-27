@@ -1,5 +1,6 @@
-(** Integers modulo the secp256k1/r1 and ed25519 hint primes, computed by the
-    C kernel on 32-byte buffers instead of Zarith values. Results are the
+(** Integers modulo any p in (1, 2^256) (in practice the secp256k1/r1 and
+    ed25519 hint moduli), computed by the C kernel on 32-byte buffers instead
+    of Zarith values. Results are the
     non-negative floor residues num-bigint's [mod_floor] gives. *)
 
 type t
