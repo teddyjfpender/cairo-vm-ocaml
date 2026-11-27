@@ -759,7 +759,7 @@ value cvm_zalloc(value vn) {
 static inline intnat rel_seg(intnat c) { return c >> 42; }
 static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
 
-/* trace: bigarray of (pc code, ap, fp) triples; table: OCaml int array of segment bases */
+/* Decode Vm.record_trace entries to ordinary relocated (ap, fp, pc) triples. */
 value cvm_write_trace(value path, value trace, value vlen, value table) {
   FILE *f = fopen(String_val(path), "wb");
   if (!f) caml_failwith("cannot open trace file");
@@ -769,12 +769,22 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   intnat n = Long_val(vlen);
   intnat base1 = Long_val(Field(table, 1));
   size_t pos = 0;
-  for (intnat i = 0; i < n; i += 3) {
-    intnat pc = t[i];
+  const u64 offset_mask = (1ULL << 23) - 1;
+  const u64 base0 = Long_val(Field(table, 0));
+  for (intnat i = 0; i < n;) {
+    intnat word = t[i++];
     u64 e[3];
-    e[0] = (u64)(base1 + t[i + 1]);
-    e[1] = (u64)(base1 + t[i + 2]);
-    e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    if (word >= 0) {
+      u64 packed = (u64)word;
+      e[0] = base1 + ((packed >> 23) & offset_mask);
+      e[1] = base1 + (packed & offset_mask);
+      e[2] = base0 + (packed >> 46);
+    } else {
+      intnat pc = t[i++];
+      e[0] = (u64)(base1 + t[i++]);
+      e[1] = (u64)(base1 + t[i++]);
+      e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    }
     memcpy(buf + pos, e, 24);
     pos += 24;
     if (pos + 24 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }

@@ -109,7 +109,7 @@ type vm = {
   mutable icache : int array;
   (* trace *)
   trace_on : bool;
-  mutable trace : seg; (* pc_off, ap, fp triples; pc segment assumed 0, else tagged *)
+  mutable trace : seg; (* packed entries or an escape followed by pc, ap, fp *)
   mutable tlen : int;
   mutable builtins : builtin list;
 }
@@ -128,7 +128,7 @@ let create ~trace =
     steps = 0;
     icache = [||];
     trace_on = trace;
-    trace = (if trace then seg_make (3 lsl 26) else empty_seg);
+    trace = (if trace then seg_make (1 lsl 26) else empty_seg);
     tlen = 0;
     builtins = [];
   }
@@ -445,20 +445,31 @@ let[@inline never] fetch_slow vm =
 let[@inline never] trace_grow vm =
   vm.trace <- seg_grow vm.trace (2 * slen vm.trace)
 
+(* Normal program PCs and stack offsets fit in one nonnegative OCaml int.
+   The escape retains the original representation for every other entry.
+   Keep this layout in sync with cvm_write_trace. *)
+let[@inline] record_trace vm pc_seg pc ap fp =
+  let i = vm.tlen in
+  if i + 4 > slen vm.trace then trace_grow vm;
+  let t = vm.trace in
+  if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
+    sset t i ((pc lsl 46) lor (ap lsl 23) lor fp);
+    vm.tlen <- i + 1
+  end else begin
+    sset t i (-1);
+    sset t (i + 1) (reloc pc_seg pc);
+    sset t (i + 2) ap;
+    sset t (i + 3) fp;
+    vm.tlen <- i + 4
+  end
+
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off
 
 let[@inline never] slow_operand_read vm seg off = if seg_ok vm seg then read vm seg off else fail "Unknown segment %d" seg
 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
-  if vm.trace_on then begin
-    if vm.tlen + 3 > slen vm.trace then trace_grow vm;
-    let t = vm.trace and i = vm.tlen in
-    sset t i (reloc pc_seg pc);
-    sset t (i + 1) ap;
-    sset t (i + 2) fp;
-    vm.tlen <- i + 3
-  end;
+  if vm.trace_on then record_trace vm pc_seg pc ap fp;
   let off0 = (d land 0xffff) - 0x8000 in
   let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
   let off2 = ((d lsr 32) land 0xffff) - 0x8000 in
@@ -818,14 +829,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                   else (-1, 0)
             in
             if new_fp >= 0 && new_ap >= 0 && new_pc >= 0 then begin
-              if vm.trace_on then begin
-                if vm.tlen + 3 > slen vm.trace then trace_grow vm;
-                let t = vm.trace and i = vm.tlen in
-                sset t i (reloc !pc_seg pcv);
-                sset t (i + 1) apv;
-                sset t (i + 2) fpv;
-                vm.tlen <- i + 3
-              end;
+              if vm.trace_on then record_trace vm !pc_seg pcv apv fpv;
               pc := new_pc;
               pc_seg := new_seg;
               ap := new_ap;
