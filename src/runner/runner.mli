@@ -54,6 +54,7 @@ val entry_pc : config -> Program.t -> int
 (** The pc of [config.entrypoint]. *)
 
 val initialize :
+  ?image:Program_image.t ->
   ?compile_hint:(Program.t -> Hintrt.scopes -> Program.hint -> Vm.vm -> unit) ->
   ?layout_def:Layout.t -> ?proof:bool -> config -> Program.t -> t
 (** Validate the program's builtins against the layout, load the program and

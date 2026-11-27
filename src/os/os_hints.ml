@@ -126,7 +126,7 @@ let register ~os_program ~watch ~accessed ~set_pages hints =
       set_val vm c "full_output" (of_bool full));
   compile
 
-let initialize_input ?layout_def ?(record_trace=true) ~proof hints cfg prog =
+let initialize_input ?image ?layout_def ?(record_trace=true) ~proof hints cfg prog =
   let runner = ref None in
   let watch = not (record_trace || cfg.Runner.trace || proof) in
   let accessed ptr length =
@@ -135,12 +135,12 @@ let initialize_input ?layout_def ?(record_trace=true) ~proof hints cfg prog =
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
   let compile_hint = register ~os_program:prog ~watch ~accessed ~set_pages hints in
-  let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
+  let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
   runner := Some r;
   r
 
-let initialize ?layout_def ?record_trace ~proof ~path cfg prog =
-  initialize_input ?layout_def ?record_trace ~proof (read_input path) cfg prog
+let initialize ?image ?layout_def ?record_trace ~proof ~path cfg prog =
+  initialize_input ?image ?layout_def ?record_trace ~proof (read_input path) cfg prog
 
 let initialize_files ?layout_def ?record_trace ~proof ~path cfg program_path =
   (* Parsing only produces immutable program and witness data. VM setup and
@@ -158,9 +158,9 @@ let initialize_files ?layout_def ?record_trace ~proof ~path cfg program_path =
   let input = match worker with Some d -> Domain.join d | None -> read_input path in
   initialize_input ?layout_def ?record_trace ~proof input cfg program
 
-let run_output_file ~path cfg prog =
+let run_output_file ?image ~path cfg prog =
   Felt.with_temporary_slots (fun () ->
-      let r = initialize ~proof:false ~record_trace:false ~path cfg prog in
+      let r = initialize ?image ~proof:false ~record_trace:false ~path cfg prog in
       Runner.run_until_end r;
       Finalize.end_run r ~secure:cfg.Runner.secure_run ~allow_missing:cfg.allow_missing_builtins;
       Artifacts.output_lines r)

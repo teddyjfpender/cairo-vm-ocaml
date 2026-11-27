@@ -95,7 +95,7 @@ let add_zero_segment r =
       let seg = Builtins_ext.add_zero_segment r.vm mods in
       { r with zero_seg = seg; zero_size = used_size r.vm seg }
 
-let initialize ?(compile_hint = Hints.compile) ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : t =
+let initialize ?image ?(compile_hint = Hints.compile) ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : t =
   let prog_builtins =
     List.map
       (fun n -> match bkind_of_name n with Some k -> k | None -> fail "Unknown builtin %s" n)
@@ -140,7 +140,9 @@ let initialize ?(compile_hint = Hints.compile) ?layout_def ?(proof = false) (cfg
   in
   vm.builtins <- builtins;
   (* program image *)
-  Array.iteri (fun i z -> write vm 0 i (Felt.of_z z)) prog.data;
+  (match image with
+   | None -> Array.iteri (fun i z -> write vm 0 i (Felt.of_z z)) prog.data
+   | Some image -> Program_image.load image prog vm);
   let builtin_stack =
     List.map
       (fun k ->

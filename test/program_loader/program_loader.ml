@@ -70,3 +70,28 @@ let () =
     {|"attributes":[["x",0,1,"test"]]|};
     {|"attributes":null|};
   ]
+
+let () =
+  let word = Z.of_string "0x480680017fff8000" and large = Z.shift_left Z.one 170 in
+  let hint = {Program.code=""; scopes=[]; h_group=0; h_offset=0; ref_ids=[]} in
+  let p = {Program.data=[|word;large;large;Z.minus_one;Z.zero|]; builtins=[];
+    main=Some 0; start=None; end_=None; hints=[0,[hint]]; references=[||]; identifiers=Hashtbl.create 0} in
+  let first = !Felt.pool_n in
+  let image = Program_image.prepare p in
+  assert (!Felt.pool_n = first);
+  let fresh () = let vm = Vm.create ~trace:false in ignore (Vm.add_segment vm); vm in
+  for i = 1 to 2 do
+    Felt.with_temporary_slots (fun () ->
+        ignore (Felt.of_z (Z.add large (Z.of_int i)));
+        let vm = fresh () in
+        Program_image.load image p vm;
+        Array.iteri (fun off z ->
+            assert (Z.equal (Felt.to_z (Vm.read vm 0 off)) (Z.erem z Felt.p))) p.data;
+        assert (vm.icache.(0) = Instruction.decode_word word lor (1 lsl Instruction.ext_shift));
+        assert (vm.icache.(1) = 0);
+        assert (vm.hi.(0) = Array.length p.data))
+  done;
+  p.data.(0) <- Z.one;
+  match Program_image.load image p (fresh ()) with
+  | exception Invalid_argument _ -> ()
+  | () -> failwith "stale program image accepted"
