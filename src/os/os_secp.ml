@@ -35,13 +35,14 @@ let add c p q = match p, q with
         let rx = Z.erem Z.(slope * slope - x - xx) c.prime in
         Point (rx, Z.erem Z.(slope * (x - rx) - y) c.prime)
 
-let multiply c p scalar =
-  let acc = ref Infinity in
-  for i = Z.numbits scalar - 1 downto 0 do
-    acc := add c !acc !acc;
-    if Z.testbit scalar i then acc := add c !acc p
-  done;
-  !acc
+module K1 = Weierstrass.Make (struct let prime = Secp.secp_p let minus_three = false end)
+module R1 = Weierstrass.Make (struct let prime = Secp.r1_p let minus_three = true end)
+
+let multiply c p scalar = match p with
+  | Infinity -> Infinity
+  | Point (x,y) ->
+      match (if c == k1 then K1.scale else R1.scale) (x,y) scalar with
+      | None -> Infinity | Some (u,v) -> Point (u,v)
 
 let execute state vm c op at =
   let input i = at i in

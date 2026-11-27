@@ -5,12 +5,8 @@
 open Errors
 
 let p = Z.of_string "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab"
-let modulo x = Z.erem x p
-let add x y = modulo (Z.add x y)
-let sub x y = modulo (Z.sub x y)
-let mul x y = modulo (Z.mul x y)
-let square x = mul x x
-let twice x = add x x
+module Curve = Weierstrass.Make (struct let prime = p let minus_three = false end)
+open Curve
 let half = Z.shift_right p 1
 let sqrt_exp = Z.shift_right (Z.succ p) 2
 
@@ -25,45 +21,9 @@ let points = lazy (Array.init setup_size (fun i -> lazy (
     if not (Z.equal (square y) rhs) then fail "Invalid BLS12-381 setup point";
     x, if Z.gt y half = Z.testbit encoded 381 then y else Z.sub p y)))
 
-type point = Infinity | Jacobian of Z.t * Z.t * Z.t
-
-let double = function
-  | Infinity -> Infinity
-  | Jacobian (x,y,z) ->
-      let yy = square y and xx = square x in
-      let s = twice (twice (mul x yy)) and m = add xx (twice xx) in
-      let x' = sub (square m) (twice s) in
-      let y' = sub (mul m (sub s x')) (twice (twice (twice (square yy)))) in
-      Jacobian (x', y', twice (mul y z))
-
-(* Add by first expressing both affine numerators over the same denominator. *)
-let combine left u1 s1 u2 s2 z =
-  let h = sub u2 u1 and r = sub s2 s1 in
-  if Z.equal h Z.zero then (if Z.equal r Z.zero then double left else Infinity)
-  else
-    let hh = square h in
-    let hhh = mul h hh and v = mul u1 hh in
-    let x = sub (sub (square r) hhh) (twice v) in
-    Jacobian (x, sub (mul r (sub v x)) (mul s1 hhh), mul h z)
-
-let add_point a b = match a, b with
-  | Infinity, p | p, Infinity -> p
-  | Jacobian (x,y,z), Jacobian (xx,yy,zz) ->
-      let z2 = square z and zz2 = square zz in
-      combine a (mul x zz2) (mul y (mul zz zz2)) (mul xx z2) (mul yy (mul z z2)) (mul z zz)
-
-let mixed a (x,y) = match a with
-  | Infinity -> Jacobian (x,y,Z.one)
-  | Jacobian (xx,yy,z) ->
-      let z2 = square z in
-      combine a xx yy (mul x z2) (mul y (mul z z2)) z
-
-let encode = function
-  | Infinity -> Z.shift_left (Z.of_int 3) 382
-  | Jacobian (x,y,z) ->
-      let zi = Z.invert z p in
-      let scale = square zi in
-      let x = mul x scale and y = mul y (mul zi scale) in
+let encode point = match affine point with
+  | None -> Z.shift_left (Z.of_int 3) 382
+  | Some (x,y) ->
       let flags = if Z.gt y half then 5 else 4 in
       Z.logor x (Z.shift_left (Z.of_int flags) 381)
 
