@@ -1,3 +1,9 @@
 (executable
  (name repeat)
+ (modules repeat)
+ (libraries cairovm unix))
+
+(executable
+ (name native_os_worker)
+ (modules native_os_worker)
  (libraries cairovm unix))
