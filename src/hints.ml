@@ -17,24 +17,18 @@ let check b msg = if not b then fail "%s" msg
 
 let secp_p = Z.of_string "115792089237316195423570985008687907853269984665640564039457584007908834671663"
 let secp_n = Z.of_string "115792089237316195423570985008687907852837564279074904382605163141518161494337"
-let base86 = two_pow 86
 
 let div_mod n m p =
-  let m = Z.erem m p in
-  if Z.equal (Z.gcd m p) Z.one then Z.erem (Z.mul n (Z.invert m p)) p else fail "div_mod: not invertible"
+  let inverse = try Z.invert m p with Division_by_zero -> fail "div_mod: not invertible" in
+  Z.erem (Z.mul n inverse) p
 
 let pack vm ctx name path =
   let limb k = as_int (get_member_z vm ctx name (path @ [ k ])) in
-  Z.add (limb "d0") (Z.add (Z.mul (limb "d1") base86) (Z.mul (limb "d2") (Z.mul base86 base86)))
+  Z.add (limb "d0") (Z.add (Z.shift_left (limb "d1") 86) (Z.shift_left (limb "d2") 172))
 
 let split3 num =
-  let rec go n k acc =
-    if k = 0 then (check (Z.equal n Z.zero) "split: value too large"; List.rev acc)
-    else
-      let q, r = Z.ediv_rem n base86 in
-      go q (k - 1) (r :: acc)
-  in
-  go num 3 []
+  check (Z.sign num >= 0 && Z.numbits num <= 258) "split: value too large";
+  [Z.extract num 0 86; Z.extract num 86 86; Z.extract num 172 86]
 
 let isqrt n = Z.sqrt n
 
@@ -581,7 +575,7 @@ let () =
       setz c "slope" slope;
       setz c "x" x;
       setz c "y" y;
-      let nx = Z.erem (Z.sub (Z.powm slope (z 2) secp_p) (Z.mul (z 2) x)) secp_p in
+      let nx = Z.erem (Z.sub (Z.mul slope slope) (Z.mul (z 2) x)) secp_p in
       setz c "value" nx;
       setz c "new_x" nx);
   reg H.h74 (fun c _ ->
@@ -592,7 +586,7 @@ let () =
       let slope = pack vm c "slope" [] and x0 = pack vm c "point0" [ "x" ] and x1 = pack vm c "point1" [ "x" ] in
       let y0 = pack vm c "point0" [ "y" ] in
       List.iter (fun (n, v) -> setz c n v) [ ("slope", slope); ("x0", x0); ("x1", x1); ("y0", y0) ];
-      let nx = Z.erem (Z.sub (Z.sub (Z.powm slope (z 2) secp_p) x0) x1) secp_p in
+      let nx = Z.erem (Z.sub (Z.sub (Z.mul slope slope) x0) x1) secp_p in
       setz c "value" nx;
       setz c "new_x" nx);
   reg H.h76 (fun c _ ->

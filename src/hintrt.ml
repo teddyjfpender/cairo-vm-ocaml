@@ -288,4 +288,4 @@ let mem_at vm ptr k =
 
 let rc_bound = Z.shift_left Z.one 128
 
-let as_int z = if Z.lt z (Z.shift_right Felt.p 1) then z else Z.sub z Felt.p
+let as_int z = if Z.lt z Felt.half_p then z else Z.sub z Felt.p
