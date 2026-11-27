@@ -1,0 +1,9 @@
+(library
+ (name cairovm)
+ (libraries zarith yojson)
+ (ocamlopt_flags (:standard -O3 -unboxed-types -inline 200 -unsafe))
+ (flags (:standard -w -32-26-27-35-37-69))
+ (foreign_stubs
+  (language c)
+  (names felt_stubs)
+  (flags (:standard -O3 -mcpu=native))))

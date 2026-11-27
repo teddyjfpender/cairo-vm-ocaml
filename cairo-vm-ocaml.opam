@@ -1,0 +1,4 @@
+opam-version: "2.0"
+synopsis: "A fast Cairo VM in OCaml (OxCaml), derived from the cairo-vm-lean model"
+depends: ["dune" {>= "3.0"} "zarith" "yojson"]
+build: [["dune" "build" "-p" name "-j" jobs]]

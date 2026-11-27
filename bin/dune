@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name cairo-vm-ocaml)
+ (libraries cairovm unix)
+ (ocamlopt_flags (:standard -O3 -inline 200 -unsafe)))
