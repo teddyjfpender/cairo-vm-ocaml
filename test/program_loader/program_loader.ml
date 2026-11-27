@@ -28,3 +28,16 @@ let () =
       {|{"attributes":{"foo":[0,01]}}|}; {|{"debug_info":{"missing":}}|};
       {|{"debug_info":{"text":"unterminated|}; {|{"bad":[1,]}|};
       {|{"bad":/* comment */1}|}; {|{"bad":truue}|}; "{} trailing" ]
+
+let () =
+  let check hints =
+    let json = `Assoc ["prime", `String (Z.to_string Felt.p); "data", `List [];
+                      "builtins", `List []; "hints", `Assoc hints] in
+    match Program.load_json json with
+    | exception Program.Parse_error _ -> ()
+    | _ -> failwith "negative hint index accepted"
+  in
+  let tracking = `Assoc ["group", `Int 0; "offset", `Int 0] in
+  let flow = `Assoc ["ap_tracking", tracking; "reference_ids", `Assoc ["x", `Int (-1)]] in
+  check ["-1", `List []];
+  check ["0", `List [`Assoc ["accessible_scopes", `List []; "code", `String ""; "flow_tracking_data", flow]]]

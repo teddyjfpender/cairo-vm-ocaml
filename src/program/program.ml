@@ -246,7 +246,9 @@ let load_with_identifiers identifiers (j : J.t) : t =
     | `Assoc l ->
         List.map
           (fun (pc, hs) ->
-            ( int_of_string pc,
+            let pc = int_of_string pc in
+            if pc < 0 then raise (Parse_error "Negative hint offset");
+            ( pc,
               U.to_list hs
               |> List.map (fun h ->
                      let ftd = U.member "flow_tracking_data" h in
@@ -258,7 +260,10 @@ let load_with_identifiers identifiers (j : J.t) : t =
                        h_offset = U.to_int (U.member "offset" apt);
                        ref_ids =
                          (match U.member "reference_ids" ftd with
-                         | `Assoc l -> List.map (fun (k, v) -> (k, U.to_int v)) l
+                         | `Assoc l -> List.map (fun (k, v) ->
+                             let id = U.to_int v in
+                             if id < 0 then raise (Parse_error "Negative hint reference index");
+                             k, id) l
                          | _ -> []);
                      }) ))
           l

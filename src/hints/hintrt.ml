@@ -155,7 +155,7 @@ let make_ctx prog scopes (hint : P.hint) =
           String.sub full (String.length inner + 1) (String.length full - String.length inner - 1)
         else match String.rindex_opt full '.' with Some i -> String.sub full (i + 1) (String.length full - i - 1) | None -> full
       in
-      if id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
+      if id >= 0 && id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
     hint.ref_ids;
   { prog; hint; scopes; refs; constants = []; bindings = []; plans = [] }
 

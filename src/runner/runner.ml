@@ -73,7 +73,7 @@ let compile_hints compile prog =
   let hints = Array.make (Array.length prog.Program.data) [||] in
   List.iter
     (fun (pc, hs) ->
-      if pc < Array.length hints then
+      if pc >= 0 && pc < Array.length hints then
         hints.(pc) <- Array.of_list (List.map (fun h -> compile prog scopes h) hs))
     prog.hints;
   (scopes, hints)
