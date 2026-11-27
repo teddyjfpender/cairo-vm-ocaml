@@ -432,9 +432,19 @@ static void ped_accum(jac *acc, const aff low[31][255], const aff high[15], cons
 }
 
 static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
+  /* Fixed namespaces frequently hash different keys under the same prefix.
+     Keep only canonical coordinates, independent of any VM's felt pool. */
+  static _Thread_local struct { u64 key[4]; jac point; int valid; } previous;
   jac acc;
-  memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
-  ped_accum(&acc, ped_a, ped_a_high[0], a);
+  if (previous.valid && eq4(previous.key, a)) {
+    acc = previous.point;
+  } else {
+    memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
+    ped_accum(&acc, ped_a, ped_a_high[0], a);
+    memcpy(previous.key, a, 32);
+    previous.point = acc;
+    previous.valid = 1;
+  }
   ped_accum(&acc, ped_b, ped_b_high[0], b);
   u64 zi[4], x[4];
   mont_inv(zi, acc.z);
