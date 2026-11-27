@@ -26,11 +26,9 @@ let read_task j =
 
 let initialize ?layout_def ~proof ~path cfg prog =
   let input = Yojson.Safe.from_file path in
-  let tasks = Array.of_list (List.map read_task (U.to_list (U.member "tasks" input))) in
-  let active = ref (-1) and address = ref Felt.empty in
-  let current () =
-    if !active < 0 || !active >= Array.length tasks then fail "No current bootloader task";
-    tasks.(!active) in
+  let tasks = Array.of_list (U.to_list (U.member "tasks" input)) in
+  let active = ref None and previous = ref None and address = ref Felt.empty in
+  let current () = match !active with Some task -> task | None -> fail "No current bootloader task" in
   let topologies = ref [] and runner = ref None in
   let table = Hashtbl.create 32 in
   let register code f = Hashtbl.add table code f in
@@ -40,11 +38,15 @@ let initialize ?layout_def ~proof ~path cfg prog =
       write_arg vm (get_ptr vm c "output_ptr") [Felt.small (Array.length tasks)];
       set_val vm c "initial_subtasks_range_check_ptr" (Felt.reloc (Vm.add_temp_segment vm) 0));
   register "SIMPLE_BOOTLOADER_SET_CURRENT_TASK" (fun c vm ->
-      active := Array.length tasks - Felt.to_nat (get_felt vm c "n_tasks"); ignore (current ()));
+      let index = Array.length tasks - Felt.to_nat (get_felt vm c "n_tasks") in
+      if index < 0 || index >= Array.length tasks then fail "Invalid bootloader task index";
+      previous := Option.map (fun task -> task.program) !active;
+      active := Some (read_task tasks.(index)));
   register "DETERMINE_USE_PREV_HASH" (fun c vm ->
       let p = (current ()).program in
-      let same = !active > 0 && (let prev = tasks.(!active - 1).program in
-        p.builtins = prev.builtins && p.main = prev.main && p.data = prev.data) in
+      let same = match !previous with
+        | None -> false
+        | Some prev -> p.builtins = prev.builtins && p.main = prev.main && p.data = prev.data in
       set_val vm c "use_prev_hash" (of_bool same));
   register "memory[ap] = to_felt_or_relocatable(task.program_hash_function)" (fun _ vm ->
       write_ap vm (Felt.small (current ()).hash_function));
@@ -75,7 +77,9 @@ let initialize ?layout_def ~proof ~path cfg prog =
             | _ -> fail "Missing bootloader label %s" label in
           let return = vm.Vm.pc + pc "ret_pc_label" - pc "call_task" in
           Pie_run.load_subtask vm pie ~code:!address ~stack:(Felt.reloc 1 (vm.ap - List.length p.builtins))
-            ~ret_fp:(Felt.reloc 1 vm.fp) ~ret_pc:(Felt.reloc vm.pc_seg return)) (current ()).pie;
+            ~ret_fp:(Felt.reloc 1 vm.fp) ~ret_pc:(Felt.reloc vm.pc_seg return);
+          (* Only metadata is needed for subsequent builtin and topology checks. *)
+          active := Some { (current ()) with pie = Some { pie with memory = Bytes.empty } }) (current ()).pie;
       enter c.scopes [];
       List.iter (fun (offset, hints) ->
           Cpu.register_runtime_hints vm ~segment:(Felt.rseg !address) ~pc:(Felt.roff !address + offset)
