@@ -1,0 +1,143 @@
+/* Validate a JSON value without allocating OCaml nodes for unused program
+   metadata. Track nested containers explicitly so deep input cannot exhaust
+   the native call stack. */
+#include <caml/mlvalues.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+static inline int digit(unsigned char c) { return c >= '0' && c <= '9'; }
+static inline int hex(unsigned char c) {
+  return digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+static const unsigned char *whitespace(const unsigned char *p, const unsigned char *end) {
+  while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) ++p;
+  return p;
+}
+
+static inline uint64_t zero_bytes(uint64_t w) {
+  return (w - UINT64_C(0x0101010101010101)) & ~w & UINT64_C(0x8080808080808080);
+}
+
+static const unsigned char *string_end(const unsigned char *p, const unsigned char *end,
+                                       int *escaped) {
+  while (p < end) {
+    while (end-p >= 8) {
+      uint64_t w;
+      memcpy(&w, p, sizeof(w));
+      if (zero_bytes(w ^ UINT64_C(0x2222222222222222)) ||
+          zero_bytes(w ^ UINT64_C(0x5c5c5c5c5c5c5c5c)) ||
+          zero_bytes(w & UINT64_C(0xe0e0e0e0e0e0e0e0))) break;
+      p += 8;
+    }
+    if (p == end) break;
+    unsigned char c = *p++;
+    if (c == '"') return p;
+    if (c < 0x20) return NULL;
+    if (c != '\\') continue;
+    if (p == end) return NULL;
+    if (escaped) *escaped = 1;
+    switch (*p++) {
+    case '"': case '\\': case '/': case 'b': case 'f': case 'n': case 'r': case 't':
+      break;
+    case 'u':
+      if (end-p < 4 || !hex(p[0]) || !hex(p[1]) || !hex(p[2]) || !hex(p[3])) return NULL;
+      p += 4;
+      break;
+    default: return NULL;
+    }
+  }
+  return NULL;
+}
+
+/* Sign indicates that the string needs unescaping. Zero denotes invalid input. */
+CAMLprim value cvm_json_string_end(value input, value index) {
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  const unsigned char *end = base + caml_string_length(input);
+  intnat i = Long_val(index);
+  int escaped = 0;
+  if (i < 0 || (uintnat)i >= (uintnat)(end-base)) return Val_long(0);
+  const unsigned char *next = string_end(base+i, end, &escaped);
+  if (!next) return Val_long(0);
+  intnat offset = next-base;
+  return Val_long(escaped ? -offset : offset);
+}
+
+static const unsigned char *number_end(const unsigned char *p, const unsigned char *end) {
+  if (*p == '-') ++p;
+  if (p == end || !digit(*p)) return NULL;
+  if (*p++ != '0') while (p < end && digit(*p)) ++p;
+  if (p < end && *p == '.') {
+    if (++p == end || !digit(*p)) return NULL;
+    do { ++p; } while (p < end && digit(*p));
+  }
+  if (p < end && (*p == 'e' || *p == 'E')) {
+    ++p;
+    if (p < end && (*p == '-' || *p == '+')) ++p;
+    if (p == end || !digit(*p)) return NULL;
+    do { ++p; } while (p < end && digit(*p));
+  }
+  return p;
+}
+
+/* Return the first byte after the value, or a negative error offset. */
+CAMLprim value cvm_json_skip(value input, value index) {
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  const unsigned char *end = base + caml_string_length(input);
+  intnat start = Long_val(index);
+  if (start < 0 || (uintnat)start >= (uintnat)(end-base)) return Val_long(-1);
+  const unsigned char *p = base + start, *next;
+  unsigned char local[64], *stack = local;
+  size_t depth = 0, capacity = sizeof(local);
+  intnat result;
+read_value:
+  p = whitespace(p, end);
+  if (p == end) goto invalid;
+  if (*p == '[' || *p == '{') {
+    unsigned char close = *p++ == '[' ? ']' : '}';
+    p = whitespace(p, end);
+    if (p < end && *p == close) { ++p; goto completed; }
+    if (depth == capacity) {
+      unsigned char *larger = malloc(capacity * 2);
+      if (!larger) goto invalid;
+      memcpy(larger, stack, depth);
+      if (stack != local) free(stack);
+      stack = larger;
+      capacity *= 2;
+    }
+    stack[depth++] = close;
+    if (close == '}') goto read_key;
+    goto read_value;
+  }
+  if (*p == '"') next = string_end(p+1, end, NULL);
+  else if (digit(*p) || *p == '-') next = number_end(p, end);
+  else {
+    const char *literal = *p == 't' ? "true" : *p == 'f' ? "false" : "null";
+    size_t length = strlen(literal);
+    if ((size_t)(end-p) < length || memcmp(p, literal, length)) goto invalid;
+    next = p + length;
+  }
+  if (!next) goto invalid;
+  p = next;
+completed:
+  if (!depth) { result = p-base; goto done; }
+  p = whitespace(p, end);
+  if (p == end) goto invalid;
+  if (*p == stack[depth-1]) { ++p; --depth; goto completed; }
+  if (*p++ != ',') goto invalid;
+  if (stack[depth-1] == ']') goto read_value;
+  p = whitespace(p, end);
+read_key:
+  if (p == end || *p != '"') goto invalid;
+  next = string_end(p+1, end, NULL);
+  if (!next) goto invalid;
+  p = whitespace(next, end);
+  if (p == end || *p++ != ':') goto invalid;
+  goto read_value;
+invalid:
+  result = -1 - (p-base);
+done:
+  if (stack != local) free(stack);
+  return Val_long(result);
+}

@@ -8,7 +8,7 @@ let felt j =
   Felt.of_z z
 
 let from_file ~accessed ~set_pages path =
-  let hints = Yojson.Safe.from_file path in
+  let hints = Json_reader.from_file path in
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let classes = U.to_assoc (U.member "compiled_classes" input)

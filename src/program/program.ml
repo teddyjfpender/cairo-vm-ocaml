@@ -227,10 +227,17 @@ let load_json (j : J.t) : t =
   let refs =
     match U.member "reference_manager" j with
     | `Assoc _ as rm ->
+        let expressions = Hashtbl.create 64 in
+        let parse value =
+          match Hashtbl.find_opt expressions value with
+          | Some e -> e
+          | None ->
+              let e = try parse_expr value with Parse_error _ -> Int Z.minus_one in
+              Hashtbl.add expressions value e; e in
         U.member "references" rm |> U.to_list
         |> List.map (fun r ->
                let apt = U.member "ap_tracking_data" r in
-               let e = try parse_expr (U.to_string (U.member "value" r)) with Parse_error _ -> Int Z.minus_one in
+               let e = parse (U.to_string (U.member "value" r)) in
                {
                  r_expr = e;
                  r_group = U.to_int (U.member "group" apt);
@@ -273,134 +280,4 @@ let load_json (j : J.t) : t =
     identifiers;
   }
 
-(* Word-at-a-time scanning (little-endian): [zero_bytes x] flags the zero
-   bytes of [x]; its lowest set bit is exact (the borrow only taints higher
-   bytes), and multiplying that bit (as 1 lsl 8k) by bytes 7..0 yields k. *)
-let bcast c = Int64.mul 0x0101010101010101L (Int64.of_int (Char.code c))
-let quote = bcast '"' and lbrace = bcast '{' and rbrace = bcast '}' and space = bcast ' '
-let[@inline] zero_bytes x = Int64.(logand (logand (sub x 0x0101010101010101L) (lognot x)) 0x8080808080808080L)
-
-(* the first index >= i holding '"' (or, unless [in_string], a bracket: '['
-   ']' are '{' '}' with bit 5 cleared), or else some index in the last 7 bytes *)
-let[@inline] next_special src i ~in_string =
-  let i = ref i and found = ref false in
-  while (not !found) && !i + 8 <= String.length src do
-    let w = String.get_int64_le src !i in
-    let m = zero_bytes (Int64.logxor w quote) in
-    let m =
-      if in_string then m
-      else
-        let w = Int64.logor w space in
-        Int64.(logor m (logor (zero_bytes (logxor w lbrace)) (zero_bytes (logxor w rbrace))))
-    in
-    if m = 0L then i := !i + 8
-    else (
-      i := !i + Int64.(to_int (shift_right_logical (mul (shift_right_logical (logand m (neg m)) 7) 0x0001020304050607L) 56));
-      found := true)
-  done;
-  !i
-
-let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
-
-(* A JSON reader building the [Yojson.Safe.t] that [J.from_string] would:
-   structure, plain strings and plain integers are read here; escaped strings,
-   literals and other numbers go through Yojson itself.  Yojson's comment,
-   tuple and variant extensions are not accepted.  debug_info is typically
-   >95% of a compiled program and is never needed to execute it: a top-level
-   debug_info object or array is skipped by the word scanner (string/escape
-   aware) and read as [`Null]. *)
-let read_json src : J.t =
-  let n = String.length src and pos = ref 0 in
-  let peek () =
-    while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
-      (* indentation comes in runs of spaces *)
-      pos := !pos + if !pos + 8 <= n && String.get_int64_le src !pos = space then 8 else 1
-    done;
-    if !pos < n then src.[!pos] else json_error "Unexpected end of input"
-  in
-  let expect c = if peek () <> c then json_error "Expected '%c' at byte %d" c !pos else incr pos in
-  (* index of the closing quote of the string starting at i *)
-  let string_end i =
-    let q = ref (i - 1) and fin = ref false in
-    while not !fin do
-      q := next_special src (!q + 1) ~in_string:true;
-      while !q < n && src.[!q] <> '"' do incr q done;
-      if !q >= n then json_error "Unterminated string";
-      (* count preceding backslashes: odd means the quote is escaped *)
-      let k = ref (!q - 1) in
-      while src.[!k] = '\\' do decr k done;
-      fin := (!q - 1 - !k) land 1 = 0
-    done;
-    !q
-  in
-  let string () =
-    expect '"';
-    let st = !pos in
-    let q = string_end st in
-    pos := q + 1;
-    let raw = String.sub src st (q - st) in
-    if String.contains raw '\\' then
-      (try U.to_string (J.from_string ("\"" ^ raw ^ "\""))
-       with Yojson.Json_error msg -> json_error "Invalid string at byte %d: %s" (st - 1) msg)
-    else raw
-  in
-  (* the end of the object or array starting at i *)
-  let skip_container i =
-    let depth = ref 0 and j = ref i and fin = ref false in
-    while not !fin do
-      j := next_special src !j ~in_string:false;
-      if !j >= n then json_error "Unexpected end of input";
-      (match src.[!j] with
-      | '"' -> j := string_end (!j + 1)
-      | '{' | '[' -> incr depth
-      | '}' | ']' -> decr depth; fin := !depth = 0
-      | _ -> ());
-      incr j
-    done;
-    !j
-  in
-  let items close item =
-    incr pos;
-    if peek () = close then (incr pos; [])
-    else
-      let rec go acc =
-        let acc = item () :: acc in
-        match peek () with
-        | ',' -> incr pos; go acc
-        | c when c = close -> incr pos; List.rev acc
-        | _ -> json_error "Expected ',' or '%c' at byte %d" close !pos
-      in
-      go []
-  in
-  let rec value ~top =
-    match peek () with
-    | '{' ->
-        `Assoc
-          (items '}' (fun () ->
-               let k = string () in
-               expect ':';
-               if top && k = "debug_info" && (peek () = '{' || peek () = '[') then (pos := skip_container !pos; (k, `Null))
-               else (k, value ~top:false)))
-    | '[' -> `List (items ']' (fun () -> value ~top:false))
-    | '"' -> `String (string ())
-    | _ ->
-        let st = !pos in
-        while !pos < n && (match src.[!pos] with 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '+' | '.' -> true | _ -> false) do
-          incr pos
-        done;
-        let tok = String.sub src st (!pos - st) in
-        if tok <> "" && String.for_all (function '0' .. '9' -> true | _ -> false) tok && (tok.[0] <> '0' || tok = "0")
-        then match int_of_string_opt tok with Some i -> `Int i | None -> `Intlit tok
-        else if tok = "" then json_error "Expected a JSON value at byte %d" st
-        else
-          (try J.from_string tok
-           with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
-  in
-  let v = value ~top:true in
-  match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v
-
-let load_file path =
-  let ic = open_in_bin path in
-  let src = really_input_string ic (in_channel_length ic) in
-  close_in ic;
-  load_json (read_json src)
+let load_file path = load_json (Json_reader.from_file ~projection:Program path)

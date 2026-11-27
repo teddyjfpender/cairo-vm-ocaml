@@ -24,5 +24,7 @@ let () =
           match Program.load_file path with
           | exception Yojson.Json_error _ -> ()
           | _ -> failwith "malformed JSON accepted"))
-    [ {|{"debug_info":{"text":"unterminated|}; {|{"bad":[1,]}|};
+    [ {|{"identifiers":{"one":{"references":[true,]}}}|};
+      {|{"attributes":{"foo":[0,01]}}|}; {|{"debug_info":{"missing":}}|};
+      {|{"debug_info":{"text":"unterminated|}; {|{"bad":[1,]}|};
       {|{"bad":/* comment */1}|}; {|{"bad":truue}|}; "{} trailing" ]
