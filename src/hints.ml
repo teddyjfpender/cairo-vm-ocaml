@@ -536,6 +536,69 @@ let () =
   reg H.h61 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 10))));
   reg H.h62 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 2))))
 
+(* ---- set membership ---- *)
+
+(* Cairo memory is write-once. A row whose first word has been read can
+   be ruled out for any different first word, even if its suffix has holes.
+   Cache the earliest row for each first word and check matching rows with
+   the ordinary element comparison. Keep just one range per compiled hint. *)
+module Set_words = Hashtbl.Make (struct
+  type t = int
+  let equal = Felt.equal
+  let hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
+end)
+
+type set_index = {
+  owner : vm;
+  base : int;
+  width : int;
+  first : int Set_words.t;
+  mutable scanned : int; (* cell offset of the next unindexed row *)
+}
+
+let find_set_element cache vm base total elm =
+  let es = Array.length elm and e0 = elm.(0) in
+  let seg = Felt.rseg base and start = Felt.roff base in
+  let mem = vm.segs.(seg) in
+  let capacity = slen mem in
+  let cell off =
+    let v = sget mem off in
+    if v = 0 then fail "Unknown memory cell %d:%d" seg off;
+    v
+  in
+  let index =
+    if total / es < 32 then None
+    else match !cache with
+      | Some t when t.owner == vm && t.base = base && t.width = es -> !cache
+      | _ ->
+          let t = { owner = vm; base; width = es; first = Set_words.create 32; scanned = 0 } in
+          cache := Some t;
+          !cache
+  in
+  let from = match index with
+    | None -> 0
+    | Some t -> Option.value (Set_words.find_opt t.first e0) ~default:t.scanned
+  in
+  let rec search i =
+    if i >= total then -1
+    else begin
+      let off = start + i in
+      if off + es > capacity then fail "Unknown memory cell %d:%d" seg off;
+      let v = cell off in
+      (match index with
+      | Some t when i = t.scanned ->
+          if not (Set_words.mem t.first v) then Set_words.add t.first v i;
+          t.scanned <- i + es
+      | _ -> ());
+      if Felt.equal v e0 then begin
+        let j = ref 1 in
+        while !j < es && Felt.equal (cell (off + !j)) elm.(!j) do incr j done;
+        if !j = es then i / es else search (i + es)
+      end else search (i + es)
+    end
+  in
+  search from
+
 (* ---- secp ---- *)
 let () =
   let setz c n v = set c.scopes n (Int v) in
@@ -619,44 +682,21 @@ let () =
       let y = Z.powm ys (Z.div (Z.succ secp_p) (z 4)) secp_p in
       let v = felt_z vm c "v" in
       setz c "value" (if Z.equal (Z.erem v (z 2)) (Z.erem y (z 2)) then y else Z.erem (Z.neg y) secp_p));
-  (* set_add *)
-  reg H.h81 (fun c vm ->
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      check (es > 0) "assert ids.elm_size > 0";
-      let sp = get_ptr vm c "set_ptr" and se = get_ptr vm c "set_end_ptr" in
-      check (Felt.rseg sp = Felt.rseg se && Felt.roff sp <= Felt.roff se) "assert ids.set_ptr <= ids.set_end_ptr";
-      let ep = get_ptr vm c "elm_ptr" in
-      let elm = Array.of_list (read_range vm ep es) in
-      let total = Felt.roff se - Felt.roff sp in
-      let sseg = Felt.rseg sp and soff = Felt.roff sp in
-      let a = vm.segs.(sseg) in
-      let cell k =
-        let o = soff + k in
-        let v = if o < slen a then sget a o else 0 in
-        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
-        v
-      in
-      let n_cells = slen a in
-      let e0 = elm.(0) in
-      let big0 = Felt.is_big e0 in
-      let found = ref (-1) and i = ref 0 in
-      while !found < 0 && !i < total do
-        let o = soff + !i in
-        if o + es > n_cells then fail "Unknown memory cell %d:%d" sseg o;
-        let v = sget a o in
-        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
-        if v = e0 || (big0 && Felt.equal v e0) then begin
-          let j = ref 1 in
-          while !j < es && Felt.equal (cell (!i + !j)) elm.(!j) do incr j done;
-          if !j >= es then found := !i
-        end;
-        i := !i + es
-      done;
-      if !found < 0 then set_val vm c "is_elm_in_set" Felt.zero
-      else begin
-        set_val vm c "index" (Felt.small (!found / es));
-        set_val vm c "is_elm_in_set" Felt.one
-      end);
+  reg H.h81 (fun c ->
+      let cache = ref None in
+      fun vm ->
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        check (es > 0) "assert ids.elm_size > 0";
+        let sp = get_ptr vm c "set_ptr" and se = get_ptr vm c "set_end_ptr" in
+        check (Felt.rseg sp = Felt.rseg se && Felt.roff sp <= Felt.roff se) "assert ids.set_ptr <= ids.set_end_ptr";
+        let ep = get_ptr vm c "elm_ptr" in
+        let elm = Array.of_list (read_range vm ep es) in
+        let found = find_set_element cache vm sp (Felt.roff se - Felt.roff sp) elm in
+        if found < 0 then set_val vm c "is_elm_in_set" Felt.zero
+        else begin
+          set_val vm c "index" (Felt.small found);
+          set_val vm c "is_elm_in_set" Felt.one
+        end);
   reg H.h82 (fun c vm ->
       let a = felt_z vm c "a" in
       set_val vm c "low" (zf (Z.logand a (mask 64)));
@@ -681,7 +721,7 @@ let () =
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in
   match Hashtbl.find_opt table h.code with
-  | Some f -> fun vm -> f ctx vm
+  | Some f -> f ctx
   | None ->
       fun _ ->
         fail "Unknown hint: %s" (if String.length h.code > 80 then String.sub h.code 0 80 ^ "..." else h.code)
