@@ -19,7 +19,7 @@ static inline int mark(value maps, value counts, intnat seg, intnat off) {
 }
 
 value cvm_trace_access(value trace, value end, value cache, value stack,
-                       value maps, value counts, value state) {
+                       value maps, value counts, value state, value page) {
   const uint64_t *entries = Caml_ba_data_val(trace);
   const intnat *cells = Caml_ba_data_val(stack);
   const size_t stack_len = Caml_ba_array_val(stack)->dim[0];
@@ -27,14 +27,30 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
   intnat lo = Long_val(Field(state, 1)), hi = Long_val(Field(state, 2));
   while (cursor < stop) {
     uint64_t w = entries[cursor];
-    if (!(w & 1)) break;
-    /* Packed trace words use 63 bits; Bigarray OCaml ints can have their
-       sign bit extended in the top bit of the machine word. */
-    intnat pc = (w >> 47) & 0xffff;
-    if ((uintnat)pc >= Wosize_val(cache)) break;
-    uint64_t d = Long_val(Field(cache, pc));
+    intnat pc, ap, fp, code_seg = 0, width;
+    value words = cache;
+    intnat base_pc = 0;
+    if (w & 1) {
+      pc = (w >> 47) & 0xffff;
+      ap = (w >> 24) & 0x7fffff;
+      fp = (w >> 1) & 0x7fffff;
+      width = 1;
+    } else {
+      if (stop-cursor < 3) break;
+      code_seg = (intnat)w >> 42;
+      pc = (w >> 2) & ((UINT64_C(1) << 40) - 1);
+      ap = entries[cursor+1];
+      fp = entries[cursor+2];
+      width = 3;
+      if (code_seg != 0) {
+        if (code_seg != Long_val(Field(state, 3))) break;
+        words = page;
+        base_pc = Long_val(Field(state, 4));
+      }
+    }
+    if ((uintnat)(pc-base_pc) >= Wosize_val(words)) break;
+    uint64_t d = Long_val(Field(words, pc-base_pc));
     if (!d) break;
-    intnat ap = (w >> 24) & 0x7fffff, fp = (w >> 1) & 0x7fffff;
     int f0 = d & 65535, f1 = (d >> 16) & 65535, f2 = (d >> 32) & 65535;
     intnat dst = ((d >> 48) & 1 ? fp : ap) + f0 - 32768;
     intnat op0 = ((d >> 49) & 1 ? fp : ap) + f1 - 32768;
@@ -48,18 +64,18 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
         base = (a >> 2) & ((UINT64_C(1) << 40) - 1);
         break;
       }
-      case 1: seg = 0; base = pc; delta = 1; break;
+      case 1: seg = code_seg; base = pc; delta = 1; break;
       case 2: base = fp; break;
       case 3: base = ap; break;
     }
-    if (!mark(maps, counts, seg, base + delta) || !mark(maps, counts, 0, pc)) break;
+    if (!mark(maps, counts, seg, base + delta) || !mark(maps, counts, code_seg, pc)) break;
     if (f0 < lo) lo = f0;
     if (f1 < lo) lo = f1;
     if (f2 < lo) lo = f2;
     if (f0 > hi) hi = f0;
     if (f1 > hi) hi = f1;
     if (f2 > hi) hi = f2;
-    ++cursor;
+    cursor += width;
   }
   Field(state, 0) = Val_long(cursor);
   Field(state, 1) = Val_long(lo);
@@ -69,5 +85,5 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
 
 value cvm_trace_access_byte(value *argv, int argc) {
   (void)argc;
-  return cvm_trace_access(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6]);
+  return cvm_trace_access(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
 }

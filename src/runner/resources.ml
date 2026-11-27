@@ -53,7 +53,7 @@ let trace_entry t i =
     (i + 3, Felt.rseg pc, Felt.roff pc, raw_get t (i + 1), raw_get t (i + 2))
 
 external trace_access :
-  seg -> int -> int array -> seg -> Bytes.t array -> int array -> int array -> unit
+  seg -> int -> int array -> seg -> Bytes.t array -> int array -> int array -> int array -> unit
   = "cvm_trace_access_byte" "cvm_trace_access" [@@noalloc]
 
 let update_accessed r =
@@ -63,13 +63,25 @@ let update_accessed r =
       mark acc 0 i
     done;
   let t = vm.trace in
-  let state = [|acc.cursor; acc.rc_lo; acc.rc_hi|] in
+  let state = [|acc.cursor; acc.rc_lo; acc.rc_hi; -1; 0|] in
+  let page = ref [||] in
   while state.(0) < vm.tlen do
-    trace_access t vm.tlen vm.icache vm.segs.(1) acc.bits acc.count state;
+    trace_access t vm.tlen vm.icache vm.segs.(1) acc.bits acc.count state !page;
     if state.(0) < vm.tlen then begin
       let next, pc_seg, pc, ap, fp = trace_entry t state.(0) in
       state.(0) <- next;
-      let d = decoded vm pc_seg pc in
+      let d =
+        if pc_seg <= 0 then decoded vm pc_seg pc else begin
+          let base = pc land lnot 1023 in
+          if state.(3) <> pc_seg || state.(4) <> base then begin
+            page := Option.value (Hashtbl.find_opt vm.code_pages (pc_seg, base)) ~default:[||];
+            state.(3) <- pc_seg;
+            state.(4) <- base
+          end;
+          let index = pc-base in
+          if index < Array.length !page && !page.(index) <> 0 then !page.(index) land lnot ext_mask
+          else decode_at vm pc_seg pc
+        end in
       let f0 = d land 0xffff and f1 = (d lsr 16) land 0xffff and f2 = (d lsr 32) land 0xffff in
       let lo = min f0 (min f1 f2) and hi = max f0 (max f1 f2) in
       if lo < state.(1) then state.(1) <- lo;
