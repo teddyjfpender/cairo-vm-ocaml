@@ -1,7 +1,7 @@
 (* Cairo CPU, memory and builtins.
 
-   Semantics follow CairoVM/Execution/{Base,Deduction}.lean (the Lean model of
-   lambdaclass/cairo-vm v3.2.0): operand addresses are computed from the
+   Semantics follow a formal executable model of
+   lambdaclass/cairo-vm v3.2.0: operand addresses are computed from the
    original memory, missing op0/op1 are first deduced by the owning builtin,
    then by the Stone inverse rules; dst is deduced only from res (ASSERT_EQ) or
    fp (CALL).  Deduced cells are written in op0, op1, dst order. *)

@@ -1,5 +1,4 @@
-(* Execution-mode runner, mirroring CairoVM/Runner/{Layout,Initialize,Execute}.lean
-   and cairo-vm v3.2.0's cairo_run for non-proof mode. *)
+(* Execution-mode runner, mirroring cairo-vm v3.2.0's cairo_run for non-proof mode. *)
 
 open Vm
 
