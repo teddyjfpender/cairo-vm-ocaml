@@ -40,7 +40,8 @@ let () =
     Runner.end_run r ~secure:cfg.secure_run ~allow_missing:cfg.allow_missing_builtins;
     if !print_output then begin
       print_string "Program Output:\n";
-      List.iter print_endline (Runner.output_lines r)
+      Runner.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
+      flush stdout
     end;
     Option.iter (Runner.write_trace r) !trace;
     Option.iter (Runner.write_memory r) !memory;
