@@ -30,12 +30,11 @@ type vm = {
   (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
      rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
      relocation_rules. [relocating] is set once a rule exists: memory reads
-     then translate temporary relocatables, so [Cpu.run] stops using the
-     native kernel. *)
+     then translate temporary relocatables. *)
   mutable tsegs : seg array;
   mutable thi : int array;
   mutable ntsegs : int;
-  mutable rules : (int * Felt.t) list; (* temp index -> destination relocatable *)
+  rules : (int, Felt.t) Hashtbl.t; (* temp index -> destination relocatable *)
   mutable relocating : bool;
   mutable had_temp : bool;
 }
@@ -67,7 +66,7 @@ let create ~trace =
     tsegs = [||];
     thi = [||];
     ntsegs = 0;
-    rules = [];
+    rules = Hashtbl.create 8;
     relocating = false;
     had_temp = false;
   }
@@ -121,7 +120,7 @@ let[@inline never] temp_read vm seg off =
 (* Memory.relocate_value: one application of the current rules *)
 let[@inline never] relocate_temp_value vm v =
   if is_reloc v && rseg v < 0 then
-    match List.assoc_opt (temp_index (rseg v)) vm.rules with
+    match Hashtbl.find_opt vm.rules (temp_index (rseg v)) with
     | Some dst ->
         let o = roff dst + roff v in
         if o > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
@@ -222,8 +221,8 @@ let add_relocation_rule vm src dst =
   if rseg src >= 0 then fail "Address %d is not in a temporary segment" (rseg src);
   if roff src <> 0 then fail "Non-zero offset %d in relocation source" (roff src);
   let k = temp_index (rseg src) in
-  if List.mem_assoc k vm.rules then fail "Duplicated relocation rule for segment %d" (rseg src);
-  vm.rules <- (k, dst) :: vm.rules;
+  if Hashtbl.mem vm.rules k then fail "Duplicated relocation rule for segment %d" (rseg src);
+  Hashtbl.add vm.rules k dst;
   vm.relocating <- true
 
 (* Memory.relocate_memory, run at the start of end_run: flatten rule chains,
@@ -231,16 +230,16 @@ let add_relocation_rule vm src dst =
    temporary segment into real memory (descending index order, holes skip
    addresses), with ordinary write-once and builtin validation. *)
 let relocate_temp_memory vm =
-  if vm.rules <> [] && vm.ntsegs > 0 then begin
-    let max_hops = List.length vm.rules + 1 in
-    let flat =
-      List.map
-        (fun (k, dst) ->
+  if vm.relocating && vm.ntsegs > 0 then begin
+    let max_hops = Hashtbl.length vm.rules + 1 in
+    let flat = Hashtbl.create (Hashtbl.length vm.rules) in
+    Hashtbl.iter
+        (fun k dst ->
           let rec go dst hops =
             if rseg dst >= 0 then dst
             else begin
               let next =
-                match List.assoc_opt (temp_index (rseg dst)) vm.rules with
+                match Hashtbl.find_opt vm.rules (temp_index (rseg dst)) with
                 | Some n -> n
                 | None -> fail "Unmapped temporary segment %d" (rseg dst)
               in
@@ -250,12 +249,11 @@ let relocate_temp_memory vm =
               go (reloc (rseg next) o) (hops + 1)
             end
           in
-          (k, go dst 0))
-        vm.rules
-    in
+          Hashtbl.add flat k (go dst 0))
+        vm.rules;
     let relocate v =
       if is_reloc v && rseg v < 0 then
-        match List.assoc_opt (temp_index (rseg v)) flat with
+        match Hashtbl.find_opt flat (temp_index (rseg v)) with
         | Some dst ->
             let o = roff dst + roff v in
             if o > off_mask then fail "Offset exceeds range when relocating memory";
@@ -273,7 +271,7 @@ let relocate_temp_memory vm =
     for k = 0 to vm.ntsegs - 1 do rewrite vm.tsegs.(k) vm.thi.(k) done;
     let keep = ref [] in
     for k = vm.ntsegs - 1 downto 0 do
-      match List.assoc_opt k flat with
+      match Hashtbl.find_opt flat k with
       | Some dst ->
           let a = vm.tsegs.(k) in
           for i = 0 to vm.thi.(k) - 1 do
@@ -290,7 +288,7 @@ let relocate_temp_memory vm =
     vm.tsegs <- Array.map fst kept;
     vm.thi <- Array.map snd kept;
     vm.ntsegs <- Array.length kept;
-    vm.rules <- [];
+    Hashtbl.clear vm.rules;
     vm.relocating <- false
   end
 

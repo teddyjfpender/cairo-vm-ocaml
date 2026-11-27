@@ -39,8 +39,7 @@ external cpu_batch :
 val run : ?stop:int * int -> ?steps:int -> Vm.vm -> (Vm.vm -> unit) array array -> unit
 (** [run ~stop:(seg, pc) ~steps vm hints] runs, with the hints indexed by
     program-segment pc, until pc = [seg:pc] or after [steps] steps (by
-    default neither). Once a hint adds a relocation rule, the remaining
-    steps take the generic path. *)
+    default neither). Operands that require temporary-segment relocation use the generic path. *)
 
 val register_runtime_hints : Vm.vm -> segment:int -> pc:int -> (Vm.vm -> unit) array -> unit
 (** Install the hint actions for a dynamically loaded instruction. *)

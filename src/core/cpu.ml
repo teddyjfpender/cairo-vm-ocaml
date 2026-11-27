@@ -43,7 +43,7 @@ let[@inline never] fetch_slow vm =
     if d land ext_mask = 0 then vm.icache.(vm.pc) <- d;
     d
   end
-  else if vm.pc_seg < 0 || vm.relocating then decode_at vm vm.pc_seg vm.pc
+  else if vm.pc_seg < 0 then decode_at vm vm.pc_seg vm.pc
   else begin
     let page = contract_page vm and index = vm.pc land 1023 in
     let cached = page.(index) in
@@ -304,9 +304,8 @@ let[@inline] step vm =
    kernel pays no lookup for hint detection.  The kernel also stops before
    an uncached pc, so a program-segment stop pc only needs a flag while
    cached.  The last steps of a bounded run, fewer than one batch, are
-   generic, which keeps the kernel's loop free of caller limits.  Once a hint
-   adds a relocation rule, memory reads go through the rules and every step
-   is generic. *)
+   generic, which keeps the kernel's loop free of caller limits.  Instructions reading a temporary pointer fall back to the generic path
+   so that memory reads observe the current relocation rules. *)
 
 let hint_bit = 1 lsl 61
 let generic_steps = ref 0
@@ -347,7 +346,7 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
       | Some handlers -> incr hint_steps; Array.iter (fun run -> run vm) handlers
     end;
     let count =
-      if vm.pc_seg < 0 || (vm.pc_seg <> 0 && vm.pc_seg = stop_seg) || vm.relocating || steps - (vm.steps - first) < batch_max then 0
+      if vm.pc_seg < 0 || (vm.pc_seg <> 0 && vm.pc_seg = stop_seg) || steps - (vm.steps - first) < batch_max then 0
       else begin
         registers.(0) <- pc; registers.(1) <- vm.ap; registers.(2) <- vm.fp;
         registers.(3) <- vm.hi.(1); registers.(4) <- vm.tlen; registers.(5) <- !pool_n;

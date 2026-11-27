@@ -24,6 +24,12 @@ static inline intnat offset(intnat code) {
   return (code >> 2) & OFFSET_MASK;
 }
 
+/* The OCaml operand reader applies active relocation rules. Returning before
+   any write keeps this instruction restartable even if a rule overflows. */
+static inline int temporary(intnat code) {
+  return code < 0 && (code & 3) == 2;
+}
+
 static inline int same_value(value pool, intnat a, intnat b) {
   return a == b || ((a & b & 3) == 3 && eq4(SLOT(pool, a >> 2), SLOT(pool, b >> 2)));
 }
@@ -93,7 +99,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
     /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
        for the otherwise unused op0, which must still be assigned. */
     if ((shape == 0xe0a || shape == 0xe0e || shape == 0xe06) && (uint16_t)d == 0x8000) {
-      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1]) break;
+      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1] || temporary(stack[fp-1])) break;
       intnat v;
       if (shape == 0xe06) {
         if (!fits(pc+1, program_length)) break;
@@ -103,7 +109,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
         if (!fits(from, length) || !stack[from]) goto general;
         v = stack[from];
       }
-      if (!v || (stack[ap] && !same_value(pool, stack[ap], v))) break;
+      if (!v || temporary(v) || temporary(stack[ap]) || (stack[ap] && !same_value(pool, stack[ap], v))) break;
       stack[ap] = v; next_ap = ap+1;
       if (next_ap > high) high = next_ap;
       goto complete;
@@ -111,7 +117,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
     if (shape == 0x84b) {
       if (fp < 2 || fp > length) break;
       intnat frame = stack[fp-2], ret = stack[fp-1];
-      if ((frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != code_seg) break;
+      if (temporary(frame) || (frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != code_seg) break;
       next_fp = offset(frame); next_pc = offset(ret);
       goto complete;
     }
@@ -135,6 +141,7 @@ general:;
     intnat op0_at = ((d & (UINT64_C(1) << 49)) ? fp : ap) + (int)((d >> 16) & 65535) - 32768;
     if (!fits(dst_at, length) || !fits(op0_at, length)) break;
     intnat dst = stack[dst_at], a = stack[op0_at];
+    if (temporary(dst) || temporary(a)) break;
     int delta = (int)((d >> 32) & 65535) - 32768;
     if (op == 0) {
       /* Relative conditional jump, unconditional jump and ap += immediate. */
@@ -213,6 +220,7 @@ general:;
           missing = cells+at; missing_at = at; missing_seg = sg;
         }
       }
+      if (temporary(b)) break;
       intnat value_code = b;
       if (!a) {
         if (!result || !b || !dst) break;
