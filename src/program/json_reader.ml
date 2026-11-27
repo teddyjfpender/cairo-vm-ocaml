@@ -19,6 +19,9 @@ type projection =
   | Elements of projection
   | Encoded
 
+external project_key : string -> int ref -> (string * projection) list -> (string * projection) list
+  = "cvm_json_project_key" [@@noalloc]
+
 let from_string ?identifiers ?(projection=Json) src : J.t =
   let seen_identifiers = ref false in
   let n = String.length src and pos = ref 0 in
@@ -65,10 +68,17 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
         `String (String.sub src start (!pos-start))
     | Only fields, '{' ->
         `Assoc (List.rev (fold_items '}' [] (fun acc ->
-            let key = string () in expect ':';
-            match List.assoc_opt key fields with
-            | None -> pos := skip !pos; acc
-            | Some child -> (key, value child) :: acc)))
+            ignore (peek ());
+            let start = !pos in
+            let selected = project_key src pos fields in
+            match selected with
+            | (key, child) :: _ -> expect ':'; (key, value child) :: acc
+            | [] when !pos <> start -> expect ':'; pos := skip !pos; acc
+            | [] ->
+                let key = string () in expect ':';
+                match List.assoc_opt key fields with
+                | None -> pos := skip !pos; acc
+                | Some child -> (key, value child) :: acc)))
     | _, '{' ->
         `Assoc
           (items '}' (fun () ->
@@ -98,12 +108,21 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
     | _ ->
         let st = !pos in
         pos := skip st;
-        let tok = String.sub src st (!pos - st) in
-        if String.for_all (function '0' .. '9' -> true | _ -> false) tok
-        then match int_of_string_opt tok with Some i -> `Int i | None -> `Intlit tok
-        else
-          (try J.from_string tok
-           with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
+        let length = !pos - st in
+        match token with
+        | 't' -> `Bool true | 'f' -> `Bool false | 'n' -> `Null
+        | _ ->
+            let digits = if token = '-' then st+1 else st in
+            let rec integer i acc =
+              if i = !pos then Some acc else
+                let d = Char.code src.[i] - 48 in
+                if d < 0 || d > 9 then None else integer (i+1) (acc*10+d) in
+            match (if !pos-digits <= 18 then integer digits 0 else None) with
+            | Some v -> `Int (if token = '-' then -v else v)
+            | None ->
+                let tok = String.sub src st length in
+                (try J.from_string tok
+                 with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
   in
   let v = value (if Option.is_some identifiers then Program else projection) in
   match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v

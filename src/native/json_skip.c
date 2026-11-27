@@ -141,3 +141,24 @@ done:
   if (stack != local) free(stack);
   return Val_long(result);
 }
+
+/* Resolve an object key against the canonical names in an Only projection.
+   Returning the matching list tail avoids allocating either a key or an
+   option. Escaped names use the full JSON decoder in the caller. */
+CAMLprim value cvm_json_project_key(value input, value position, value fields) {
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  size_t length = caml_string_length(input);
+  intnat start = Long_val(Field(position, 0));
+  if ((uintnat)start >= length || base[start] != '"') return Val_emptylist;
+  const unsigned char *key = base + start + 1;
+  int escaped = 0;
+  const unsigned char *after = string_end(key, base + length, &escaped);
+  if (!after || escaped) return Val_emptylist;
+  Field(position, 0) = Val_long(after - base);
+  size_t bytes = (size_t)(after - key - 1);
+  for (; fields != Val_emptylist; fields = Field(fields, 1)) {
+    value name = Field(Field(fields, 0), 0);
+    if (bytes == caml_string_length(name) && !memcmp(key, String_val(name), bytes)) break;
+  }
+  return fields;
+}

@@ -41,3 +41,15 @@ let () =
   let flow = `Assoc ["ap_tracking", tracking; "reference_ids", `Assoc ["x", `Int (-1)]] in
   check ["-1", `List []];
   check ["0", `List [`Assoc ["accessible_scopes", `List []; "code", `String ""; "flow_tracking_data", flow]]]
+
+let () =
+  let open Json_reader in
+  let projection = Only ["used", Json; "nested", Only ["keep", Json]] in
+  let text = {|{"unused":[1,2],"\u0075sed":-100,"nested":{"skip":false,"keep":999999999999999999999}}|} in
+  assert (from_string ~projection text =
+          `Assoc ["used", `Int (-100); "nested", `Assoc ["keep", `Intlit "999999999999999999999"]]);
+  List.iter (fun token -> assert (from_string token = Yojson.Safe.from_string token))
+    ["0"; "-0"; "999999999999999999"; "-999999999999999999"; "1.25"; "-2e3"; "false"; "null"];
+  match from_string ~projection {|{"unused":[0,],"used":0}|} with
+  | exception Yojson.Json_error _ -> ()
+  | _ -> failwith "malformed unselected value accepted"
