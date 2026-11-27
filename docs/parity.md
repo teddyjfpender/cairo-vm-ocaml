@@ -111,3 +111,21 @@ above. The source text has SHA-256 `d39b9f2d047cc9dca2de58f264b6a09448ccd34db967
 To reproduce `src/os/kzg_monomial.bin`, skip the two count lines, 4,096 Lagrange G1 points
 and 65 G2 points, then hex-decode and concatenate the final 4,096 lines in order. The
 196,608-byte result has SHA-256 `08797579f6cfd5788eddc1a215d64dcfabd04acbcaf2953fb2c1afb830f43315`.
+
+## Native Starknet aggregator
+
+The native aggregator runs the compiled sequencer `aggregator/main.cairo` with
+`--aggregator_input INPUT --layout all_cairo`. The input uses the sequencer's
+`AggregatorInput` JSON format. In blob mode, `--aggregator_da_output FILE`
+selects where the CLI writes the JSON array of blob coefficients.
+
+The fixtures contain full OS outputs from four consecutive storage blocks and
+five consecutive mixed-syscall blocks. Each block was first executed separately
+by the pinned Rust sequencer. The native aggregator matched all five PIE
+members for each chain in all four combinations of full or partial output and
+calldata or blob DA. The four blob files also matched Rust byte for byte.
+
+Run `python3 test/fixtures/aggregator/check.py OCAML_CLI AGGREGATOR_JSON` with
+the compiled aggregator from sequencer commit
+`ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. The Rust reference entry point is
+[aggregator_reference.rs](../bench/aggregator_reference.rs).

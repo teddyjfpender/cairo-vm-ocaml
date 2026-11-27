@@ -50,10 +50,11 @@ let commit coefficients =
   let value = encode !acc in
   Felt.of_z (Z.extract value 0 192), Felt.of_z (Z.shift_right value 192)
 
-let register reg =
+let register ?capture reg =
   let open Hintrt in
   reg "GuessKzgCommitmentsAndStoreDaSegment" (fun c vm ->
       let data = get_ptr vm c "state_updates_start" and size = Felt.to_nat (get_felt vm c "da_size") in
+      Option.iter (fun save -> save vm data size) capture;
       let blob = Z.to_int (const_z c "BLOB_LENGTH") in
       if blob <= 0 || blob > setup_size then fail "Invalid KZG blob length";
       let count = (size + blob - 1) / blob in

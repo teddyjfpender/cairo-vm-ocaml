@@ -12,3 +12,6 @@ val run_output_file : ?image:Program_image.t -> path:string -> Runner.config -> 
 (** Run a fresh OS VM and return its formatted output words. An exclusive
     serial caller can reuse the program across blocks. Temporary field
     storage is released after each request. *)
+
+val felt : Yojson.Safe.t -> Felt.t
+(** Decode a canonical field element from the sequencer's JSON. *)

@@ -29,6 +29,7 @@ let () =
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let from_pie = ref false and os_hints = ref None and bootloader_input = ref None in
+  let aggregator_input = ref None and aggregator_da = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
   let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.1.0)"; exit 0 in
@@ -49,6 +50,8 @@ let () =
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
+      ("--aggregator_input", Arg.String (fun s -> aggregator_input := Some s), "FILE  read sequencer aggregator input");
+      ("--aggregator_da_output", Arg.String (fun s -> aggregator_da := Some s), "FILE  write aggregated blob coefficients");
       ("--bootloader_input", Arg.String (fun s -> bootloader_input := Some s), "FILE  read simple bootloader tasks");
       ("--os_hints", Arg.String (fun s -> os_hints := Some s), "FILE  read sequencer OS hints and block inputs");
       ("--run_from_cairo_pie", Arg.Set from_pie, " the input file is a Cairo PIE zip to re-execute");
@@ -94,6 +97,10 @@ let () =
   if !from_pie && Option.is_some !os_hints then usage_error "--os_hints requires a compiled program";
   if Option.is_some !bootloader_input && (!from_pie || Option.is_some !os_hints) then
     usage_error "--bootloader_input requires a compiled bootloader and its own hint processor";
+  if Option.is_some !aggregator_input && (!from_pie || Option.is_some !os_hints || Option.is_some !bootloader_input) then
+    usage_error "--aggregator_input requires its own compiled program";
+  if Option.is_some !aggregator_da && Option.is_none !aggregator_input then
+    usage_error "--aggregator_da_output requires --aggregator_input";
   try
     let t0 = Unix.gettimeofday () in
     let proof = !proof in
@@ -112,7 +119,7 @@ let () =
         entrypoint = !entry;
       }
     in
-    let pie_input = ref None in
+    let pie_input = ref None and da_words = ref None in
     let r, t1, t2 = try
       if !from_pie then begin
         let pie = Pie_file.read file in
@@ -126,10 +133,13 @@ let () =
       end else
       let () = if Option.is_some !os_hints then Os_hints.configure_batch_gc () in
       let execute on_pie_loaded =
-        let r = match !bootloader_input, !os_hints with
-          | Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg (Program.load_file file)
-          | _, Some path -> Os_hints.initialize_files ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
-          | None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
+        let r = match !aggregator_input, !bootloader_input, !os_hints with
+          | Some path, _, _ ->
+              let on_da = Option.map (fun _ words -> da_words := Some words) !aggregator_da in
+              Aggregator.initialize ?layout_def ?on_da ~proof ~path cfg (Program.load_file file)
+          | None, Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg (Program.load_file file)
+          | None, _, Some path -> Os_hints.initialize_files ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
+          | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         Runner.run_until_end r;
         r, t1, Unix.gettimeofday () in
@@ -138,7 +148,16 @@ let () =
       Finalize.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
-    with Errors.Vm_error msg when rust <> None && !os_hints = None && !bootloader_input = None && not !stats -> delegate msg in
+    with Errors.Vm_error msg when rust <> None && !aggregator_input = None && !os_hints = None && !bootloader_input = None && not !stats -> delegate msg in
+    (match !aggregator_da, !da_words with
+     | Some file, Some words ->
+         Out_channel.with_open_bin file (fun oc ->
+             output_char oc '[';
+             Array.iteri (fun i word ->
+                 if i > 0 then output_char oc ',';
+                 Printf.fprintf oc "\"0x%s\"" (Z.format "x" (Felt.to_z word))) words;
+             output_char oc ']')
+     | _ -> ());
     if !print_output then begin
       print_string "Program Output:\n";
       Artifacts.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');

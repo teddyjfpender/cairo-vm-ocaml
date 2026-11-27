@@ -62,9 +62,8 @@ let generate_keys c vm =
       Felt.of_z (z_of_be (String.sub hash 0 31))) in
   set_val vm c "sn_private_keys" (gen_arg vm keys)
 
-let register ~set_pages reg =
+let register ?(pages_enabled=ref false) ~set_pages reg =
   reg "GenerateKeysUsingSha256Hash" generate_keys;
-  let pages_enabled = ref false in
   let segment vm temp = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
   let bool = function v when Felt.equal v Felt.zero -> false
     | v when Felt.equal v Felt.one -> true | _ -> fail "Expected OS Boolean" in
