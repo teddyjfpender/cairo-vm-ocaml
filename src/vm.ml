@@ -280,6 +280,17 @@ let input_felts vm seg inst n =
   done;
   if !ok then Some r else None
 
+(* Inputs and raw outputs occupy reserved, uncommitted slots at the end of
+   the pool. Compact the canonical outputs forward, starting at the input
+   base: the write cursor can never overtake an unread output. Only big
+   results advance pool_n. The caller reserved space for the whole block. *)
+let cache_outputs b off first_output count =
+  for i = 0 to count - 1 do
+    let result = c_code_of_slot !pool (first_output + i) !pool_n in
+    commit result;
+    cache_set b (off + i) result
+  done
+
 let deduce_builtin vm (b : builtin) seg off =
   let cpi = cells_per_instance b.kind in
   let idx = off mod cpi in
@@ -321,13 +332,7 @@ let deduce_builtin vm (b : builtin) seg off =
                 c_load_slot !pool inp.(i) (s + i)
               done;
               c_poseidon !pool s (s + 3);
-              pool_n := s + 6;
-              for i = 0 to 2 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 3 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 3 + i) r
-              done;
+              cache_outputs b (inst + 3) (s + 3) 3;
               cache_get b off
           | Keccak ->
               Array.iteri
@@ -339,13 +344,7 @@ let deduce_builtin vm (b : builtin) seg off =
                 c_load_slot !pool inp.(i) (s + i)
               done;
               c_keccak !pool s (s + 8);
-              pool_n := s + 16;
-              for i = 0 to 7 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 8 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 8 + i) r
-              done;
+              cache_outputs b (inst + 8) (s + 8) 8;
               cache_get b off
           | Ec_op ->
               reserve 7;
@@ -357,13 +356,7 @@ let deduce_builtin vm (b : builtin) seg off =
               if rc = 2 then fail "EcOp builtin: point not on curve";
               if rc = 1 then fail "EcOp builtin: EcOpSameXCoordinate";
               if rc <> 0 then fail "EcOp builtin: invalid point";
-              pool_n := s + 7;
-              for i = 0 to 1 do
-                reserve 1;
-                let r = c_code_of_slot !pool (s + 5 + i) !pool_n in
-                commit r;
-                cache_set b (inst + 5 + i) r
-              done;
+              cache_outputs b (inst + 5) (s + 5) 2;
               cache_get b off
           | _ -> 0)
     end
