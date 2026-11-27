@@ -92,6 +92,12 @@ let k_plain = 0
 let k_rc = 1
 let k_rc96 = 2
 let k_deduce = 3 (* pedersen, bitwise, ec_op, keccak, poseidon *)
+let k_bitwise = 5
+let k_pedersen = 6
+let k_poseidon = 7
+let k_keccak = 8
+let k_ec_op = 9
+let is_deducing k = k = k_deduce || (k >= k_bitwise && k <= k_ec_op)
 let k_ecdsa = 4
 
 type vm = {
@@ -291,11 +297,31 @@ let cache_outputs b off first_output count =
     cache_set b (off + i) result
   done
 
+let bitwise_output vm seg off idx =
+  let base = off - idx in
+  let x = read vm seg base and y = read vm seg (base + 1) in
+  if (x <> 0 && not (is_felt x)) || (y <> 0 && not (is_felt y)) then
+    fail "Builtin %d: expected integer at %d:%d" seg seg
+      (if x <> 0 && not (is_felt x) then base else base + 1);
+  if x = 0 || y = 0 then 0
+  else if both_small x y && x >= 0 && y >= 0 then
+    (match idx with 2 -> x land y | 3 -> (x lxor y) lor 1 | _ -> x lor y)
+  else begin
+    reserve 1;
+    let r = c_bitwise !pool (idx - 2) x y !pool_n in
+    if r = 0 then
+      fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg
+        (if Felt.bits x > 251 then base else base + 1);
+    commit r;
+    r
+  end
+
 let deduce_builtin vm (b : builtin) seg off =
   let cpi = cells_per_instance b.kind in
   let idx = off mod cpi in
   let nin = n_input_cells b.kind in
   if idx < nin then 0
+  else if b.kind = Bitwise then bitwise_output vm seg off idx
   else begin
     let c = cache_get b off in
     if c <> 0 then c
@@ -322,29 +348,6 @@ let deduce_builtin vm (b : builtin) seg off =
               in
               cache_set b off r;
               r
-          | Bitwise ->
-              let x = inp.(0) and y = inp.(1) in
-              if both_small x y && x >= 0 && y >= 0 then begin
-                (* The low tag is 01 for both inputs. AND and OR retain it;
-                   XOR needs the tag restored. All three results fit. *)
-                cache_set b (inst + 2) (x land y);
-                cache_set b (inst + 3) ((x lxor y) lor 1);
-                cache_set b (inst + 4) (x lor y)
-              end else begin
-                let check v k =
-                  if Felt.bits v > 251 then
-                    fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg (inst + k)
-                in
-                check x 0;
-                check y 1;
-                for k = 2 to 4 do
-                  reserve 1;
-                  let r = c_bitwise !pool (k - 2) x y !pool_n in
-                  commit r;
-                  cache_set b (inst + k) r
-                done
-              end;
-              cache_get b off
           | Poseidon ->
               reserve 6;
               let s = !pool_n in
@@ -383,7 +386,7 @@ let deduce_builtin vm (b : builtin) seg off =
   end
 
 let[@inline never] deduce_cell vm seg off =
-  if seg >= 0 && seg < vm.nsegs && vm.seg_flag.(seg) = k_deduce then
+  if seg >= 0 && seg < vm.nsegs && is_deducing vm.seg_flag.(seg) then
     match vm.seg_builtin.(seg) with Some b -> deduce_builtin vm b seg off | None -> 0
   else 0
 
@@ -692,12 +695,26 @@ let hint_bit = 1 lsl 61
 let generic_steps = ref 0
 let hint_steps = ref 0
 
+external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
+  seg -> bytes -> int -> bool -> int array -> int array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
+
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
   let pc = ref vm.pc and ap = ref vm.ap and fp = ref vm.fp and pc_seg = ref vm.pc_seg in
   let steps = ref vm.steps in
   let hi1 = ref vm.hi.(1) in
+  let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
+  let registers = Array.make 9 0 and spans = Array.make nh 0 in
   while not (!pc_seg = end_seg && !pc = 0) do
+    if !pc_seg = 0 && end_seg <> 0 then begin
+      registers.(0) <- !pc; registers.(1) <- !ap; registers.(2) <- !fp;
+      registers.(3) <- !hi1; registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
+      let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
+        !pool vm.nsegs vm.trace_on spans (match pedersen with Some b -> b.cache | None -> [||]) in
+      pc := registers.(0); ap := registers.(1); fp := registers.(2);
+      hi1 := registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
+      steps := !steps + count
+    end;
     let ic = vm.icache in
     let d = if !pc_seg = 0 && !pc < Array.length ic then Array.unsafe_get ic !pc else 0 in
     let hints_done = d land hint_bit <> 0 in
@@ -748,11 +765,11 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                   let v = if a < slen sm then sget sm a else 0 in
                   (* op1 deduction for `[ptr + k] = dst` into a non-deducing segment *)
                   if v = 0 && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
-                     && Array.unsafe_get vm.seg_flag sg <> k_deduce then begin
+                     && not (is_deducing (Array.unsafe_get vm.seg_flag sg)) then begin
                     let dv = sget mem dst_addr in
                     if dv <> 0 then (write vm sg a dv; dv) else 0
                   end
-                  else if v = 0 && Array.unsafe_get vm.seg_flag sg = k_deduce then begin
+                  else if v = 0 && is_deducing (Array.unsafe_get vm.seg_flag sg) then begin
                     (* builtin auto-deduction of the op1 cell, as cairo-vm does first *)
                     let b = deduce_cell vm sg a in
                     if b <> 0 then (write vm sg a b; b) else 0

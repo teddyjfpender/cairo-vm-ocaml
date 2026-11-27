@@ -1,3 +1,8 @@
 (executable
  (name gen_pedersen_table)
+ (modules gen_pedersen_table)
  (libraries zarith str))
+
+(executable
+ (name native_flags)
+ (modules native_flags))

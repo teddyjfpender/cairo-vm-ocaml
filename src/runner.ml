@@ -70,7 +70,11 @@ let initialize (cfg : config) (prog : Program.t) : t =
           (match k with
           | Range_check -> k_rc
           | Range_check96 -> k_rc96
-          | Pedersen | Bitwise | Ec_op | Keccak | Poseidon -> k_deduce
+          | Bitwise -> k_bitwise
+          | Pedersen -> k_pedersen
+          | Poseidon -> k_poseidon
+          | Keccak -> k_keccak
+          | Ec_op -> k_ec_op
           | Ecdsa -> k_ecdsa
           | _ -> k_plain);
         b)
@@ -121,10 +125,18 @@ let run_until_end r = run_fast r.vm r.hints r.end_seg
 
 (* ---- end of run ---- *)
 
+external verified_bitwise : bytes -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
+
+external verified_pedersen : bytes -> seg -> int -> int array -> bool = "cvm_verify_pedersen" [@@noalloc]
+
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
     (fun b ->
-      if vm.seg_flag.(b.base) = k_deduce then begin
+      if is_deducing vm.seg_flag.(b.base) &&
+         (fill_holes || not (match b.kind with
+          | Bitwise -> verified_bitwise !Felt.pool vm.segs.(b.base) (used_size vm b.base)
+          | Pedersen -> verified_pedersen !Felt.pool vm.segs.(b.base) (used_size vm b.base) b.cache
+          | _ -> false)) then begin
         let n = used_size vm b.base in
         let width = cells_per_instance b.kind and inputs = n_input_cells b.kind in
         let limit = if fill_holes then ((n + width - 1) / width) * width else n in
@@ -203,7 +215,7 @@ let verify_secure_runner r =
               done;
               for j = nin to cpi - 1 do
                 let off = (cpi * i) + j in
-                if read vm b.base off = 0 && vm.seg_flag.(b.base) = k_deduce then
+                if read vm b.base off = 0 && is_deducing vm.seg_flag.(b.base) then
                   ignore (deduce_builtin vm b b.base off)
               done
             done
