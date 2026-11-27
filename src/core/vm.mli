@@ -89,8 +89,8 @@ val value_to_string : Felt.t -> string
 
 (** {2 Temporary segments and relocation rules} *)
 
-val add_relocation_rule : vm -> Felt.t -> Felt.t -> unit
-(** cairo-vm Memory.add_relocation_rule (without extensive_hints). *)
+val add_relocation_rule : ?allow_felt:bool -> vm -> Felt.t -> Felt.t -> unit
+(** Enable integer destinations for sequencer extensive hints with [allow_felt]. *)
 
 val relocate_temp_value : vm -> Felt.t -> Felt.t
 (** One application of the current rules to a value. *)

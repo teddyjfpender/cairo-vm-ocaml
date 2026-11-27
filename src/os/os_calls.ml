@@ -67,6 +67,18 @@ let register s ~felt ~next reg =
         end in
       copy 0
     end in
+  reg "CheckSyscallResponse" (fun c vm ->
+      let actual_size = Felt.to_nat (get_felt vm c "retdata_size") in
+      let expected_size = Felt.to_nat (get_member vm c "call_response" ["retdata_size"]) in
+      if actual_size < 0 || actual_size <> expected_size then fail "Inconsistent deprecated return data length";
+      let expected = get_member vm c "call_response" ["retdata"] in
+      if not (Felt.is_reloc expected) then fail "Invalid deprecated return data segment";
+      if actual_size > 0 then begin
+        let actual = get_ptr vm c "retdata" in
+        for i = 0 to actual_size-1 do
+          if not (Felt.equal (mem_at vm actual i) (mem_at vm expected i)) then fail "Inconsistent deprecated return data"
+        done
+      end);
   reg "CheckNewCallContractResponse" (check_response "");
   reg "CheckNewDeployResponse" (check_response "constructor_");
   reg "CheckRetdataForDebug" (fun c vm ->

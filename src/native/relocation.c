@@ -20,6 +20,7 @@ CAMLprim value cvm_relocate_segments(value segments, value highs, value count, v
         if ((uintnat)index >= Wosize_val(rules)) continue;
         const intnat base = Long_val(Field(rules, index));
         if (base == 0) continue;
+        if (base & 1) { cells[i] = base; continue; }
         const intnat delta = (v >> 2) & mask;
         if (delta > mask - ((base >> 2) & mask)) return Val_false;
         cells[i] = base + (delta << 2);

@@ -39,7 +39,31 @@ let compress data =
   List.concat (pack_indices (1 lsl 20) ([0;n] @ Array.to_list counts @ [List.length pointers])
     :: unique @ [pack_indices (Felt_tbl.length seen) pointers; pack_indices 7 (List.rev !indices)])
 
+(* The sequencer salts each compressed state diff with fresh OS entropy.
+   Derive independent symmetric and private keys with its SHA-256 labels. *)
+let generate_keys c vm =
+  let first = get_ptr vm c "compressed_start" in
+  let count = Felt.to_nat (Vm.value_sub (get_ptr vm c "compressed_end") first) in
+  let n_keys = Felt.to_nat (get_felt vm c "n_keys") in
+  if count < 0 then fail "Invalid compressed state diff range";
+  if n_keys < 0 || n_keys > 256 then fail "Too many state diff encryption recipients";
+  let entropy = In_channel.with_open_bin "/dev/urandom" (fun ic -> really_input_string ic 32) in
+  let input = Buffer.create 128 in
+  Buffer.add_string input entropy;
+  for i = 0 to count-1 do
+    let word = mem_at vm first i in
+    if not (Felt.is_felt word) then fail "Expected field element in compressed state diff";
+    Buffer.add_string input (Ec.be32 (Felt.to_z word))
+  done;
+  let seed = Sha256.digest (Buffer.contents input) in
+  set_val vm c "symmetric_key" (Felt.of_z (z_of_be (Sha256.digest (seed ^ "SYM"))));
+  let keys = List.init n_keys (fun i ->
+      let hash = Sha256.digest (seed ^ "PRIV" ^ String.make 1 (Char.chr i)) in
+      Felt.of_z (z_of_be (String.sub hash 0 31))) in
+  set_val vm c "sn_private_keys" (gen_arg vm keys)
+
 let register ~set_pages reg =
+  reg "GenerateKeysUsingSha256Hash" generate_keys;
   let pages_enabled = ref false in
   let segment vm temp = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
   let bool = function v when Felt.equal v Felt.zero -> false

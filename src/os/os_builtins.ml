@@ -2,6 +2,10 @@ open Errors
 open Hintrt
 
 let register reg =
+  reg "NaiveUnpackFelt252ToU32s" (fun c vm ->
+      let value = get_z vm c "packed_value" in
+      write_arg vm (get_ptr vm c "unpacked_u32s")
+        (List.init 8 (fun i -> Felt.small (Z.to_int (Z.extract value (32*i) 32)))));
   reg {|array_ptr = ids.array_ptr
 elm_size = ids.elm_size
 assert isinstance(elm_size, int) and elm_size > 0, \

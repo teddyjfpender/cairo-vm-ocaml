@@ -18,6 +18,21 @@ let step_loop flag c vm =
       set_val vm c flag (of_bool (not (Felt.equal v Felt.zero)))
   | _ -> fail "Variable n is not an integer"
 
+let relocate ~allow_felt c vm =
+  let src = get_ptr vm c "src_ptr" in
+  (* cairo-vm: inside segment_arena (`infos` in scope) dest_ptr is
+     recomputed as infos[0].end + 1 *)
+  let infos = try Some (get_ptr vm c "infos") with Vm_error _ -> None in
+  let dst =
+    match infos with
+    | Some infos ->
+        let e = mem_at vm infos 1 in
+        if not (Felt.is_reloc e) then fail "Expected relocatable at infos + 1";
+        value_add e Felt.one
+    | None -> if allow_felt then get_val vm c "dest_ptr" else get_ptr vm c "dest_ptr"
+  in
+  add_relocation_rule ~allow_felt vm src dst
+
 let register reg =
   (* memory[ap] = segments.add() *)
   reg C.add_segment (fun _ vm -> write_ap vm (Felt.reloc (add_segment vm) 0));
@@ -28,17 +43,4 @@ let register reg =
   reg C.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Value (get_felt vm c "n")) ]);
   reg C.memset_continue_loop (fun c vm -> step_loop "continue_loop" c vm);
   reg C.temporary_array (fun c vm -> set_val vm c "temporary_array" (Felt.reloc (add_temp_segment vm) 0));
-  reg C.relocate_segment (fun c vm ->
-      let src = get_ptr vm c "src_ptr" in
-      (* cairo-vm: inside segment_arena (`infos` in scope) dest_ptr is
-         recomputed as infos[0].end + 1 *)
-      let infos = try Some (get_ptr vm c "infos") with Vm_error _ -> None in
-      let dst =
-        match infos with
-        | Some infos ->
-            let e = mem_at vm infos 1 in
-            if not (Felt.is_reloc e) then fail "Expected relocatable at infos + 1";
-            value_add e Felt.one
-        | None -> get_ptr vm c "dest_ptr"
-      in
-      add_relocation_rule vm src dst)
+  reg C.relocate_segment (relocate ~allow_felt:false)

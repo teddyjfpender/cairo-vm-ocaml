@@ -226,3 +226,23 @@ let () =
   assert (Array.for_all2 Felt.equal b.cache ref_b.cache);
   Array.iteri (fun s seg ->
       for i = 0 to slen seg-1 do assert (Felt.equal (sget seg i) (sget ref_vm.segs.(s) i)) done) vm.segs
+
+let () =
+  let vm = create ~trace:false in
+  let real = add_segment vm and dst = add_temp_segment vm in
+  let intermediate = add_temp_segment vm in
+  let ptr = Felt.reloc in
+  (match add_relocation_rule vm (ptr dst 0) Felt.one with
+   | exception Vm_error _ -> () | () -> failwith "ordinary VM accepted integer destination");
+  add_relocation_rule ~allow_felt:true vm (ptr dst 0) Felt.one;
+  add_relocation_rule vm (ptr intermediate 0) (ptr dst 0);
+  write_checked vm real 0 (ptr intermediate 21);
+  write_checked vm dst 0 (Felt.small 7);
+  assert (get vm dst 0 = Felt.small 7 && relocate_temp_value vm (ptr dst 17) = Felt.one);
+  relocate_temp_memory vm;
+  assert (get vm real 0 = Felt.one && vm.ntsegs = 0);
+  let a = add_temp_segment vm and b = add_temp_segment vm in
+  add_relocation_rule vm (ptr a 0) (ptr b 1);
+  add_relocation_rule ~allow_felt:true vm (ptr b 0) Felt.one;
+  match relocate_temp_memory vm with
+  | exception Vm_error _ -> () | () -> failwith "accepted nonzero hop to an integer destination"

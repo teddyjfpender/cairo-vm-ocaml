@@ -150,7 +150,7 @@ let[@inline] rule rules index =
 let[@inline] relocate_temp_value vm v =
   if v < Felt.empty && is_reloc v then begin
     let dst = rule vm.rules (temp_index (rseg v)) in
-    if dst = Felt.empty then v else
+    if dst = Felt.empty then v else if is_felt dst then dst else
       let off = roff dst + roff v in
       if off > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
       reloc (rseg dst) off
@@ -243,9 +243,9 @@ let write_checked vm seg off v =
   end
 
 (* Memory.add_relocation_rule (without extensive_hints) *)
-let add_relocation_rule vm src dst =
+let add_relocation_rule ?(allow_felt=false) vm src dst =
   if not (is_reloc src) then fail "add_relocation_rule: src_ptr is not a relocatable";
-  if not (is_reloc dst) then fail "add_relocation_rule: dest_ptr is not a relocatable";
+  if not (is_reloc dst || (allow_felt && is_felt dst)) then fail "add_relocation_rule: dest_ptr is not a relocatable";
   if rseg src >= 0 then fail "Address %d is not in a temporary segment" (rseg src);
   if roff src <> 0 then fail "Non-zero offset %d in relocation source" (roff src);
   let k = temp_index (rseg src) in
@@ -267,28 +267,36 @@ external relocate_segments : seg array -> int array -> int -> Felt.t array -> bo
 
 let relocate_temp_memory ?on_resolved vm =
   if vm.relocating && vm.ntsegs > 0 then begin
-    (* Resolve each rule once. A non-pointer marker denotes an active path.
+    (* Resolve each rule once. Track active paths separately from felt destinations.
        Accumulate offsets when unwinding so shared tails reuse their result. *)
     let flat = Array.make (Array.length vm.rules) Felt.empty in
+    let visiting = Bytes.make (Array.length flat) '\000' in
     let finish dst path =
       List.fold_left (fun base (k, delta) ->
-          let off = roff base + delta in
-          if off > off_mask then fail "Offset exceeds range in relocation rule";
-          let v = reloc (rseg base) off in flat.(k) <- v; v) dst path |> ignore in
+          let v = if is_felt base then begin
+              if delta <> 0 then fail "Nonzero offset in relocation chain to an integer";
+              base
+            end else
+              let off = roff base + delta in
+              if off > off_mask then fail "Offset exceeds range in relocation rule";
+              reloc (rseg base) off in
+          flat.(k) <- v; v) dst path |> ignore in
     let rec walk k path =
       let known = rule flat k in
-      if known = Felt.one then fail "Relocation rule cycle"
-      else if known <> Felt.empty then finish known path
-      else begin
+      if known <> Felt.empty then finish known path else begin
         let dst = rule vm.rules k in
         if dst = Felt.empty then fail "Unmapped temporary segment %d" (-1-k);
-        if rseg dst >= 0 then begin flat.(k) <- dst; finish dst path end
-        else begin flat.(k) <- Felt.one; walk (temp_index (rseg dst)) ((k, roff dst) :: path) end
+        if is_felt dst || rseg dst >= 0 then begin flat.(k) <- dst; finish dst path end
+        else begin
+          if Bytes.get visiting k <> '\000' then fail "Relocation rule cycle";
+          Bytes.set visiting k '\001';
+          walk (temp_index (rseg dst)) ((k, roff dst) :: path)
+        end
       end in
     Array.iteri (fun k v -> if v <> Felt.empty && flat.(k) = Felt.empty then walk k []) vm.rules;
     Option.iter (fun visit -> visit (fun ptr ->
         let base = rule flat (temp_index (rseg ptr)) in
-        if base = Felt.empty then ptr else
+        if base = Felt.empty then ptr else if is_felt base then base else
           let off = roff ptr + roff base in
           if off > off_mask then fail "Offset exceeds range when relocating access";
           reloc (rseg base) off)) on_resolved;
@@ -298,7 +306,7 @@ let relocate_temp_memory ?on_resolved vm =
     let keep = ref [] in
     for k = vm.ntsegs - 1 downto 0 do
       let dst = rule flat k in
-      if dst <> Felt.empty then begin
+      if is_felt dst then () else if dst <> Felt.empty then begin
           let a = vm.tsegs.(k) in
           for i = 0 to vm.thi.(k) - 1 do
             let v = sget a i in

@@ -54,7 +54,7 @@ let bind state ~block ~secp ctx =
   let names = Felt_tbl.create 16 in
   List.iter (fun name -> Felt_tbl.add names (Os_block_hash.ascii name) name)
     ["GetExecutionInfo"; "GetClassHashAt"; "GetBlockHash"; "Keccak"; "EmitEvent"; "StorageRead"; "StorageWrite"; "SendMessageToL1";
-     "ReplaceClass"; "Deploy"; "CallContract"; "LibraryCall"; "Sha256ProcessBlock"; "Sha512ProcessBlock"];
+     "ReplaceClass"; "Deploy"; "CallContract"; "LibraryCall"; "MetaTxV0"; "Sha256ProcessBlock"; "Sha512ProcessBlock"];
   List.iter (fun (name, _) -> Felt_tbl.add names (Os_block_hash.ascii name) name) Os_secp.selectors;
   fun vm ptr ->
   let open Os_calls in
@@ -150,10 +150,21 @@ let bind state ~block ~secp ctx =
           let gas, failed, retdata = inner_result gas in
           let bounds = array true retdata in
           if failed then gas,Felt.one,array true retdata else success (address :: bounds) gas)
-    | "CallContract" | "LibraryCall" ->
-        ignore (integer 2); ignore (integer 3); span 4;
-        6,(if name = "CallContract" then "CALL_CONTRACT" else "LIBRARY_CALL"),(fun gas ->
-          if name = "CallContract" && Z.equal (Felt.to_z (at 3)) (const_z ctx "EXECUTE_ENTRY_POINT_SELECTOR") then
+    | "CallContract" | "LibraryCall" | "MetaTxV0" ->
+        let target = integer 2 and selector = integer 3 in
+        if name <> "LibraryCall" && Felt.bits target > 251 then fail "Invalid contract address";
+        span 4;
+        let size, cost = match name with
+          | "MetaTxV0" ->
+              span 6;
+              variable_cost := Z.mul (Felt.to_z (Vm.value_sub (at 5) (at 4)))
+                  (const_z ctx "META_TX_V0_CALLDATA_FACTOR_GAS_COST");
+              8, "META_TX_V0"
+          | "CallContract" -> 6, "CALL_CONTRACT"
+          | _ -> 6, "LIBRARY_CALL" in
+        size,cost,(fun gas ->
+          let execute = Z.equal (Felt.to_z selector) (const_z ctx "EXECUTE_ENTRY_POINT_SELECTOR") in
+          if (name = "CallContract" && execute) || (name = "MetaTxV0" && not execute) then
             gas,Felt.one,array false [Os_block_hash.ascii "Invalid argument"]
           else
             let gas, failed, values = inner_result gas in
@@ -173,28 +184,3 @@ let bind state ~block ~secp ctx =
   let out = gas :: failed :: values in
   write_arg vm (Vm.reloc_add_felt ptr (Felt.small units)) out;
   state.syscall_ptr <- Some (Vm.reloc_add_felt ptr (Felt.small (units + List.length out)))
-
-let register_deprecated calls ~felt reg =
-  let register name selector respond =
-    let code = "syscall_handler." ^ name ^ "(segments=segments, syscall_ptr=ids.syscall_ptr)" in
-    reg code (fun c vm ->
-        if var_opt c.scopes "deprecated_syscalls" <> Some (Value Felt.one) then
-          fail "Expected deprecated syscall handler";
-        let ptr = get_ptr vm c "syscall_ptr" in
-        if not (Felt.equal (mem_at vm ptr 0) (Os_block_hash.ascii selector)) then
-          fail "Unexpected deprecated syscall selector";
-        respond (Os_calls.current calls) vm ptr) in
-  let integer vm ptr n =
-    let v = mem_at vm ptr n in
-    if not (Felt.is_felt v) then fail "Expected deprecated syscall integer";
-    v in
-  let key vm ptr =
-    if Felt.bits (integer vm ptr 1) > 251 then fail "Invalid storage key" in
-  let result vm ptr n values = write_arg vm (Vm.reloc_add_felt ptr (Felt.small n)) values in
-  register "storage_write" "StorageWrite" (fun _ vm ptr -> key vm ptr; ignore (integer vm ptr 2));
-  register "storage_read" "StorageRead" (fun call vm ptr ->
-      key vm ptr; result vm ptr 2 [felt (Os_calls.pop "storage reads" call.reads)]);
-  let address name selector field = register name selector (fun call vm ptr ->
-      result vm ptr 1 [felt (U.member field (U.member "call" call.witness))]) in
-  address "get_contract_address" "GetContractAddress" "storage_address";
-  address "get_caller_address" "GetCallerAddress" "caller_address"

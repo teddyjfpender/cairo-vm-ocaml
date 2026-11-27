@@ -61,7 +61,7 @@ let relocate_memory r =
   let on_resolved resolve =
     Hintrt.Felt_tbl.iter (fun ptr () ->
         let dest = resolve ptr in
-        if Felt.rseg dest >= 0 then mark r.acc (Felt.rseg dest) (Felt.roff dest)) r.acc.pending_temp;
+        if Felt.is_reloc dest && Felt.rseg dest >= 0 then mark r.acc (Felt.rseg dest) (Felt.roff dest)) r.acc.pending_temp;
     Hintrt.Felt_tbl.clear r.acc.pending_temp in
   Vm.relocate_temp_memory ~on_resolved r.vm
 

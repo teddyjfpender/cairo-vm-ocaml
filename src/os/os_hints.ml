@@ -22,7 +22,7 @@ let felt = function
   | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
   | j -> felt_slow j
 
-let from_file ~watch ~accessed ~set_pages path =
+let from_file ~os_program ~watch ~accessed ~set_pages path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
@@ -49,6 +49,7 @@ let from_file ~watch ~accessed ~set_pages path =
     match Hashtbl.find_opt table h.code with
     | Some f -> f (make_ctx prog scopes h)
     | None -> Hints.compile prog scopes h in
+  reg Hint_codes.relocate_segment (Segments.relocate ~allow_felt:true);
   Legacy_class.register ~classes:deprecated ~felt ~compile reg;
   let segment vm = Felt.reloc (Vm.add_segment vm) 0 in
   let state_entries = ref None and class_entries = ref None in
@@ -61,7 +62,7 @@ let from_file ~watch ~accessed ~set_pages path =
   let begin_block = Os_compression.register ~block ~felt
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
   let calls = Os_calls.create () and secp = Os_secp.create () in
-  Os_syscalls.register_deprecated calls ~felt reg;
+  Deprecated_syscalls.register ~os_program calls ~felt reg;
   let begin_transactions = Os_transactions.register ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
@@ -74,6 +75,10 @@ let from_file ~watch ~accessed ~set_pages path =
   Os_state.register ~block ~felt reg;
   Os_patricia.register ~block ~felt reg;
   Os_block_hash.register ~block ~felt reg;
+  reg "GenerateDummyOsOutputSegment" (fun c vm ->
+      let base = segment vm in
+      write_arg vm base [segment vm; Felt.zero; Felt.zero];
+      set_val vm c "outputs" base);
   reg "CheckIsDeprecated" (fun c vm ->
       let hash = get_member vm c "execution_context" ["class_hash"] in
       set_val vm c "is_deprecated" (of_bool (Felt_tbl.mem deprecated_hashes hash)));
@@ -127,7 +132,7 @@ let initialize ?layout_def ?(record_trace=true) ~proof ~path cfg prog =
     if watch then Vm.watched_range r.Runner.vm ptr length else Resources.range_accessed r ptr length in
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
-  let compile_hint = from_file ~watch ~accessed ~set_pages path in
+  let compile_hint = from_file ~os_program:prog ~watch ~accessed ~set_pages path in
   let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
   runner := Some r;
   r

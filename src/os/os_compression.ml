@@ -51,6 +51,21 @@ let register ~block ~felt ~state_initialized reg =
   let check c vm id path =
     let value = read (get_felt vm c "contract_address") (storage_key c vm id path) in
     if not (Felt.equal value (get_felt vm c "value")) then fail "Inconsistent contract storage read" in
+  let revert_address c =
+    match var c.scopes "contract_address_for_revert" with Value v -> v | _ -> fail "Missing revert address" in
+  reg "PrepareStateEntryForRevert" (fun c vm ->
+      let address = get_felt vm c "contract_address" in
+      if Felt.bits address > 251 then fail "Invalid revert address";
+      Os_state.state_entry c vm address;
+      set c.scopes "contract_address_for_revert" (Value address));
+  reg "ReadStorageKeyForRevert" (fun c vm ->
+      let key = get_felt vm c "storage_key" in
+      if Felt.bits key > 251 then fail "Invalid revert storage key";
+      set_val vm c "prev_value" (read (revert_address c) key));
+  reg "WriteStorageKeyForRevert" (fun c vm ->
+      let key = get_felt vm c "storage_key" in
+      if Felt.bits key > 251 then fail "Invalid revert storage key";
+      put (revert_address c) key (get_felt vm c "value"));
   reg "WriteSyscallResultDeprecated" (fun c vm -> write c vm "syscall_ptr" ["address"]);
   reg "WriteSyscallResult" (fun c vm -> write c vm "request" ["key"]);
   reg "CacheContractStorageRequestKey" (fun c vm -> check c vm "request" ["key"]);
