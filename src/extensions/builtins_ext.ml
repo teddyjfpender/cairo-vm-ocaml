@@ -168,7 +168,13 @@ let get_usize vm a =
   if n < 0 then fail "Value at %d:%d does not fit in usize" (fst a) (snd a);
   n
 
-let insert vm (seg, off) v = write_checked vm seg off v
+(* Memory::insert_as_accessed: cells the mod builtins fill count as accessed
+   for memory-hole accounting (Runner replays this log) *)
+let accessed_log : (int * int) list ref = ref []
+
+let insert vm (seg, off) v =
+  write_checked vm seg off v;
+  accessed_log := (seg, off) :: !accessed_log
 
 (* words and value; None if a word is missing *)
 let read_n_words vm b a =
@@ -365,6 +371,6 @@ let add_zero_segment vm mods =
   done;
   seg
 
-let reset () = Hashtbl.reset signatures
+let reset () = Hashtbl.reset signatures; accessed_log := []
 
 let install () = Vm.ecdsa_validate := ecdsa_validate

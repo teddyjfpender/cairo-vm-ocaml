@@ -14,7 +14,7 @@
 
 open Vm
 open Hintrt
-module C = Hint_codes_secp
+module C = Hint_codes
 
 let reg = Hints.reg
 let z = Z.of_int
@@ -748,14 +748,14 @@ let register () =
    `cairo-0-secp-hints` feature, so they are not part of the default table. *)
 let register_cairo0_secp () =
   let reduce_into name c vm = setz c name (mod_floor (pack86 vm c "x") r1_p) in
-  reg C.cairo0_secp_reduce (reduce_into "value");
-  reg C.cairo0_secp_reduce_x (reduce_into "x");
-  reg C.cairo0_compute_q_mod_prime (fun c vm ->
+  reg C.Cairo0.secp_reduce (reduce_into "value");
+  reg C.Cairo0.secp_reduce_x (reduce_into "x");
+  reg C.Cairo0.compute_q_mod_prime (fun c vm ->
       let v = pack86 vm c "val" in
       let q, r = div_mod_floor v r1_p in
       if Z.sign r <> 0 then fail "verify_zero: Invalid input %s" (Z.to_string v);
       set_int vm c "q" q);
-  reg C.cairo0_compute_ids_high_low (fun c vm ->
+  reg C.Cairo0.compute_ids_high_low (fun c vm ->
       setz c "SECP256R1_P" r1_p;
       let upper = const_z c "UPPER_BOUND" and shift = const_z c "SHIFT" in
       let value = felt_z vm c "value" in
@@ -776,9 +776,9 @@ let register_cairo0_secp () =
     let v = felt_z vm c "v" in
     setz c "value" (if Z.is_even v = Z.is_even y then y else mod_floor (Z.neg y) r1_p)
   in
-  reg C.cairo0_secp_r1_get_point_from_x (r1_get_point_from_x r1_p);
-  reg C.cairo0_secp_r1_get_point_from_x_v2 (r1_get_point_from_x stark_p);
-  reg C.cairo0_is_on_curve_2 (fun c vm ->
+  reg C.Cairo0.secp_r1_get_point_from_x (r1_get_point_from_x r1_p);
+  reg C.Cairo0.secp_r1_get_point_from_x_v2 (r1_get_point_from_x stark_p);
+  reg C.Cairo0.is_on_curve_2 (fun c vm ->
       let y = getz c "y" and y2 = getz c "y_square_int" in
       set_val vm c "is_on_curve" (of_bool (Z.equal (Z.rem (Z.mul y y) r1_p) y2)));
   let secp_double_assign_new_x pack_prime c vm =
@@ -792,9 +792,9 @@ let register_cairo0_secp () =
     setz c "value" v;
     setz c "new_x" v
   in
-  reg C.cairo0_secp_double_assign_new_x (secp_double_assign_new_x r1_p);
-  reg C.cairo0_secp_double_assign_new_x_v2 (secp_double_assign_new_x stark_p);
-  reg C.cairo0_generate_nibbles (fun c vm ->
+  reg C.Cairo0.secp_double_assign_new_x (secp_double_assign_new_x r1_p);
+  reg C.Cairo0.secp_double_assign_new_x_v2 (secp_double_assign_new_x stark_p);
+  reg C.Cairo0.generate_nibbles (fun c vm ->
       let num = u256 vm c "scalar" in
       let nibbles = List.init 64 (fun i -> Felt.small (Z.to_int (Z.extract num (4 * i) 4))) in
       (* nibbles.pop() takes the last element; nibbles[0] the first *)
@@ -803,12 +803,12 @@ let register_cairo0_secp () =
       let rest = List.rev (List.tl rev) in
       set_val vm c "last_nibble" (List.hd rest);
       set c.scopes "nibbles" (Values rest));
-  reg C.cairo0_fast_secp_add_assign_new_y (fun c _ ->
+  reg C.Cairo0.fast_secp_add_assign_new_y (fun c _ ->
       let slope = getz c "slope" and x = getz c "x" and new_x = getz c "new_x" and y = getz c "y" in
       let v = mod_floor (Z.sub (Z.mul slope (Z.sub x new_x)) y) r1_p in
       setz c "value" v;
       setz c "new_y" v);
-  reg C.cairo0_write_nibbles_to_mem (fun c vm ->
+  reg C.Cairo0.write_nibbles_to_mem (fun c vm ->
       match var c.scopes "nibbles" with
       | Values l -> (
           match List.rev l with
@@ -817,7 +817,7 @@ let register_cairo0_secp () =
               write_checked vm 1 vm.fp last
           | [] -> fail "Nibbles list is empty")
       | _ -> fail "Variable nibbles is not a list");
-  reg C.cairo0_compute_value_div_mod (fun c _ -> setz c "value" (div_mod Z.one (getz c "x") r1_p))
+  reg C.Cairo0.compute_value_div_mod (fun c _ -> setz c "value" (div_mod Z.one (getz c "x") r1_p))
 
 (* Runtime counterpart of cairo-vm's `cairo-0-secp-hints` cargo feature
    (off by default, as in the reference CLI build). *)

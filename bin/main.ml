@@ -24,8 +24,9 @@ let delegate message =
 let () =
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
-  let secure = ref None and allow_missing = ref false and stats = ref false in
-  let fill_holes = ref false in
+  let secure = ref None and allow_missing = ref None and stats = ref false in
+  let fill_holes = ref None and proof = ref false and merge_extra = ref false in
+  let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
   let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OCaml)"; exit 0 in
@@ -38,9 +39,14 @@ let () =
       ("--print_output", Arg.Set print_output, " print the output builtin segment");
       ("--entrypoint", Arg.Set_string entry, "NAME  entrypoint (default main)");
       ("--secure_run", Arg.String (fun s -> secure := Some (bool_of s)), "true|false");
-      ("--allow_missing_builtins", Arg.String (fun s -> allow_missing := bool_of s), "true|false");
-      ("--fill-holes", Arg.String (fun s -> fill_holes := bool_of s), "true|false  materialize deducible builtin outputs");
-      ("--merge_extra_segments", Arg.Unit ignore, " merge extra segments in PIE output");
+      ("--allow_missing_builtins", Arg.String (fun s -> allow_missing := Some (bool_of s)), "true|false");
+      ("--fill-holes", Arg.String (fun s -> fill_holes := Some (bool_of s)), "true|false  materialize deducible builtin outputs");
+      ("--proof_mode", Arg.Set proof, " run in canonical proof mode");
+      ("--air_public_input", Arg.String (fun s -> air_public := Some s), "FILE  write the AIR public input (proof mode)");
+      ("--air_private_input", Arg.String (fun s -> air_private := Some s), "FILE  write the AIR private input (proof mode)");
+      ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
+      ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
+      ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
       ("--version", Arg.Unit version, " print version");
@@ -48,10 +54,8 @@ let () =
     ]
   in
   let require_backend flag = delegate (flag ^ " requires CAIRO_VM_RUST_CLI") in
-  let switches = ["--proof_mode"; "--run_from_cairo_pie"] in
-  let paths = ["--cairo_pie_output"; "--air_public_input"; "--air_private_input"; "--cairo_layout_params_file"] in
-  let spec = spec @ List.map (fun f -> f, Arg.Unit (fun () -> require_backend f), " use the Rust backend") switches
-                  @ List.map (fun f -> f, Arg.String (fun _ -> require_backend f), "FILE  use the Rust backend") paths in
+  let switches = ["--run_from_cairo_pie"] in
+  let spec = spec @ List.map (fun f -> f, Arg.Unit (fun () -> require_backend f), " use the Rust backend") switches in
   let seen = Hashtbl.create 8 in
   let once flag action value =
     if Hashtbl.mem seen flag then raise (Arg.Bad ("option repeated: " ^ flag));
@@ -72,27 +76,43 @@ let () =
   (try Arg.parse_argv Sys.argv options positional usage with
    | Arg.Bad msg -> if rust <> None then delegate msg else (prerr_string msg; exit 2)
    | Arg.Help msg -> if rust <> None then delegate msg else (print_string msg; exit 0));
-  if !layout = "dynamic" then require_backend "dynamic layout";
-  (match Runner.layout_builtins !layout with None -> prerr_endline ("invalid layout: " ^ !layout); exit 2 | Some _ -> ());
-  let file = match !file with Some f -> f | None -> prerr_endline "missing program file"; exit 2 in
+  let usage_error msg = if rust <> None then delegate msg else (prerr_endline ("error: " ^ msg); exit 2) in
+  (match Runner.layout_builtins !layout with None -> usage_error ("invalid layout: " ^ !layout) | Some _ -> ());
+  let file = match !file with Some f -> f | None -> usage_error "missing program file" in
+  (* clap constraints of cairo-vm-cli *)
+  if !layout = "dynamic" && !layout_params = None then
+    usage_error "the following required arguments were not provided: --cairo_layout_params_file";
+  if !air_public <> None && not !proof then usage_error "--air_public_input requires --proof_mode";
+  if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
+    usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
+  if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
+    usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
   try
     let t0 = Unix.gettimeofday () in
     let prog = Program.load_file file in
+    let proof = !proof in
+    let layout_def =
+      match !layout_params with
+      | Some p -> let l = Layout.dynamic_of_file p in if !layout = "dynamic" then Some l else None
+      | None -> None
+    in
     let cfg =
       {
         Runner.layout = !layout;
-        trace = !trace <> None;
-        secure_run = Option.value !secure ~default:true;
-        allow_missing_builtins = !allow_missing;
+        (* a PIE needs the trace to count memory holes *)
+        trace = !trace <> None || !air_public <> None || !pie_out <> None;
+        secure_run = Option.value !secure ~default:(not proof);
+        allow_missing_builtins = Option.value !allow_missing ~default:proof;
         entrypoint = !entry;
       }
     in
     let r, t1, t2 = try
-      let r = Runner.initialize cfg prog in
+      let r = Runner.initialize ?layout_def ~proof cfg prog in
       let t1 = Unix.gettimeofday () in
       Runner.run_until_end r;
       let t2 = Unix.gettimeofday () in
-      Runner.end_run ~fill_holes:!fill_holes r ~secure:cfg.secure_run ~allow_missing:cfg.allow_missing_builtins;
+      Runner.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
+        ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
     with Vm.Vm_error msg when rust <> None && not !stats -> delegate msg in
     if !print_output then begin
@@ -102,6 +122,12 @@ let () =
     end;
     Option.iter (Runner.write_trace r) !trace;
     Option.iter (Runner.write_memory r) !memory;
+    Option.iter (Air.write_public_input r) !air_public;
+    (match !air_private, !trace, !memory with
+     | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
+     | _ -> ());
+    Option.iter
+      (Pie.write r ~main:(Runner.entry_pc cfg prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra) !pie_out;
     if !stats then
       Printf.eprintf "generic=%d hint_pcs=%d " !Vm.generic_steps !Vm.hint_steps;
     if !stats then

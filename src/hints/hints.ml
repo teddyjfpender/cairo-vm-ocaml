@@ -204,15 +204,15 @@ let felt_z vm ctx n = get_z vm ctx n
 
 let () =
   (* memory[ap] = segments.add() *)
-  reg H.h0 (fun _ vm -> write_ap vm (Felt.reloc (add_segment vm) 0));
+  reg H.add_segment (fun _ vm -> write_ap vm (Felt.reloc (add_segment vm) 0));
   (* assert_nn *)
-  reg H.h1 (fun c ->
+  reg H.assert_nn (fun c ->
       let read = bound_felt c "a" in fun vm ->
       let a = read vm in
       if not (Felt.is_small a && a > 0) && Felt.bits a > 128 then
         fail "a = %s is out of range." (Z.to_string (Felt.to_z a)));
   (* assert_le_felt *)
-  reg H.h2 (fun c vm ->
+  reg H.assert_le_felt (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
       if Z.gt a b then fail "a = %s is not less than or equal to b = %s." (Z.to_string a) (Z.to_string b);
       let l = [ (a, 0); (Z.sub b a, 1); (Z.sub (Z.pred pz) b, 2) ] in
@@ -228,40 +228,40 @@ let () =
       w 0 r0;
       w 3 q1;
       w 2 r1);
-  reg H.h3 (fun c vm -> write_ap vm (of_bool (not (Z.equal (var_z c.scopes "excluded") Z.zero))));
-  reg H.h4 (fun c vm -> write_ap vm (of_bool (not (Z.equal (var_z c.scopes "excluded") Z.one))));
-  reg H.h5 (fun c _ -> check (Z.equal (var_z c.scopes "excluded") (z 2)) "assert excluded == 2");
-  reg H.h6 (fun c _ -> exit_scope c.scopes);
+  reg H.assert_le_felt_excluded_0 (fun c vm -> write_ap vm (of_bool (not (Z.equal (var_z c.scopes "excluded") Z.zero))));
+  reg H.assert_le_felt_excluded_1 (fun c vm -> write_ap vm (of_bool (not (Z.equal (var_z c.scopes "excluded") Z.one))));
+  reg H.assert_le_felt_excluded_2 (fun c _ -> check (Z.equal (var_z c.scopes "excluded") (z 2)) "assert excluded == 2");
+  reg H.vm_exit_scope (fun c _ -> exit_scope c.scopes);
   (* unsigned_div_rem *)
-  reg H.h7 (fun c vm ->
+  reg H.unsigned_div_rem (fun c vm ->
       let div = felt_z vm c "div" and value = felt_z vm c "value" in
       if Z.leq div Z.zero || Z.gt div (Z.div pz rc_bound) then fail "div=%s is out of the valid range." (Z.format "%x" div);
       let q, r = Z.ediv_rem value div in
       set_val vm c "q" (zf q);
       set_val vm c "r" (zf r));
-  reg H.h8 (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "len")) ]);
-  reg H.h9 (fun c vm ->
+  reg H.memcpy_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "len")) ]);
+  reg H.memcpy_continue_copying (fun c vm ->
       let n = Z.pred (var_z c.scopes "n") in
       set c.scopes "n" (Int n);
       set_val vm c "continue_copying" (of_bool (Z.gt n Z.zero)));
   (* assert_lt_felt *)
-  reg H.h10 (fun c vm ->
+  reg H.assert_lt_felt (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
       if Z.geq a b then fail "a = %s is not less than b = %s." (Z.to_string a) (Z.to_string b));
-  reg H.h11 (fun c ->
+  reg H.is_nn (fun c ->
       let read = bound_felt c "a" in fun vm ->
       let a = read vm in
       write_ap vm (of_bool (if Felt.is_small a then a < 0 else Felt.bits a > 128)));
-  reg H.h12 (fun c vm ->
+  reg H.is_nn_out_of_range (fun c vm ->
       let a = felt_z vm c "a" in
       write_ap vm (if Z.lt (Z.erem (Z.sub (Z.neg a) Z.one) pz) rc_bound then Felt.zero else Felt.one));
-  reg H.h13 (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "n")) ]);
-  reg H.h14 (fun c vm ->
+  reg H.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "n")) ]);
+  reg H.memset_continue_loop (fun c vm ->
       let n = Z.pred (var_z c.scopes "n") in
       set c.scopes "n" (Int n);
       set_val vm c "continue_loop" (of_bool (Z.gt n Z.zero)));
   (* uint256_add *)
-  reg H.h15 (fun c vm ->
+  reg H.uint256_add (fun c vm ->
       let shift = Option.value (const_opt c "SHIFT") ~default:rc_bound in
       let g n m = get_member_z vm c n [ m ] in
       let sum_low = Z.add (g "a" "low") (g "b" "low") in
@@ -270,7 +270,7 @@ let () =
       let sum_high = Z.add (Z.add (g "a" "high") (g "b" "high")) carry_low in
       set_val vm c "carry_high" (zf (if Z.geq sum_high shift then Z.one else Z.zero)));
   (* split_felt *)
-  reg H.h16 (fun c vm ->
+  reg H.split_felt (fun c vm ->
       let v = felt_z vm c "value" in
       set_member vm c "low" [] (zf (Z.logand v (mask 128))) |> ignore;
       ())
@@ -279,16 +279,16 @@ let () =
 
 (* split_felt writes ids.low / ids.high as plain felt variables *)
 let () =
-  reg H.h16 (fun c vm ->
+  reg H.split_felt (fun c vm ->
       let low, high = Felt.split_at_limb ~two_limbs:true (get_felt vm c "value") in
       set_val vm c "low" low;
       set_val vm c "high" high);
-  reg H.h17 (fun c vm ->
+  reg H.pow (fun c vm ->
       let e = get_member_z vm c "prev_locs" [ "exp" ] in
       set_member vm c "locs" [ "bit" ] (zf (Z.logand e Z.one)));
-  reg H.h18 (fun c vm -> if Z.equal (felt_z vm c "value") Z.zero then fail "assert_not_zero failed: 0 = 0.");
+  reg H.assert_not_zero (fun c vm -> if Z.equal (felt_z vm c "value") Z.zero then fail "assert_not_zero failed: 0 = 0.");
   (* blake2s compute *)
-  reg H.h19 (fun c vm ->
+  reg H.blake2s_compute (fun c vm ->
       let out = get_ptr vm c "output" in
       let at k = mem_at vm (Felt.reloc (Felt.rseg out) 0) (Felt.roff out + k) in
       let h = Array.init 8 (fun i -> to_u32 (at (i - 26))) in
@@ -297,7 +297,7 @@ let () =
       let r = blake2s_compress h msg t 0 f 0 in
       write_arg vm out (Array.to_list (Array.map Felt.small r)));
   (* blake2s finalize padding *)
-  reg H.h20 (fun c vm ->
+  reg H.blake2s_finalize (fun c vm ->
       let n = Z.to_int (const_z c "N_PACKED_INSTANCES") in
       check (0 <= n && n < 20) "N_PACKED_INSTANCES out of range";
       let sz = Z.to_int (const_z c "INPUT_BLOCK_FELTS") in
@@ -314,17 +314,17 @@ let () =
     if rev then (List.init 4 (fun i -> w high (3 - i)), List.init 4 (fun i -> w low (3 - i)))
     else (List.init 4 (fun i -> w low i), List.init 4 (fun i -> w high i))
   in
-  reg H.h21 (fun c vm ->
+  reg H.blake2s_add_uint256 (fun c vm ->
       let a, b = blake_words (felt_z vm c "low") (felt_z vm c "high") false in
       let d = get_ptr vm c "data" in
       write_arg vm d (List.map Felt.small a);
       write_arg vm (value_add d (Felt.small 4)) (List.map Felt.small b));
-  reg H.h22 (fun c vm ->
+  reg H.blake2s_add_uint256_bigend (fun c vm ->
       let a, b = blake_words (felt_z vm c "low") (felt_z vm c "high") true in
       let d = get_ptr vm c "data" in
       write_arg vm d (List.map Felt.small a);
       write_arg vm (value_add d (Felt.small 4)) (List.map Felt.small b));
-  reg H.h23 (fun c _ -> enter c.scopes [])
+  reg H.vm_enter_scope (fun c _ -> enter c.scopes [])
 
 (* ---- dicts ---- *)
 let dict_manager scopes =
@@ -384,7 +384,7 @@ let incr_ptr t = t.current_ptr <- value_add t.current_ptr (Felt.small 3)
 
 let () =
   (* squash_dict *)
-  reg H.h24 (fun c vm ->
+  reg H.squash_dict (fun c vm ->
       let address = get_ptr vm c "dict_accesses" in
       let ptr_diff = felt_z vm c "ptr_diff" in
       check (Z.equal (Z.erem ptr_diff (z 3)) Z.zero) "Accesses array size must be divisible by DictAccess.SIZE";
@@ -423,7 +423,7 @@ let () =
     | Access_indices h, Value k -> (match Hashtbl.find_opt h k with Some l -> l | None -> fail "key not in access_indices")
     | _ -> fail "squash_dict scope corrupted"
   in
-  reg H.h25 (fun c vm ->
+  reg H.squash_dict_inner_first_iteration (fun c vm ->
       (* The collection loop already restores increasing access order. *)
       set c.scopes "current_access_indices" (Ints (access_list c.scopes));
       let cur = pop_next "current_access_indices" c.scopes in
@@ -431,24 +431,24 @@ let () =
       let rc = get_ptr vm c "range_check_ptr" in
       write_checked vm (Felt.rseg rc) (Felt.roff rc) (Felt.small cur));
   let nonempty scopes name = match var scopes name with Ints l | Values l -> l <> [] | _ -> fail "not a list" in
-  reg H.h26 (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
-  reg H.h27 (fun c vm ->
+  reg H.squash_dict_inner_skip_loop (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
+  reg H.squash_dict_inner_check_access_index (fun c vm ->
       let nw = pop_next "current_access_indices" c.scopes in
       let cur = Z.to_int (var_z c.scopes "current_access_index") in
       set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (nw - cur - 1));
       set c.scopes "current_access_index" (Int (z nw)));
-  reg H.h28 (fun c vm -> set_member vm c "loop_temps" [ "should_continue" ] (of_bool (nonempty c.scopes "current_access_indices")));
-  reg H.h29 (fun c _ -> check (not (nonempty c.scopes "current_access_indices")) "assert len(current_access_indices) == 0");
-  reg H.h30 (fun c vm ->
+  reg H.squash_dict_inner_continue_loop (fun c vm -> set_member vm c "loop_temps" [ "should_continue" ] (of_bool (nonempty c.scopes "current_access_indices")));
+  reg H.squash_dict_inner_len_assert (fun c _ -> check (not (nonempty c.scopes "current_access_indices")) "assert len(current_access_indices) == 0");
+  reg H.squash_dict_inner_used_accesses_assert (fun c vm ->
       check (Z.equal (felt_z vm c "n_used_accesses") (z (List.length (access_list c.scopes)))) "n_used_accesses mismatch");
-  reg H.h31 (fun c _ -> check (not (nonempty c.scopes "keys")) "assert len(keys) == 0");
-  reg H.h32 (fun c vm ->
+  reg H.squash_dict_inner_assert_len_keys (fun c _ -> check (not (nonempty c.scopes "keys")) "assert len(keys) == 0");
+  reg H.squash_dict_inner_next_key (fun c vm ->
       if not (nonempty c.scopes "keys") then fail "No keys left but remaining_accesses > 0.";
       let k = pop_next "keys" c.scopes in
       set c.scopes "key" (Value k);
       set_val vm c "next_key" k);
   (* dict_new *)
-  reg H.h33 (fun c vm ->
+  reg H.dict_new (fun c vm ->
       let ptr = match var c.scopes "initial_dict" with
         | Initial_dict h -> new_dict vm c.scopes (Some h) None
         | Dict_snapshot frozen -> from_snapshot vm c.scopes frozen
@@ -457,12 +457,12 @@ let () =
       write_ap vm ptr;
       del c.scopes "initial_dict");
   (* dict_read *)
-  reg H.h34 (fun c vm ->
+  reg H.dict_read (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "dict_ptr") in
       incr_ptr t;
       set_val vm c "value" (dict_lookup t (canon (get_val vm c "key"))));
   (* dict_write *)
-  reg H.h35 (fun c vm ->
+  reg H.dict_write (fun c vm ->
       let dp = get_ptr vm c "dict_ptr" in
       let t = get_tracker c.scopes dp in
       incr_ptr t;
@@ -471,7 +471,7 @@ let () =
       write_checked vm (Felt.rseg dp) (Felt.roff dp + 1) prev;
       dict_set t key (get_val vm c "new_value"));
   (* dict_update *)
-  reg H.h36 (fun c vm ->
+  reg H.dict_update (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "dict_ptr") in
       let key = canon (get_val vm c "key") in
       let cur = dict_lookup t key in
@@ -481,14 +481,14 @@ let () =
       dict_set t key (get_val vm c "new_value");
       incr_ptr t);
   (* dict_squash: copy dict *)
-  reg H.h37 (fun c vm ->
+  reg H.dict_squash_copy_dict (fun c vm ->
       let m = match var c.scopes "__dict_manager" with Dict_manager m -> m | _ -> fail "no dict manager" in
       let t = get_tracker c.scopes (get_ptr vm c "dict_accesses_end") in
       enter c.scopes [ ("__dict_manager", Dict_manager m); ("initial_dict", Dict_snapshot (snapshot t)) ]);
-  reg H.h38 (fun c vm ->
+  reg H.dict_squash_update_ptr (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "squashed_dict_start") in
       t.current_ptr <- get_ptr vm c "squashed_dict_end");
-  reg H.h39 (fun c vm -> write_ap vm (new_dict vm c.scopes None (Some (get_val vm c "default_value"))))
+  reg H.default_dict_new (fun c vm -> write_ap vm (new_dict vm c.scopes None (Some (get_val vm c "default_value"))))
 
 (* A completed block records the maximum seen since row zero. These maxima
    are ordered even when the input is unsorted. A relocatable terminates any
@@ -558,7 +558,7 @@ let search_lower cursor vm arr width length key =
 
 let () =
   (* unsafe_keccak *)
-  reg H.h40 (fun c ->
+  reg H.unsafe_keccak (fun c ->
       let prefix = keccak_cursors () in
       fun vm ->
       let data = get_ptr vm c "data" in
@@ -566,7 +566,7 @@ let () =
       let h = hash_byte_prefix prefix vm data length in
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
-  reg H.h41 (fun c ->
+  reg H.unsafe_keccak_finalize (fun c ->
       let prefix = keccak_cursors () in
       fun vm ->
       let st = get_member vm c "keccak_state" [ "start_ptr" ] and en = get_member vm c "keccak_state" [ "end_ptr" ] in
@@ -574,30 +574,30 @@ let () =
       let h = finalize_keccak prefix vm st n in
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
-  reg H.h42 (fun c vm ->
+  reg H.keccak_write_args (fun c vm ->
       let low = felt_z vm c "low" and high = felt_z vm c "high" in
       let inp = get_ptr vm c "inputs" in
       let sp v = [ zf (Z.logand v (mask 64)); zf (Z.shift_right v 64) ] in
       write_arg vm inp (sp low);
       write_arg vm (value_add inp (Felt.small 2)) (sp high));
-  reg H.h43 (fun c vm -> write_ap vm (of_bool (Z.lt (felt_z vm c "n_bytes") (const_z c "BYTES_IN_WORD"))));
-  reg H.h44 (fun c vm ->
+  reg H.compare_bytes_in_word_nondet (fun c vm -> write_ap vm (of_bool (Z.lt (felt_z vm c "n_bytes") (const_z c "BYTES_IN_WORD"))));
+  reg H.block_permutation (fun c vm ->
       let n = Z.to_int (const_z c "KECCAK_STATE_SIZE_FELTS") in
       check (0 <= n && n < 100) "KECCAK_STATE_SIZE_FELTS out of range";
       let kp = get_ptr vm c "keccak_ptr" in
       let vals = read_range vm (value_sub kp (Felt.small n)) n |> List.map Felt.to_z |> Array.of_list in
       check (n = 25) "keccak_func expects 25 lanes";
       write_arg vm kp (Array.to_list (Array.map zf (keccak_lanes vals))));
-  reg H.h45 (fun c vm -> write_ap vm (of_bool (Z.geq (felt_z vm c "n_bytes") (const_z c "KECCAK_FULL_RATE_IN_BYTES"))));
-  reg H.h46 (fun c vm ->
+  reg H.compare_keccak_full_rate_in_bytes_nondet (fun c vm -> write_ap vm (of_bool (Z.geq (felt_z vm c "n_bytes") (const_z c "KECCAK_FULL_RATE_IN_BYTES"))));
+  reg H.cairo_keccak_finalize_v1 (fun c vm ->
       let n = Z.to_int (const_z c "KECCAK_STATE_SIZE_FELTS") and bs = Z.to_int (const_z c "BLOCK_SIZE") in
       check (0 <= n && n < 100 && 0 <= bs && bs < 10) "keccak finalize constants out of range";
       let inp = Array.make 25 Z.zero in
       let one = Array.to_list (Array.map zf inp) @ Array.to_list (Array.map zf (keccak_lanes inp)) in
       write_arg vm (get_ptr vm c "keccak_ptr_end") (List.concat (List.init bs (fun _ -> one))));
-  reg H.h47 (fun c vm -> write_ap vm (if Z.leq (felt_z vm c "a") (felt_z vm c "b") then Felt.zero else Felt.one));
+  reg H.is_le_felt (fun c vm -> write_ap vm (if Z.leq (felt_z vm c "a") (felt_z vm c "b") then Felt.zero else Felt.one));
   (* assert_not_equal *)
-  reg H.h48 (fun c vm ->
+  reg H.assert_not_equal (fun c vm ->
       let a = get_val vm c "a" and b = get_val vm c "b" in
       let ok =
         (Felt.is_felt a && Felt.is_felt b) || (Felt.is_reloc a && Felt.is_reloc b && Felt.rseg a = Felt.rseg b)
@@ -605,27 +605,27 @@ let () =
       if not ok then fail "assert_not_equal failed: non-comparable values";
       if Felt.equal a b then fail "assert_not_equal failed: %s = %s." (value_to_string a) (value_to_string b));
   (* assert_250_bit *)
-  reg H.h49 (fun c vm ->
+  reg H.assert_250_bits (fun c vm ->
       let v = felt_z vm c "value" in
       if Z.geq v (const_z c "UPPER_BOUND") then fail "%s is outside of the range [0, 2**250)." (Z.to_string v);
       let hi, lo = Z.ediv_rem v (const_z c "SHIFT") in
       set_val vm c "high" (zf hi);
       set_val vm c "low" (zf lo));
-  reg H.h50 (fun c vm ->
+  reg H.is_positive (fun c vm ->
       let a = get_felt vm c "value" in
       let positive = if Felt.is_small a then Felt.small_val a > 0 else begin
         let v = as_int (Felt.to_z a) in
         if Z.geq (Z.abs v) rc_bound then fail "value=%s is out of the valid range." (Z.to_string v);
         Z.sign v > 0
       end in set_val vm c "is_positive" (of_bool positive));
-  reg H.h51 (fun c vm -> if not (Z.equal (felt_z vm c "value") Z.zero) then fail "split_int(): value is out of range.");
-  reg H.h52 (fun c vm ->
+  reg H.split_int_assert_range (fun c vm -> if not (Z.equal (felt_z vm c "value") Z.zero) then fail "split_int(): value is out of range.");
+  reg H.split_int (fun c vm ->
       let res = Z.erem (felt_z vm c "value") (felt_z vm c "base") in
       if Z.geq res (felt_z vm c "bound") then fail "split_int(): Limb %s is out of range." (Z.to_string res);
       let o = get_ptr vm c "output" in
       write_checked vm (Felt.rseg o) (Felt.roff o) (zf res));
   (* signed_div_rem *)
-  reg H.h53 (fun c vm ->
+  reg H.signed_div_rem (fun c vm ->
       let div = felt_z vm c "div" in
       if Z.leq div Z.zero || Z.gt div (Z.div pz rc_bound) then fail "div=%s is out of the valid range." (Z.format "%x" div);
       let bound = felt_z vm c "bound" in
@@ -637,7 +637,7 @@ let () =
       set_val vm c "r" (zf r);
       set_val vm c "biased_q" (zf (Z.add q bound)));
   (* find_element *)
-  reg H.h54 (fun c ->
+  reg H.find_element (fun c ->
       let cache = ref None in
       fun vm ->
         let arr = get_ptr vm c "array_ptr" in
@@ -648,7 +648,7 @@ let () =
         if n < 0 then fail "Invalid value for n_elms.";
         let index = Find_element.lookup cache vm arr es n key in
         set_val vm c "index" (Felt.small index));
-  reg H.h55 (fun c ->
+  reg H.search_sorted_lower (fun c ->
       let cursor = ref None in
       fun vm ->
         let arr = get_ptr vm c "array_ptr" in
@@ -659,8 +659,8 @@ let () =
         let key = get_felt vm c "key" in
         let index = search_lower cursor vm arr es n key in
         set_val vm c "index" (Felt.small index));
-  reg H.h56 (fun c _ -> enter c.scopes [ ("__usort_max_size", Nothing) ]);
-  reg H.h57 (fun c vm ->
+  reg H.usort_enter_scope (fun c _ -> enter c.scopes [ ("__usort_max_size", Nothing) ]);
+  reg H.usort_body (fun c vm ->
       let inp = get_ptr vm c "input" in
       let n = Felt.to_nat (get_felt vm c "input_len") in
       let pos = Hashtbl.create 64 in
@@ -679,15 +679,15 @@ let () =
       set_val vm c "output_len" (Felt.small (List.length out));
       set_val vm c "output" (gen_arg vm out);
       set_val vm c "multiplicities" (gen_arg vm (List.map (fun k -> Felt.small (List.length (Hashtbl.find pos k))) out)));
-  reg H.h58 (fun c vm ->
+  reg H.usort_verify (fun c vm ->
       set c.scopes "last_pos" (Int Z.zero);
       let pos = match var c.scopes "positions_dict" with Positions p -> p | _ -> fail "positions_dict missing" in
       let l = match Hashtbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
       (* h57 stores positions in increasing order. Consume that immutable list
          from the head, preserving positions_dict for subsequent lookups. *)
       set c.scopes "positions" (Ints l));
-  reg H.h59 (fun c _ -> match var c.scopes "positions" with Ints [] -> () | _ -> fail "assert len(positions) == 0");
-  reg H.h60 (fun c vm ->
+  reg H.usort_verify_multiplicity_assert (fun c _ -> match var c.scopes "positions" with Ints [] -> () | _ -> fail "assert len(positions) == 0");
+  reg H.usort_verify_multiplicity_body (fun c vm ->
       let cur, rest =
         match var c.scopes "positions" with
         | Ints (cur :: rest) -> (cur, rest)
@@ -702,8 +702,8 @@ let () =
     let d = value_sub (get_val vm c "elements_end") (get_val vm c "elements") in
     Felt.to_z d
   in
-  reg H.h61 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 10))));
-  reg H.h62 (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 2))))
+  reg H.nondet_elements_over_ten (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 10))));
+  reg H.nondet_elements_over_two (fun c vm -> write_ap vm (of_bool (Z.geq (ptr_diff vm c) (z 2))))
 
 (* ---- set membership ---- *)
 
@@ -813,11 +813,11 @@ let find_set_element cache vm base total elm =
 let () =
   let setz c n v = set c.scopes n (Int v) in
   let getz c n = var_z c.scopes n in
-  reg H.h64 (fun c vm ->
+  reg H.bigint_to_uint256 (fun c vm ->
       let d0 = get_member_z vm c "x" [ "d0" ] and d1 = get_member_z vm c "x" [ "d1" ] in
       set_val vm c "low" (zf (Z.logand (Z.add d0 (Z.mul d1 (const_z c "BASE"))) (mask 128))));
-  reg H.h77 (fun c vm -> write_ap vm (zf (Z.erem (felt_z vm c "scalar") (z 2))));
-  reg H.h81 (fun c ->
+  reg H.ec_mul_inner (fun c vm -> write_ap vm (zf (Z.erem (felt_z vm c "scalar") (z 2))));
+  reg H.set_add (fun c ->
       let cache = ref None in
       fun vm ->
         let es = Felt.to_nat (get_felt vm c "elm_size") in
@@ -832,20 +832,20 @@ let () =
           set_val vm c "index" (Felt.small found);
           set_val vm c "is_elm_in_set" Felt.one
         end);
-  reg H.h82 (fun c ->
+  reg H.split_64 (fun c ->
       let read = bound_felt c "a" and lo = bound_set c "low" and hi = bound_set c "high" in
       fun vm ->
         let low, high = Felt.split_at_limb ~two_limbs:false (read vm) in
         lo vm low;
         hi vm high);
-  reg H.h83 (fun c vm ->
+  reg H.uint256_sqrt (fun c vm ->
       let n = Z.add (Z.shift_left (get_member_z vm c "n" [ "high" ]) 128) (get_member_z vm c "n" [ "low" ]) in
       let root = isqrt n in
       check (Z.lt root (two_pow 128)) "uint256_sqrt: root out of range";
       set_member vm c "root" [ "low" ] (zf root);
       set_member vm c "root" [ "high" ] Felt.zero);
-  reg H.h84 (fun c vm -> write_ap vm (of_bool (Z.lt (get_member_z vm c "a" [ "high" ]) (two_pow 127))));
-  reg H.h85 (fun c vm ->
+  reg H.uint256_signed_nn (fun c vm -> write_ap vm (of_bool (Z.lt (get_member_z vm c "a" [ "high" ]) (two_pow 127))));
+  reg H.uint256_unsigned_div_rem (fun c vm ->
       let a = read_uint256 vm c "a" and d = read_uint256 vm c "div" in
       if Z.equal d Z.zero then fail "uint256_unsigned_div_rem: division by zero";
       let q, r = Z.ediv_rem a d in

@@ -4,18 +4,7 @@
 open Vm
 open Hintrt
 
-let verify_ecdsa_signature =
-  "ecdsa_builtin.add_signature(ids.ecdsa_ptr.address_, (ids.signature_r, ids.signature_s))"
-
-let run_p_circuit_body =
-  "\n\nModBuiltinRunner.fill_memory(\n    memory=memory,\n    add_mod=(ids.add_mod_ptr.address_, builtin_runners[\"add_mod_builtin\"], ids.add_mod_n),\n    mul_mod=(ids.mul_mod_ptr.address_, builtin_runners[\"mul_mod_builtin\"], ids.mul_mod_n),\n)"
-
-let run_p_circuit_header n =
-  "from starkware.cairo.lang.builtins.modulo.mod_builtin_runner import ModBuiltinRunner\nassert builtin_runners[\"add_mod_builtin\"].instance_def.batch_size == "
-  ^ n ^ "\nassert builtin_runners[\"mul_mod_builtin\"].instance_def.batch_size == " ^ n
-
-let run_p_circuit = run_p_circuit_header "1" ^ run_p_circuit_body
-let run_p_circuit_large_batch = run_p_circuit_header "ids.BATCH_SIZE" ^ run_p_circuit_body
+module C = Hint_codes
 
 let find_builtin vm kind = List.find_opt (fun b -> b.kind = kind) vm.builtins
 
@@ -43,7 +32,7 @@ let run_p_mod_circuit batch_size c vm =
   Builtins_ext.fill_memory vm add mul
 
 let register () =
-  Hints.reg verify_ecdsa_signature (fun c vm ->
+  Hints.reg C.verify_ecdsa_signature (fun c vm ->
       let r = get_z vm c "signature_r" in
       let s = get_z vm c "signature_s" in
       let ptr = get_ptr vm c "ecdsa_ptr" in
@@ -55,6 +44,6 @@ let register () =
           if Felt.roff ptr mod 2 <> 0 then
             fail "Signature hint must point to the public key cell, not %d:%d" (Felt.rseg ptr) (Felt.roff ptr);
           Builtins_ext.add_signature (Felt.roff ptr) (r, s));
-  Hints.reg run_p_circuit (run_p_mod_circuit 1);
+  Hints.reg C.run_p_circuit (run_p_mod_circuit 1);
   (* With the mod_builtin feature cairo-vm hardcodes the large batch size to 8. *)
-  Hints.reg run_p_circuit_large_batch (run_p_mod_circuit 8)
+  Hints.reg C.run_p_circuit_with_large_batch_size (run_p_mod_circuit 8)

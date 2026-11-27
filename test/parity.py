@@ -1,34 +1,42 @@
 #!/usr/bin/env python3
 """Differential parity check against cairo-vm-cli (Rust) over a corpus.
 
-usage: test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [-j N] [--filter SUBSTR] [--verbose]
+usage: test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [-j N] [--filter SUBSTR] [--layout L] [--layout_params FILE] [--pie] [--verbose]
 
 For each compiled program in DIR, both CLIs run with identical flags. A program
 PASSES when both succeed with byte-identical stdout, trace, memory (and AIR
 public/private inputs in proof mode), or when both fail. Delegation to Rust is
 disabled for the OCaml binary (CAIRO_VM_RUST_CLI is removed from its env)."""
-import os, sys, subprocess, tempfile, glob, json, concurrent.futures as cf
+import os, sys, subprocess, tempfile, glob, json, zipfile, concurrent.futures as cf
 
 argv = sys.argv[1:]
 proof = '--proof' in argv
+pie = '--pie' in argv
 verbose = '--verbose' in argv
 jobs = int(argv[argv.index('-j') + 1]) if '-j' in argv else os.cpu_count() // 2
 filt = argv[argv.index('--filter') + 1] if '--filter' in argv else None
-pos = [a for i, a in enumerate(argv) if not a.startswith('-') and (i == 0 or argv[i - 1] not in ('-j', '--filter'))]
+layout_arg = argv[argv.index('--layout') + 1] if '--layout' in argv else None
+params_arg = argv[argv.index('--layout_params') + 1] if '--layout_params' in argv else None
+pos = [a for i, a in enumerate(argv) if not a.startswith('-') and (i == 0 or argv[i - 1] not in ('-j', '--filter', '--layout', '--layout_params'))]
 rust, ocaml, corpus = pos[0], pos[1], pos[2]
 tmp = tempfile.mkdtemp()
 env_o = {k: v for k, v in os.environ.items() if k not in ('CAIRO_VM_RUST_CLI', 'CAIRO_VM_DELEGATED')}
 
 def run(binary, prog, tag, env=None):
     base = f'{tmp}/{os.path.basename(prog)}.{tag}'
-    layout = 'starknet_with_keccak' if proof else 'all_cairo'
+    layout = layout_arg or ('starknet_with_keccak' if proof else 'all_cairo')
     cmd = [binary, prog, '--layout', layout, '--print_output',
            '--trace_file', base + '.trace', '--memory_file', base + '.mem']
     outs = [base + '.trace', base + '.mem']
+    if params_arg:
+        cmd += ['--cairo_layout_params_file', params_arg]
     if proof:
         cmd += ['--proof_mode', '--air_public_input', base + '.pub', '--air_private_input', base + '.priv',
                 '--fill-holes', 'false']
         outs += [base + '.pub', base + '.priv']
+    if pie:
+        cmd += ['--cairo_pie_output', base + '.pie.zip']
+        outs += [base + '.pie.zip']
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=300, env=env)
     except subprocess.TimeoutExpired:
@@ -53,6 +61,30 @@ def norm_priv(b):
     except Exception:
         return b
 
+def norm_pub(b):
+    # cairo-vm serializes memory_segments from a HashMap, so its key order is
+    # random per process. Compare that object as a map and everything else
+    # byte-for-byte.
+    if b is None:
+        return None
+    try:
+        t = b.decode()
+        i = t.index('  "memory_segments": {')
+        j = t.index('\n  },\n', i) + len('\n  },\n')
+        segs = json.loads('{' + t[i:j].rstrip().rstrip(',') + '}')
+        return (t[:i] + t[j:]).encode() + json.dumps(segs, sort_keys=True).encode()
+    except Exception:
+        return b
+
+def norm_pie(path):
+    # compare archive members, not the container: cairo-vm deflates, the
+    # OCaml writer stores
+    try:
+        with zipfile.ZipFile(path) as z:
+            return sorted((n, z.read(n)) for n in z.namelist())
+    except Exception:
+        return read(path)
+
 def check(prog):
     rc_r, out_r, err_r, files_r = run(rust, prog, 'r')
     rc_o, out_o, err_o, files_o = run(ocaml, prog, 'o', env_o)
@@ -66,9 +98,11 @@ def check(prog):
     if out_r != out_o:
         return name, 'MISMATCH', 'stdout'
     for fr, fo in zip(files_r, files_o):
-        a, b = read(fr), read(fo)
+        a, b = (norm_pie(fr), norm_pie(fo)) if fr.endswith('.pie.zip') else (read(fr), read(fo))
         if fr.endswith('.priv'):
             a, b = norm_priv(a), norm_priv(b)
+        if fr.endswith('.pub'):
+            a, b = norm_pub(a), norm_pub(b)
         if a != b:
             return name, 'MISMATCH', os.path.splitext(fr)[1]
     for f in files_r + files_o:

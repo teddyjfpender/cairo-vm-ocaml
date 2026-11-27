@@ -2,11 +2,11 @@
    SHA-256, cairo_keccak/keccak_utils variants and temporary segments.
    Each implementation mirrors starkware-libs/cairo-vm v4.0.0 (including where
    it deliberately departs from the Python hint text, e.g. hard-coded padding
-   sizes), and is matched by the exact code string in Hint_codes_misc. *)
+   sizes), and is matched by the exact code string in Hint_codes. *)
 
 open Vm
 open Hintrt
-module C = Hint_codes_misc
+module C = Hint_codes
 module P = Program
 
 let reg = Hints.reg
