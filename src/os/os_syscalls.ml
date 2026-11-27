@@ -46,6 +46,7 @@ let run state ctx vm ptr =
     while !len > 0 && le.[!len-1] = '\000' do decr len done;
     String.init !len (fun i -> le.[!len-1-i]) in
   let name = name_of (integer 0) and gas = integer 1 in
+  if Felt.bits gas > 64 then fail "Syscall gas exceeds u64";
   let span n =
     let start = at n and stop = at (n+1) in
     if not (Felt.is_reloc start && Felt.is_reloc stop) then fail "Expected syscall span";
@@ -60,6 +61,13 @@ let run state ctx vm ptr =
     let base = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
     write_arg vm base values;
     [base; Vm.reloc_add_felt base (Felt.small (List.length values))] in
+  let inner_result gas =
+    let execution = U.member "execution" (pop "inner calls" call.inner) in
+    let consumed = as_felt (U.member "gas_consumed" execution) in
+    if Felt.compare gas consumed < 0 then fail "Inner call gas exceeds remaining gas";
+    Felt.sub gas consumed, U.to_bool (U.member "failed" execution),
+    List.map as_felt (U.to_list (U.member "retdata" execution)) in
+  let variable_cost = ref Z.zero in
   let success values gas = gas,Felt.zero,values in
   let units, cost, response =
     match name with
@@ -70,18 +78,34 @@ let run state ctx vm ptr =
         if not (Felt.equal (integer 2) Felt.zero) || Felt.bits (integer 3) > 251 then fail "Invalid storage request";
         if name = "StorageWrite" then begin ignore (integer 4); 5,"STORAGE_WRITE",(fun gas -> success [] gas) end
         else 4,"STORAGE_READ",(fun gas -> success [as_felt (pop "storage reads" call.reads)] gas)
+    | "SendMessageToL1" ->
+        ignore (integer 2); span 3;
+        variable_cost := Z.mul (Felt.to_z (Vm.value_sub (at 4) (at 3))) (const_z ctx "SEND_MESSAGE_TO_L1_PAYLOAD_FACTOR_GAS_COST");
+        5,"SEND_MESSAGE_TO_L1",(fun gas -> success [] gas)
+    | "ReplaceClass" ->
+        ignore (integer 2);
+        3,"REPLACE_CLASS",(fun gas -> success [] gas)
+    | "Deploy" ->
+        ignore (integer 2); ignore (integer 3); span 4;
+        let from_zero = integer 6 in
+        if from_zero <> Felt.zero && from_zero <> Felt.one then fail "Invalid deploy_from_zero";
+        variable_cost := Z.mul (Felt.to_z (Vm.value_sub (at 5) (at 4))) (const_z ctx "DEPLOY_CALLDATA_FACTOR_GAS_COST");
+        7,"DEPLOY",(fun gas ->
+          let address = as_felt (pop "deployed contracts" call.deployed) in
+          let gas, failed, retdata = inner_result gas in
+          let bounds = array true retdata in
+          if failed then gas,Felt.one,array true retdata else success (address :: bounds) gas)
     | "CallContract" | "LibraryCall" ->
         ignore (integer 2); ignore (integer 3); span 4;
         6,(if name = "CallContract" then "CALL_CONTRACT" else "LIBRARY_CALL"),(fun gas ->
-          let inner = U.member "execution" (pop "inner calls" call.inner) in
-          let consumed = as_felt (U.member "gas_consumed" inner) in
-          if Felt.compare gas consumed < 0 then fail "Inner call gas exceeds remaining gas";
-          let gas = Felt.sub gas consumed and failed = U.to_bool (U.member "failed" inner) in
-          let values = List.map as_felt (U.to_list (U.member "retdata" inner)) in
-          let values = if failed then values @ [Os_block_hash.ascii "ENTRYPOINT_FAILED"] else values in
-          gas,of_bool failed,array true values)
+          if name = "CallContract" && Z.equal (Felt.to_z (at 3)) (const_z ctx "EXECUTE_ENTRY_POINT_SELECTOR") then
+            gas,Felt.one,array false [Os_block_hash.ascii "Invalid argument"]
+          else
+            let gas, failed, values = inner_result gas in
+            let values = if failed then values @ [Os_block_hash.ascii "ENTRYPOINT_FAILED"] else values in
+            gas,of_bool failed,array true values)
     | _ -> fail "Unsupported OS syscall %s" name in
-  let required = Z.sub (const_z ctx (cost ^ "_GAS_COST")) (const_z ctx "SYSCALL_BASE_GAS_COST") in
+  let required = Z.add !variable_cost (Z.sub (const_z ctx (cost ^ "_GAS_COST")) (const_z ctx "SYSCALL_BASE_GAS_COST")) in
   let gas,failed,values =
     if Z.lt (Felt.to_z gas) required then gas,Felt.one,array false [Os_block_hash.ascii "Out of gas"]
     else response (Felt.sub gas (Felt.of_z required)) in

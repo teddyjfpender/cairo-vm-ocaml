@@ -75,6 +75,28 @@ let register ~calls:call_state ~block ~felt reg =
       set_val vm c "contract_address" (felt address));
   reg "LoadTxNonceAccount" (field "nonce");
   reg "LoadTxNonceL1Handler" (field "nonce");
+  reg "DeclareTxFields" (fun c vm ->
+      if (tx ()).kind <> "Declare" || not (Felt.equal (tx ()).version (Felt.small 3)) then
+        fail "Expected declare transaction version 3";
+      field "sender_address" c vm;
+      set_list c vm "account_deployment_data" "account_deployment_data_size" (entries "account_deployment_data");
+      set_val vm c "class_hash_ptr" (gen_arg vm [felt (member "class_hash")]);
+      field "compiled_class_hash" c vm);
+  reg "SetComponentHashes" (fun c vm ->
+      if (tx ()).kind <> "Declare" then fail "Expected declare transaction";
+      let hash = felt (member "class_hash") in
+      let entries = U.to_assoc (U.member "declared_class_hash_to_component_hashes" (block ())) in
+      let components = match List.find_opt (fun (k,_) -> Felt.equal (felt (`String k)) hash) entries with
+        | Some (_,v) -> v | None -> fail "Missing declared class component hashes" in
+      let fields = ["contract_class_version"; "external_functions_hash"; "l1_handlers_hash";
+                    "constructors_hash"; "abi_hash"; "sierra_program_hash"] in
+      set_val vm c "contract_class_component_hashes"
+        (gen_arg vm (List.map (fun k -> felt (U.member k components)) fields)));
+  reg "PrepareConstructorExecution" (fun c vm ->
+      if (tx ()).kind <> "DeployAccount" then fail "Expected deploy-account transaction";
+      field "contract_address_salt" c vm;
+      field "class_hash" c vm;
+      set_list c vm "constructor_calldata" "constructor_calldata_size" (entries "constructor_calldata"));
   reg "TxCalldata" (fun c vm ->
       let key = if (tx ()).kind = "DeployAccount" then "constructor_calldata" else "calldata" in
       set_list c vm "calldata" "calldata_size" (entries key));
