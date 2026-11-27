@@ -11,3 +11,7 @@
  (name hint_coverage)
  (modules hint_coverage)
  (libraries cairovm yojson))
+
+(executable
+ (name embed_setup)
+ (modules embed_setup))

@@ -14,7 +14,8 @@ value cvm_contains_mark(value bytes, value start, value length) {
 }
 
 static inline int mark(value maps, value counts, intnat seg, intnat off) {
-  if (seg < 0 || off < 0) return 1;
+  if (seg < 0) return 0; /* Save the temporary access until its destination is known. */
+  if (off < 0) return 1;
   if ((uintnat)seg >= Wosize_val(maps)) return 0;
   value map = Field(maps, seg);
   if ((uintnat)off >= caml_string_length(map)) return 0;

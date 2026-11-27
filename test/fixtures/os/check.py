@@ -15,7 +15,8 @@ def main():
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
-    for name in ("genesis", "storage", "account", "storage-512", "storage-2048"):
+    for name in ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
+                 "syscalls-five-blocks", "storage-512", "storage-2048"):
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"

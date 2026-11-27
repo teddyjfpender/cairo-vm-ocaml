@@ -33,6 +33,7 @@ type config = {
    program segment. We recover the same set from the trace, together with
    the instruction-offset range-check limits. *)
 type accessed = {
+  pending_temp : unit Hintrt.Felt_tbl.t;
   mutable bits : Bytes.t array;
   mutable count : int array;
   mutable cursor : int; (* trace words processed *)
@@ -153,7 +154,7 @@ let initialize ?(compile_hint = Hints.compile) ?layout_def ?(proof = false) (cfg
       vm; prog; end_seg = -1; hints = [||]; prog_builtins; scopes = Hintrt.new_scopes (); proof; layout = layout_def;
       end_pc = -1; initial_fp = 0; exec_public = []; output_pages = []; output_attributes = []; eff_sizes = None; seg_sizes = Hashtbl.create 16;
       public_offsets = Hashtbl.create 16;
-      acc = { bits = [||]; count = [||]; cursor = 0; rc_lo = max_int; rc_hi = min_int };
+      acc = { pending_temp = Hintrt.Felt_tbl.create 4; bits = [||]; count = [||]; cursor = 0; rc_lo = max_int; rc_hi = min_int };
       zero_seg = -1; zero_size = 0;
     }
   in

@@ -41,7 +41,7 @@ let execution_info ctx =
     write_arg vm fresh (Array.to_list out); fresh
   end
 
-let bind state ctx =
+let bind state ~block ~secp ctx =
   let info = lazy (execution_info ctx) in
   let costs = Hashtbl.create 16 in
   let required_cost name =
@@ -53,8 +53,9 @@ let bind state ctx =
         Hashtbl.add costs name cost; cost in
   let names = Felt_tbl.create 16 in
   List.iter (fun name -> Felt_tbl.add names (Os_block_hash.ascii name) name)
-    ["GetExecutionInfo"; "EmitEvent"; "StorageRead"; "StorageWrite"; "SendMessageToL1";
-     "ReplaceClass"; "Deploy"; "CallContract"; "LibraryCall"];
+    ["GetExecutionInfo"; "GetClassHashAt"; "GetBlockHash"; "Keccak"; "EmitEvent"; "StorageRead"; "StorageWrite"; "SendMessageToL1";
+     "ReplaceClass"; "Deploy"; "CallContract"; "LibraryCall"; "Sha256ProcessBlock"; "Sha512ProcessBlock"];
+  List.iter (fun (name, _) -> Felt_tbl.add names (Os_block_hash.ascii name) name) Os_secp.selectors;
   fun vm ptr ->
   let open Os_calls in
   if state.syscall_ptr <> Some ptr then fail "Unexpected CASM syscall pointer";
@@ -89,12 +90,49 @@ let bind state ctx =
   let units, cost, response =
     match name with
     | "GetExecutionInfo" -> 2,"GET_EXECUTION_INFO", (fun gas -> success [(Lazy.force info) vm call] gas)
+    | "GetClassHashAt" ->
+        if Felt.bits (integer 2) > 251 then fail "Invalid contract address";
+        3, "GET_CLASS_HASH_AT", (fun gas -> success [as_felt (pop "class hash reads" call.class_reads)] gas)
+    | "GetBlockHash" ->
+        let requested = integer 2 in
+        if Felt.bits requested > 64 then fail "Block number exceeds u64";
+        3, "GET_BLOCK_HASH", (fun gas ->
+            let number = Pie_file.z_of_json (U.member "block_number" (U.member "block_info" (block ()))) in
+            if Z.gt (Felt.to_z requested) (Z.sub number (const_z ctx "STORED_BLOCK_HASH_BUFFER")) then
+              gas, Felt.one, array false [Os_block_hash.ascii "Block number out of range"]
+            else success [as_felt (pop "block hash reads" call.block_reads)] gas)
     | "EmitEvent" ->
         span 2; span 4; 6,"EMIT_EVENT",(fun gas -> success [] gas)
     | "StorageRead" | "StorageWrite" ->
         if not (Felt.equal (integer 2) Felt.zero) || Felt.bits (integer 3) > 251 then fail "Invalid storage request";
         if name = "StorageWrite" then begin ignore (integer 4); 5,"STORAGE_WRITE",(fun gas -> success [] gas) end
         else 4,"STORAGE_READ",(fun gas -> success [as_felt (pop "storage reads" call.reads)] gas)
+    | "Keccak" ->
+        let first = at 2 and last = at 3 in
+        if not (Felt.is_reloc first && Felt.is_reloc last) then fail "Expected Keccak input pointers";
+        let length = Felt.to_nat (Vm.value_sub last first) in
+        4, "KECCAK", (fun gas ->
+            if length mod 17 <> 0 then gas, Felt.one, array false [Os_block_hash.ascii "Invalid input length"]
+            else
+              let cost = Z.mul (Z.of_int (length / 17)) (const_z ctx "KECCAK_ROUND_COST_GAS_COST") in
+              if Z.lt (Felt.to_z gas) cost then gas, Felt.one, array false [Os_block_hash.ascii "Out of gas"]
+              else begin
+                let lanes = Bytes.make 200 '\000' in
+                for i = 0 to length - 1 do
+                  let pos = 8 * (i mod 17) in
+                  let word = z_at vm first i in
+                  if Z.numbits word > 64 then fail "Keccak word exceeds u64";
+                  Bytes.set_int64_le lanes pos (Int64.logxor (Bytes.get_int64_le lanes pos) (Z.to_int64_unsigned word));
+                  if i mod 17 = 16 then Felt.keccak_f_bytes lanes
+                done;
+                let half i = Felt.of_z (Z.of_bits (Bytes.sub_string lanes i 16)) in
+                success [half 0; half 16] (Felt.sub gas (Felt.of_z cost))
+              end)
+    | "Sha256ProcessBlock" | "Sha512ProcessBlock" ->
+        let state = at 2 and input = at 3 in
+        let kind, cost = if name = "Sha256ProcessBlock" then Os_sha.Sha256, "SHA256_PROCESS_BLOCK"
+          else Os_sha.Sha512, "SHA512_PROCESS_BLOCK" in
+        4, cost, (fun gas -> success [Os_sha.process vm kind state input] gas)
     | "SendMessageToL1" ->
         ignore (integer 2); span 3;
         variable_cost := Z.mul (Felt.to_z (Vm.value_sub (at 4) (at 3))) (const_z ctx "SEND_MESSAGE_TO_L1_PAYLOAD_FACTOR_GAS_COST");
@@ -121,7 +159,13 @@ let bind state ctx =
             let gas, failed, values = inner_result gas in
             let values = if failed then values @ [Os_block_hash.ascii "ENTRYPOINT_FAILED"] else values in
             gas,of_bool failed,array true values)
-    | _ -> fail "Unsupported OS syscall %s" name in
+    | _ ->
+        (match List.assoc_opt name Os_secp.selectors with
+         | None -> fail "Unsupported OS syscall %s" name
+         | Some (gas_cost, curve, op, size) ->
+             size, gas_cost, (fun gas -> match Os_secp.execute secp vm curve op at with
+                 | Ok values -> success values gas
+                 | Error reason -> gas, Felt.one, array false [Os_block_hash.ascii reason])) in
   let required = Z.add !variable_cost (required_cost cost) in
   let gas,failed,values =
     if Z.lt (Felt.to_z gas) required then gas,Felt.one,array false [Os_block_hash.ascii "Out of gas"]

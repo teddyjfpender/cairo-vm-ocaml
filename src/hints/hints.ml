@@ -12,7 +12,7 @@ let table =
      in
      List.iter (fun register -> register reg)
        [ Segments.register; Math.register; Uint256.register; Uint384.register; Dict.register;
-         Collections.register; Keccak.register; Blake2s.register; Sha256.register; Secp.register;
+         Collections.register; Keccak.register; Blake2s.register; Sha256.register; Bls_field.register; Secp.register;
          Ec.register; Signature.register; Mod_circuit.register; Excess_balance.register ];
      (* Runtime counterpart of cairo-vm's `cairo-0-secp-hints` cargo feature
         (off by default, as in the reference CLI build). *)

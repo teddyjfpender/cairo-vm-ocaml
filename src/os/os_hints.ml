@@ -16,6 +16,10 @@ let from_file ~watch ~accessed ~set_pages path =
   let hints = Json_reader.from_file ~projection path in
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
+  let rng = lazy (
+      let hashes = List.map (fun b -> felt (U.member "new_block_hash" b)) blocks in
+      let salt = match U.member "rng_seed_salt" config with `Null -> Felt.zero | v -> felt v in
+      Os_rng.create (Os_block_hash.hash_many (hashes @ [salt]))) in
   let classes = U.to_assoc (U.member "compiled_classes" input)
       |> List.map (fun (hash, cls) -> Z.of_string hash, cls)
       |> List.sort (fun (a, _) (b, _) -> Z.compare a b) in
@@ -41,12 +45,16 @@ let from_file ~watch ~accessed ~set_pages path =
     | _ -> fail "No current OS block" in
   let begin_block = Os_compression.register ~block ~felt
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
-  let calls = Os_calls.create () in
+  let calls = Os_calls.create () and secp = Os_secp.create () in
   Os_syscalls.register_deprecated calls ~felt reg;
   let begin_transactions = Os_transactions.register ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
   Os_da.register ~set_pages reg;
+  Os_sha.register reg;
+  Os_secp.register reg;
+  Secp.register_cairo0 reg;
+  Os_kzg.register reg;
   Os_builtins.register reg;
   Os_state.register ~block ~felt reg;
   Os_patricia.register ~block ~felt reg;
@@ -64,10 +72,10 @@ let from_file ~watch ~accessed ~set_pages path =
       let facts = segment vm in
       set_val vm c "compiled_class_facts" facts;
       set_val vm c "n_compiled_class_facts" (Felt.small (List.length classes));
-      let syscall = Os_syscalls.bind calls c in
+      let syscall = Os_syscalls.bind calls ~block ~secp c in
       List.iteri (fun i (hash, cls) ->
           let class_hash = Felt.of_z hash in
-          let tree = Casm_class.load ~watch ~syscall vm c ~felt ~class_hash
+          let tree = Casm_class.load ~watch ~rng ~syscall vm c ~felt ~class_hash
             ~fact:(Casm_class.at facts (2*i)) ~builtin_costs:(get_ptr vm c "builtin_costs") cls in
           Felt_tbl.replace structures class_hash tree) classes);
   reg "ChainIdAndFeeTokenAddress" (fun c vm ->
@@ -86,7 +94,7 @@ let from_file ~watch ~accessed ~set_pages path =
   reg "SegmentsAddTempInitialTxsRangeCheckPtr" (fun c vm ->
       set_val vm c "initial_txs_range_check_ptr" (Felt.reloc (Vm.add_temp_segment vm) 0));
   reg "LogRemainingBlocks" (fun c vm -> ignore (get_felt vm c "n_blocks"));
-  reg "CreateBlockAdditionalHints" (fun _ _ -> incr current; begin_block (); begin_transactions ());
+  reg "CreateBlockAdditionalHints" (fun _ _ -> incr current; Os_secp.reset secp; begin_block (); begin_transactions ());
   reg "GetNClassHashesToMigrate" (fun c vm ->
       let hashes = U.to_list (U.member "class_hashes_to_migrate" (block ())) in
       set_val vm c "n_classes_to_migrate" (Felt.small (List.length hashes)));

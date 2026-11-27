@@ -44,6 +44,8 @@ type dyn =
   | Value of Felt.t
   | Ints of int list
   | Values of Felt.t list
+  | Casm_dicts of (int * Felt.t Felt_tbl.t) Int_tbl.t
+  | Casm_squash of (Felt.t * int list) list
   | Dict_manager of dict_tracker Int_tbl.t (* by segment index *)
   | Access_indices of int list Felt_tbl.t
   | Positions of int list Felt_tbl.t

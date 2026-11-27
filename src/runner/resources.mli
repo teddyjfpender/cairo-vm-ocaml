@@ -49,3 +49,6 @@ val with_preverified_pedersen : Vm.vm -> (unit -> 'a) -> 'a
 
 val range_accessed : Runner.t -> Felt.t -> int -> bool
 (** Was any cell in this range accessed by an executed instruction? Requires tracing. *)
+
+val relocate_memory : Runner.t -> unit
+(** Relocate temporary segments and transfer accesses from earlier trace scans. *)

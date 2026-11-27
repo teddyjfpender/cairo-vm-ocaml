@@ -40,14 +40,21 @@ let rec operand ?(address=false) j =
       (fun vm -> op (checked (Vm.get vm 1 (left vm))) (right vm))
   | name, _ -> fail "Unknown CASM operand %s" name
 
-let compile ~syscall scopes j =
+let compile ~rng ~syscall scopes j =
   let name, fields = variant j in
   let arg k = operand (U.member k fields) in
+  let ptr k = operand ~address:true (U.member k fields) in
   let put k =
     let at = cell (U.member k fields) in
     fun vm v -> Vm.write vm 1 (at vm) v
   in
   match name with
+  | "AllocFelt252Dict" | "Felt252DictEntryInit" | "Felt252DictEntryUpdate" | "GetSegmentArenaIndex"
+  | "InitSquashData" | "GetCurrentAccessIndex" | "ShouldSkipSquashLoop" | "GetCurrentAccessDelta"
+  | "ShouldContinueSquashLoop" | "GetNextDictKey" -> Casm_dict.compile name ~arg ~ptr ~put scopes
+  | "RandomEcPoint" ->
+      let x = put "x" and y = put "y" in
+      (fun vm -> let a,b = Os_rng.point (Lazy.force rng) in x vm a; y vm b)
   | "SystemCall" ->
       let base, delta = match variant (U.member "system" fields) with
         | "Deref", r -> cell r, Felt.zero
@@ -104,6 +111,10 @@ let compile ~syscall scopes j =
             Z.ediv_rem a b
           end else let p = Z.mul a b in Z.shift_right p 128, Z.extract p 0 128 in
         high vm (Felt.of_z h); low vm (Felt.of_z l))
+  | "EvalCircuit" -> Casm_circuit.compile ~arg ~ptr
+  | "Uint256DivMod" -> Casm_uint.division ~arg ~put 2
+  | "Uint512DivModByUint256" -> Casm_uint.division ~arg ~put 4
+  | "U256InvModN" -> Casm_uint.inverse ~arg ~put
   | "SquareRoot" ->
       let v = arg "value" and dst = put "dst" in
       (fun vm -> dst vm (Felt.of_z (Z.sqrt (Felt.to_z (v vm)))))

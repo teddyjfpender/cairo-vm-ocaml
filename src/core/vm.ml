@@ -265,7 +265,7 @@ let add_relocation_rule vm src dst =
 external relocate_segments : seg array -> int array -> int -> Felt.t array -> bool
   = "cvm_relocate_segments" [@@noalloc]
 
-let relocate_temp_memory vm =
+let relocate_temp_memory ?on_resolved vm =
   if vm.relocating && vm.ntsegs > 0 then begin
     (* Resolve each rule once. A non-pointer marker denotes an active path.
        Accumulate offsets when unwinding so shared tails reuse their result. *)
@@ -286,6 +286,12 @@ let relocate_temp_memory vm =
         else begin flat.(k) <- Felt.one; walk (temp_index (rseg dst)) ((k, roff dst) :: path) end
       end in
     Array.iteri (fun k v -> if v <> Felt.empty && flat.(k) = Felt.empty then walk k []) vm.rules;
+    Option.iter (fun visit -> visit (fun ptr ->
+        let base = rule flat (temp_index (rseg ptr)) in
+        if base = Felt.empty then ptr else
+          let off = roff ptr + roff base in
+          if off > off_mask then fail "Offset exceeds range when relocating access";
+          reloc (rseg base) off)) on_resolved;
     if not (relocate_segments vm.segs vm.hi vm.nsegs flat &&
             relocate_segments vm.tsegs vm.thi vm.ntsegs flat) then
       fail "Offset exceeds range when relocating memory";

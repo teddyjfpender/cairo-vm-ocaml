@@ -46,7 +46,11 @@ It exercises funded Invoke transactions, modern account validation, nested Cairo
 execution, storage writes and fee transfer. The account flow covers Declare, DeployAccount and Invoke, including an L2-to-L1 message.
 A four-block variant of the storage flow ran 512 funded Invoke transactions in 3,417,265 steps.
 The 2,048-transaction variant ran 13,101,755 steps. Both runners merged extra segments
-for that fixture to fit the PIE address encoding. All three fixtures matched all five Rust PIE members. Other transaction and syscall paths remain experimental.
+for that fixture to fit the PIE address encoding. All three fixtures matched all five Rust PIE members. The sequencer’s alternating-inner-calls test ran 229,495 steps with SHA-256, SHA-512 and
+KZG data availability enabled. The five-block new-syscalls flow ran 27 transactions and 1,163,403 steps. It exercises Keccak,
+both secp256 curves, deterministic CASM elliptic-curve hints, circuit evaluation, and dictionary
+squashing. All five archive members matched, including 50,537 memory holes. The saved reverted
+Invoke and execution-info fixtures also match. Other transaction and syscall paths remain experimental.
 
 The saved inputs and Rust archive member digests come from the upstream flow tests
 `test_initial_empty_block`, `test_load_bottom`, `test_new_account_flow` (calldata DA), and
@@ -97,3 +101,11 @@ sizes and fact-tree structure matched for the ten-transfer task. To repeat the s
 comparison, run `python3 test/fixtures/bootloader/check.py OCAML_CLI SIMPLE_BOOTLOADER_JSON`.
 The Rust oracle is in `bench/bootloader_reference.rs`. It uses the pinned sequencer workspace
 and the same crate, layout and trace padding.
+
+
+The KZG hint uses the 4,096 compressed G1 monomial powers in the sequencer's
+`crates/starknet_os/src/hints/hint_implementation/kzg/trusted_setup.txt` at the revision
+above. The source text has SHA-256 `d39b9f2d047cc9dca2de58f264b6a09448ccd34db967881a6713eacacf0f26b7`.
+To reproduce `src/os/kzg_monomial.bin`, skip the two count lines, 4,096 Lagrange G1 points
+and 65 G2 points, then hex-decode and concatenate the final 4,096 lines in order. The
+196,608-byte result has SHA-256 `08797579f6cfd5788eddc1a215d64dcfabd04acbcaf2953fb2c1afb830f43315`.

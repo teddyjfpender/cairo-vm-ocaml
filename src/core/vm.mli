@@ -95,7 +95,7 @@ val add_relocation_rule : vm -> Felt.t -> Felt.t -> unit
 val relocate_temp_value : vm -> Felt.t -> Felt.t
 (** One application of the current rules to a value. *)
 
-val relocate_temp_memory : vm -> unit
+val relocate_temp_memory : ?on_resolved:((Felt.t -> Felt.t) -> unit) -> vm -> unit
 (** cairo-vm Memory.relocate_memory: rewrite temporary relocatables and move
     relocated temporary segments into real memory. *)
 

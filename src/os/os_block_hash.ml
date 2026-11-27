@@ -17,6 +17,9 @@ let hash_many fields =
   pairs [|Felt.zero; Felt.zero; Felt.zero|] fields
 
 let register ~block ~felt reg =
+  reg "IsBlockNumberInBlockHashBuffer" (fun c vm ->
+      let oldest = Z.sub (get_z vm c "current_block_number") (const_z c "STORED_BLOCK_HASH_BUFFER") in
+      set_val vm c "is_block_number_in_block_hash_buffer" (of_bool (Z.gt (get_z vm c "request_block_number") oldest)));
   reg "GetBlockHashes" (fun c vm ->
       let input = block () in
       let info = U.member "block_info" input and header = U.member "block_hash_commitments" input in

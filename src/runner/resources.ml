@@ -8,7 +8,8 @@ open Cpu
 open Runner
 
 let mark acc seg off =
-  if seg >= 0 && off >= 0 then begin
+  if seg < 0 && off >= 0 then Hintrt.Felt_tbl.replace acc.pending_temp (Felt.reloc seg off) ()
+  else if off >= 0 then begin
     if seg >= Array.length acc.bits then begin
       let n = max 16 (2 * (seg + 1)) in
       let nb = Array.make n Bytes.empty and nc = Array.make n 0 in
@@ -51,6 +52,16 @@ let trace_entry t i =
   else
     let pc = Felt.unsafe_of_int w in
     (i + 3, Felt.rseg pc, Felt.roff pc, raw_get t (i + 1), raw_get t (i + 2))
+
+(* Native class-hash hints can inspect the trace before the last temporary
+   segment moves. Transfer accesses recorded during those earlier scans. *)
+let relocate_memory r =
+  let on_resolved resolve =
+    Hintrt.Felt_tbl.iter (fun ptr () ->
+        let dest = resolve ptr in
+        if Felt.rseg dest >= 0 then mark r.acc (Felt.rseg dest) (Felt.roff dest)) r.acc.pending_temp;
+    Hintrt.Felt_tbl.clear r.acc.pending_temp in
+  Vm.relocate_temp_memory ~on_resolved r.vm
 
 external trace_access :
   seg -> int -> int array -> seg -> Bytes.t array -> int array -> int array -> int array -> unit

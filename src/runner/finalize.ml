@@ -117,7 +117,7 @@ let verify_secure_runner r ~deduced =
   end
 
 let end_run ?(fill_holes=false) r ~secure ~allow_missing =
-  relocate_temp_memory r.vm;
+  Resources.relocate_memory r;
   if r.proof then begin
     verify_auto_deductions ~fill_holes r.vm;
     if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";

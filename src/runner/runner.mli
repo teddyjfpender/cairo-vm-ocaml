@@ -20,6 +20,7 @@ type config = {
 (** Accessed-address bookkeeping for memory-hole counting, recovered from
     the trace (see [Resources]). *)
 type accessed = {
+  pending_temp : unit Hintrt.Felt_tbl.t;
   mutable bits : Bytes.t array;  (** per segment, one byte per offset *)
   mutable count : int array;  (** accessed cells per segment *)
   mutable cursor : int;  (** trace words processed *)
