@@ -6,6 +6,8 @@
    against the public key and message the program writes, so a bad witness
    makes the run fail rather than pass. *)
 
+open Errors
+open Builtin
 open Vm
 
 (* ================= ECDSA ================= *)

@@ -5,7 +5,8 @@
    the [mod_builtin] cargo feature, off in the default cairo-vm-cli build);
    [with_mod_builtin] selects between the two. *)
 
-open Vm
+open Errors
+open Builtin
 
 let with_mod_builtin = true
 

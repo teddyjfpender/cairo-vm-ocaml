@@ -12,6 +12,7 @@
    Rust; Hints_registry runs [register] after Hints is initialized, so these
    definitions take precedence. *)
 
+open Errors
 open Vm
 open Hintrt
 module C = Hint_codes

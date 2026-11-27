@@ -2,6 +2,8 @@
    cairo-vm's BuiltinHintProcessor.  Each mirrors the Python reference in
    cairo-lang 0.13.5.  Unknown hints fail when executed. *)
 
+open Errors
+open Segment
 open Vm
 open Hintrt
 module H = Hint_codes

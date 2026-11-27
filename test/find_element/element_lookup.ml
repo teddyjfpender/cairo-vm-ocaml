@@ -12,7 +12,7 @@ let () =
   assert (search 4 base = 3);
   assert (search 3 (big ()) = 0);
   let error expected f = match f () with
-    | exception Vm.Vm_error msg -> assert (msg = expected)
+    | exception Errors.Vm_error msg -> assert (msg = expected)
     | _ -> failwith "expected lookup failure" in
   error "Key 0:0 was not found." (fun () -> search 3 base);
   error "Unknown memory cell 0:4" (fun () -> search 6 Felt.zero);
@@ -40,13 +40,13 @@ let () =
   let put i = Vm.write vm 0 i values.(i); written.(i) <- true in
   Array.iteri (fun i _ -> if i mod 317 <> 201 then put i) values;
   let cache = ref None in
-  let observe f = try Ok (f ()) with Vm.Vm_error msg -> Error msg in
+  let observe f = try Ok (f ()) with Errors.Vm_error msg -> Error msg in
   let compare start width length key =
     let reference () =
       let rec loop i =
-        if i = length then Vm.fail "Key %s was not found." (Vm.value_to_string key);
+        if i = length then Errors.fail "Key %s was not found." (Vm.value_to_string key);
         let at = start + i * width in
-        if at >= Array.length values || not written.(at) then Vm.fail "Unknown memory cell 0:%d" at;
+        if at >= Array.length values || not written.(at) then Errors.fail "Unknown memory cell 0:%d" at;
         if Felt.equal key values.(at) then i else loop (i + 1)
       in loop 0
     in

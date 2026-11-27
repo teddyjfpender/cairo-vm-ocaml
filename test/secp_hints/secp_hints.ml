@@ -15,6 +15,6 @@ let () =
   List.iter
     (fun m ->
       match Hints_secp.div_mod Z.one m (Z.of_int 21) with
-      | exception Vm.Vm_error _ -> ()
+      | exception Errors.Vm_error _ -> ()
       | _ -> failwith "expected div_mod to reject a non-invertible divisor")
     (List.map Z.of_int [ 0; 3; -7; 21 ])

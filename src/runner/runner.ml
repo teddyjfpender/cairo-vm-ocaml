@@ -9,7 +9,13 @@
    memory units, diluted units) passes. finalize_segments fixes builtin
    segment sizes to their allocated sizes and records the public memory. *)
 
+open Errors
+open Segment
+open Builtin
+open Instruction
 open Vm
+open Deduce
+open Cpu
 
 let layout_builtins = function
   | "plain" -> Some []
@@ -280,7 +286,7 @@ let decoded vm pc_seg pc =
   if pc_seg = 0 && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then vm.icache.(pc) land lnot ext_mask
   else decode_at vm pc_seg pc
 
-(* Trace layout (see Vm.record_trace): a packed word with low bit 1, or a
+(* Trace layout (see Cpu.record_trace): a packed word with low bit 1, or a
    relocatable pc code followed by ap and fp. *)
 let trace_entry t i =
   let w = sget t i in

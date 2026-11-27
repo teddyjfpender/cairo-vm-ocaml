@@ -20,5 +20,5 @@ let () =
     assert (Runner.output_lines run = [])) [first; second];
   assert (first.vm != second.vm);
   match Cairo_run.run program with
-  | exception Vm.Vm_error _ -> ()
+  | exception Errors.Vm_error _ -> ()
   | _ -> failwith "missing entrypoint accepted"

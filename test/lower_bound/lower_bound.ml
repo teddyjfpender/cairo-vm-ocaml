@@ -16,7 +16,7 @@ let () =
   assert (query 5 (small 4) = 1);
   assert (query 6 (small 9) = 4);
   (match query 6 (small 10) with
-   | exception Vm.Vm_error msg -> assert (msg = "Unknown memory cell 0:5")
+   | exception Errors.Vm_error msg -> assert (msg = "Unknown memory cell 0:5")
    | _ -> failwith "missing row was skipped");
   let big = Felt.of_z (Z.shift_left Z.one 180) in
   Vm.write vm seg 5 big;
@@ -58,7 +58,7 @@ let () =
   let query n k = Hints.search_lower cursor vm ptr 1 n (Felt.small k) in
   assert (query 511 512 = 511);
   assert (query 511 508 = 508);
-  (match query 513 511 with exception Vm.Vm_error _ -> () | _ -> assert false);
+  (match query 513 511 with exception Errors.Vm_error _ -> () | _ -> assert false);
   Vm.write vm seg 511 (Felt.small 511);
   Vm.write vm seg 512 ptr;
   assert (query 513 511 = 511);

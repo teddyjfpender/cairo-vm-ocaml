@@ -1,5 +1,11 @@
 open Cairovm
+open Errors
+open Segment
+open Builtin
+open Instruction
 open Vm
+open Deduce
+open Cpu
 
 (* Exercise the optimized interpreter with small segments. Compare committed
    instructions to step_instr and check that deoptimization commits no state. *)

@@ -3,6 +3,7 @@
    Hints are adversarial witnesses for soundness: everything they write goes
    through the same write-once memory and builtin validation as the CPU. *)
 
+open Errors
 open Vm
 module P = Program
 

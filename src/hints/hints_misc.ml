@@ -4,6 +4,8 @@
    it deliberately departs from the Python hint text, e.g. hard-coded padding
    sizes), and is matched by the exact code string in Hint_codes. *)
 
+open Errors
+open Builtin
 open Vm
 open Hintrt
 module C = Hint_codes

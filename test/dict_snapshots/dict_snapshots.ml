@@ -20,7 +20,7 @@ let () =
   assert (Hints.dict_lookup sibling key = Felt.one);
   assert (Hints.dict_lookup source key = Felt.small 2);
   assert (Hints.dict_lookup source another = Felt.zero);
-  (match Hints.dict_lookup sibling another with exception Vm.Vm_error _ -> () | _ -> assert false);
+  (match Hints.dict_lookup sibling another with exception Errors.Vm_error _ -> () | _ -> assert false);
   let external_inputs = Hashtbl.create 1 in
   Hashtbl.add external_inputs key Felt.one;
   let independent = Hints.get_tracker scopes (Hints.new_dict vm scopes (Some external_inputs) None) in

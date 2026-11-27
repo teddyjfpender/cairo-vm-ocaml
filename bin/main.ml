@@ -114,7 +114,7 @@ let () =
       Runner.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
-    with Vm.Vm_error msg when rust <> None && not !stats -> delegate msg in
+    with Errors.Vm_error msg when rust <> None && not !stats -> delegate msg in
     if !print_output then begin
       print_string "Program Output:\n";
       Runner.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
@@ -129,12 +129,12 @@ let () =
     Option.iter
       (Pie.write r ~main:(Runner.entry_pc cfg prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra) !pie_out;
     if !stats then
-      Printf.eprintf "generic=%d hint_pcs=%d " !Vm.generic_steps !Vm.hint_steps;
+      Printf.eprintf "generic=%d hint_pcs=%d " !Cpu.generic_steps !Cpu.hint_steps;
     if !stats then
       Printf.eprintf "steps=%d load=%.3fs run=%.3fs (%.1f Msteps/s) total=%.3fs\n" r.vm.steps (t1 -. t0) (t2 -. t1)
         (float r.vm.steps /. (t2 -. t1) /. 1e6) (Unix.gettimeofday () -. t0)
   with
-  | Vm.Vm_error msg ->
+  | Errors.Vm_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
   | Program.Parse_error msg ->

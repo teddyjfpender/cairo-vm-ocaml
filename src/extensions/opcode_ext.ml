@@ -1,7 +1,7 @@
 (* Stwo opcode extensions of cairo-vm v4.0.0: Blake, BlakeFinalize and
    QM31Operation.
 
-   Decoding (Vm.decode_word) already enforces the extension flag rules, so an
+   Decoding (Instruction.decode_word) already enforces the extension flag rules, so an
    instruction reaching [step] is
      - Blake / BlakeFinalize: NOP, res = op1, op1 from fp or ap, regular pc,
        ap regular or +1;
@@ -14,7 +14,11 @@
    deduced from res for ASSERT_EQ only.  Executable cross-check:
    cairo-vm-lean CairoVM/Execution/{Blake,BlakeFinalize,QM31,Dispatch}.lean. *)
 
+open Errors
+open Instruction
 open Vm
+open Deduce
+open Cpu
 
 (* ---------------- QM31 ---------------- *)
 

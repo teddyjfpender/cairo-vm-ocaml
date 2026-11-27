@@ -2,14 +2,14 @@ open Cairovm
 
 let () =
   let vm = Vm.create ~trace:false in
-  vm.trace <- Vm.seg_make 4;
+  vm.trace <- Segment.seg_make 4;
   let max_reg = (1 lsl 23) - 1 in
   let rows = [
     (0, 0, 0, 0); (0, 65535, max_reg, max_reg);
     (0, 65536, 42, 41); (0, 0, max_reg + 1, 1);
     (0, 0, 1, max_reg + 1); (2, 19, 61, 58); (0, 7, 11, 5);
   ] in
-  List.iter (fun (seg, pc, ap, fp) -> Vm.record_trace vm seg pc ap fp) rows;
+  List.iter (fun (seg, pc, ap, fp) -> Cpu.record_trace vm seg pc ap fp) rows;
   assert (vm.tlen = 3 + 4 * 3);
   let bases = [| 1; 70200; 9000000 |] in
   let path = Filename.temp_file "cairo-trace" ".bin" in

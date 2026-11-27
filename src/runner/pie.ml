@@ -3,6 +3,8 @@
    the same contents as cairo-vm's; entries are stored uncompressed, so the
    zip container bytes differ from cairo-vm's deflated archive. *)
 
+open Errors
+open Builtin
 open Vm
 
 (* ---- compact serde_json output ---- *)

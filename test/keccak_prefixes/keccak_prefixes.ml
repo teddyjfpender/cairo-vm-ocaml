@@ -37,7 +37,7 @@ let () =
   List.iter (fun start -> check start 300) [4;5;6;7;8;2;4;3;1;0];
   check 2 4001;
   (match Hints.finalize_keccak cursor vm base 4101 with
-   | exception Vm.Vm_error _ -> () | _ -> assert false);
+   | exception Errors.Vm_error _ -> () | _ -> assert false);
   check 0 4100;
   let other, ptr = make_memory () in
   Vm.write other 0 0 Felt.zero;
@@ -49,7 +49,7 @@ let () =
     assert (Hints.keccak_input single ptr ~first:0 n ~check_width:true = Bytes.make n '\255');
     Vm.write single 0 1 (Felt.of_z (Z.succ largest));
     match Hints.keccak_input single ptr ~first:1 n ~check_width:true with
-    | exception Vm.Vm_error _ -> () | _ -> assert false
+    | exception Errors.Vm_error _ -> () | _ -> assert false
   done
 
 let () =
@@ -65,4 +65,4 @@ let () =
   Vm.write bad 0 0 (Felt.of_z (Z.shift_left Z.one 128));
   ignore (Hints.finalize_keccak cache bad p 1);
   match Hints.hash_byte_prefix cache bad p 16 with
-  | exception Vm.Vm_error _ -> () | _ -> assert false
+  | exception Errors.Vm_error _ -> () | _ -> assert false

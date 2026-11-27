@@ -46,7 +46,7 @@ let advance t positions start =
   t.window <- start
 
 let lookup cache vm base width length key =
-  let missing () = Vm.fail "Key %s was not found." (Vm.value_to_string key) in
+  let missing () = Errors.fail "Key %s was not found." (Vm.value_to_string key) in
   let search t =
     match Words.find_opt t.first key with
     | Some i -> let relative = i - t.window in if relative < length then relative else missing ()

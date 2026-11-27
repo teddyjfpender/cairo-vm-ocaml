@@ -24,7 +24,7 @@ let () =
   assert (find vm base 72 [small 1; small 41] = -1);
   assert (find vm base 96 [small 1; small 41] = 41);
   (match find vm base 96 [small 0; small 44] with
-  | exception Vm.Vm_error msg -> assert (msg = "Unknown memory cell 0:81")
+  | exception Errors.Vm_error msg -> assert (msg = "Unknown memory cell 0:81")
   | _ -> failwith "expected the earlier missing suffix to be read");
   write 81 (small 0);
   assert (find vm base 96 [small 0; small 44] = 44);
@@ -65,7 +65,7 @@ let () =
   assert (query 68 Felt.one base = 1);
   assert (query 68 (Felt.small 77) base = -1);
   (match query 68 Felt.zero (Felt.small 4) with
-  | exception Vm.Vm_error msg -> assert (msg = "Unknown memory cell 0:200")
+  | exception Errors.Vm_error msg -> assert (msg = "Unknown memory cell 0:200")
   | _ -> failwith "queried missing suffix was skipped");
   Vm.write vm seg 200 (Felt.small 4);
   assert (query 68 Felt.zero (Felt.small 4) = 66)
