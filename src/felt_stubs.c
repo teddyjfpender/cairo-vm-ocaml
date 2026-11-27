@@ -174,11 +174,42 @@ static void from_mont(u64 r[4], const u64 a[4]) {
   mont_mul(r, a, one);
 }
 
-/* canonical multiply: (a*b*R^-1)*R^2*R^-1 */
+/* Reduce a canonical product without entering Montgomery form.
+   With B=2^64, 32p=B^4+544B^3+32. Fold the four high coefficients
+   using B^4 = -544B^3-32 (mod p). The largest temporary fits in
+   104 signed bits. Normalize carries, fold the carry above limb 3,
+   and finish with the top-limb quotient estimate for p. */
 static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 t[4];
-  mont_mul(t, a, b);
-  mont_mul(r, t, R2);
+  u64 t[8] = {0};
+  for (int i = 0; i < 4; i++) {
+    u128 carry = 0;
+    for (int j = 0; j < 4; j++) {
+      carry = (u128)a[i] * b[j] + t[i+j] + (u64)(carry >> 64);
+      t[i+j] = (u64)carry;
+    }
+    t[i+4] = (u64)(carry >> 64);
+  }
+
+  typedef __int128 wide;
+  wide h7 = t[7], h6 = (wide)t[6]-544*h7;
+  wide h5 = (wide)t[5]-544*h6, h4 = (wide)t[4]-544*h5;
+  wide x0 = (wide)t[0]-32*h4, x1 = (wide)t[1]-32*h5;
+  wide x2 = (wide)t[2]-32*h6, x3 = (wide)t[3]-32*h7-544*h4;
+  x1 += x0 >> 64; x2 += x1 >> 64; x3 += x2 >> 64;
+  wide extra = x3 >> 64;
+  x0 = (wide)(u64)x0 - 32*extra;
+  x1 = (wide)(u64)x1 + (x0 >> 64);
+  x2 = (wide)(u64)x2 + (x1 >> 64);
+  x3 = (wide)(u64)x3 - 544*extra + (x2 >> 64);
+
+  wide quotient = x3 >> 59;
+  x0 = (wide)(u64)x0 - quotient;
+  x1 = (wide)(u64)x1 + (x0 >> 64);
+  x2 = (wide)(u64)x2 + (x1 >> 64);
+  x3 = x3 - quotient*P[3] + (x2 >> 64);
+  r[0] = (u64)x0; r[1] = (u64)x1; r[2] = (u64)x2; r[3] = (u64)x3;
+  if (x3 < 0) add4(r, r, P);
+  else if (geq_p(r)) sub4(r, r, P);
 }
 
 /* Inverse of a canonical value via GMP's mpz_invert (Lehmer/HGCD; ~5x faster
