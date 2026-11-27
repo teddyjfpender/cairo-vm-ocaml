@@ -51,6 +51,8 @@ type t = {
 
 exception Parse_error of string
 
+let z_of_string s = try Z.of_string s with Invalid_argument _ -> raise (Parse_error ("Invalid number " ^ s))
+
 let parse_expr (s : string) : expr =
   let n = String.length s in
   let pos = ref 0 in
@@ -125,7 +127,7 @@ let parse_expr (s : string) : expr =
         do
           incr pos
         done;
-        Int (Z.of_string (String.sub s st (!pos - st)))
+        Int (z_of_string (String.sub s st (!pos - st)))
     | Some _ -> (
         let id = ident () in
         match id with
@@ -180,13 +182,11 @@ let z_of_json = function
   | _ -> raise (Parse_error "expected number")
 
 let load_json (j : J.t) : t =
-  let prime = Z.of_string (U.to_string (U.member "prime" j)) in
+  let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
   let data =
     U.member "data" j |> U.to_list
-    |> List.map (fun x ->
-           let s = U.to_string x in
-           Z.of_string s)
+    |> List.map (fun x -> z_of_string (U.to_string x))
     |> Array.of_list
   in
   let builtins = U.member "builtins" j |> U.to_list |> List.map U.to_string in
@@ -273,67 +273,128 @@ let load_json (j : J.t) : t =
     identifiers;
   }
 
-(* debug_info is typically >95% of a compiled program and is never needed to
-   execute it.  Blank it out with a byte scanner (string/escape aware) before
-   handing the remainder to Yojson. *)
-let strip_top_level_key (src : string) (key : string) : string =
-  let n = String.length src in
-  let pat = "\"" ^ key ^ "\"" in
-  let pl = String.length pat in
-  (* index just past the string whose opening quote is at i - 1 *)
-  let rec skip_string i =
-    let q = String.index_from src i '"' in
-    (* count preceding backslashes: odd means the quote is escaped *)
-    let k = ref (q - 1) in
-    while src.[!k] = '\\' do decr k done;
-    if (q - 1 - !k) land 1 = 1 then skip_string (q + 1) else q + 1
+(* Word-at-a-time scanning (little-endian): [zero_bytes x] flags the zero
+   bytes of [x]; its lowest set bit is exact (the borrow only taints higher
+   bytes), and multiplying that bit (as 1 lsl 8k) by bytes 7..0 yields k. *)
+let bcast c = Int64.mul 0x0101010101010101L (Int64.of_int (Char.code c))
+let quote = bcast '"' and lbrace = bcast '{' and rbrace = bcast '}' and space = bcast ' '
+let[@inline] zero_bytes x = Int64.(logand (logand (sub x 0x0101010101010101L) (lognot x)) 0x8080808080808080L)
+
+(* the first index >= i holding '"' (or, unless [in_string], a bracket: '['
+   ']' are '{' '}' with bit 5 cleared), or else some index in the last 7 bytes *)
+let[@inline] next_special src i ~in_string =
+  let i = ref i and found = ref false in
+  while (not !found) && !i + 8 <= String.length src do
+    let w = String.get_int64_le src !i in
+    let m = zero_bytes (Int64.logxor w quote) in
+    let m =
+      if in_string then m
+      else
+        let w = Int64.logor w space in
+        Int64.(logor m (logor (zero_bytes (logxor w lbrace)) (zero_bytes (logxor w rbrace))))
+    in
+    if m = 0L then i := !i + 8
+    else (
+      i := !i + Int64.(to_int (shift_right_logical (mul (shift_right_logical (logand m (neg m)) 7) 0x0001020304050607L) 56));
+      found := true)
+  done;
+  !i
+
+let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
+
+(* A JSON reader building the [Yojson.Safe.t] that [J.from_string] would:
+   structure, plain strings and plain integers are read here; escaped strings,
+   literals and other numbers go through Yojson itself.  Yojson's comment,
+   tuple and variant extensions are not accepted.  debug_info is typically
+   >95% of a compiled program and is never needed to execute it: a top-level
+   debug_info object or array is skipped by the word scanner (string/escape
+   aware) and read as [`Null]. *)
+let read_json src : J.t =
+  let n = String.length src and pos = ref 0 in
+  let peek () =
+    while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
+      (* indentation comes in runs of spaces *)
+      pos := !pos + if !pos + 8 <= n && String.get_int64_le src !pos = space then 8 else 1
+    done;
+    if !pos < n then src.[!pos] else json_error "Unexpected end of input"
   in
-  (* index just past the JSON value starting at i *)
-  let skip_value i =
-    match src.[i] with
-    | '{' | '[' ->
-        let depth = ref 0 and j = ref i and fin = ref false in
-        while not !fin do
-          (match src.[!j] with
-          | '"' -> j := skip_string (!j + 1) - 1
-          | '{' | '[' -> incr depth
-          | '}' | ']' -> decr depth; if !depth = 0 then fin := true
-          | _ -> ());
-          incr j
-        done;
-        !j
-    | '"' -> skip_string (i + 1)
-    | _ ->
-        let j = ref i in
-        while !j < n && not (String.contains ",}]" src.[!j]) do incr j done;
-        !j
+  let expect c = if peek () <> c then json_error "Expected '%c' at byte %d" c !pos else incr pos in
+  (* index of the closing quote of the string starting at i *)
+  let string_end i =
+    let q = ref (i - 1) and fin = ref false in
+    while not !fin do
+      q := next_special src (!q + 1) ~in_string:true;
+      while !q < n && src.[!q] <> '"' do incr q done;
+      if !q >= n then json_error "Unterminated string";
+      (* count preceding backslashes: odd means the quote is escaped *)
+      let k = ref (!q - 1) in
+      while src.[!k] = '\\' do decr k done;
+      fin := (!q - 1 - !k) land 1 = 0
+    done;
+    !q
   in
-  (* walk the top-level object *)
-  let rec find i depth =
-    if i >= n then None
+  let string () =
+    expect '"';
+    let st = !pos in
+    let q = string_end st in
+    pos := q + 1;
+    let raw = String.sub src st (q - st) in
+    if String.contains raw '\\' then U.to_string (J.from_string ("\"" ^ raw ^ "\"")) else raw
+  in
+  (* the end of the object or array starting at i *)
+  let skip_container i =
+    let depth = ref 0 and j = ref i and fin = ref false in
+    while not !fin do
+      j := next_special src !j ~in_string:false;
+      if !j >= n then json_error "Unexpected end of input";
+      (match src.[!j] with
+      | '"' -> j := string_end (!j + 1)
+      | '{' | '[' -> incr depth
+      | '}' | ']' -> decr depth; fin := !depth = 0
+      | _ -> ());
+      incr j
+    done;
+    !j
+  in
+  let items close item =
+    incr pos;
+    if peek () = close then (incr pos; [])
     else
-      match src.[i] with
-      | '"' ->
-          if depth = 1 && i + pl <= n && String.sub src i pl = pat then Some (i + pl)
-          else find (skip_string (i + 1)) depth
-      | '{' | '[' -> find (i + 1) (depth + 1)
-      | '}' | ']' -> find (i + 1) (depth - 1)
-      | _ -> find (i + 1) depth
+      let rec go acc =
+        let acc = item () :: acc in
+        match peek () with
+        | ',' -> incr pos; go acc
+        | c when c = close -> incr pos; List.rev acc
+        | _ -> json_error "Expected ',' or '%c' at byte %d" close !pos
+      in
+      go []
   in
-  match find 0 0 with
-  | None -> src
-  | Some after_key ->
-      let colon = String.index_from src after_key ':' in
-      let vstart = ref (colon + 1) in
-      while src.[!vstart] = ' ' || src.[!vstart] = '\n' || src.[!vstart] = '\t' || src.[!vstart] = '\r' do
-        incr vstart
-      done;
-      let vend = skip_value !vstart in
-      String.sub src 0 !vstart ^ "null" ^ String.sub src vend (n - vend)
+  let rec value ~top =
+    match peek () with
+    | '{' ->
+        `Assoc
+          (items '}' (fun () ->
+               let k = string () in
+               expect ':';
+               if top && k = "debug_info" && (peek () = '{' || peek () = '[') then (pos := skip_container !pos; (k, `Null))
+               else (k, value ~top:false)))
+    | '[' -> `List (items ']' (fun () -> value ~top:false))
+    | '"' -> `String (string ())
+    | _ ->
+        let st = !pos in
+        while !pos < n && (match src.[!pos] with 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '+' | '.' -> true | _ -> false) do
+          incr pos
+        done;
+        let tok = String.sub src st (!pos - st) in
+        if tok <> "" && String.for_all (function '0' .. '9' -> true | _ -> false) tok && (tok.[0] <> '0' || tok = "0")
+        then match int_of_string_opt tok with Some i -> `Int i | None -> `Intlit tok
+        else J.from_string tok
+  in
+  let v = value ~top:true in
+  match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v
 
 let load_file path =
   let ic = open_in_bin path in
   let src = really_input_string ic (in_channel_length ic) in
   close_in ic;
-  let src = try strip_top_level_key src "debug_info" with _ -> src in
-  load_json (J.from_string src)
+  load_json (read_json src)
