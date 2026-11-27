@@ -121,12 +121,17 @@ static int invert_mod(u64 r[4], const u64 a[4], const u64 m[4]) {
      inverse by divisor and modulus. Equality checks cover every limb and
      entries own all their data independently of the VM pool lifetime. */
   typedef struct { u64 divisor[4], modulus[4], inverse[4]; } inverse_entry;
-  static _Thread_local inverse_entry entries[1024];
+  enum { WAYS = 4 };
+  typedef struct { inverse_entry ways[WAYS]; unsigned next; } inverse_bucket;
+  static _Thread_local inverse_bucket buckets[1024];
   uint64_t hash = (a[0] ^ a[2] ^ m[0]) * UINT64_C(0x9e3779b97f4a7c15);
-  inverse_entry *entry = &entries[hash >> 54];
-  if (eq4(entry->divisor, a) && eq4(entry->modulus, m)) {
-    memcpy(r, entry->inverse, 32);
-    return 1;
+  inverse_bucket *bucket = &buckets[hash >> 54];
+  for (unsigned i = 0; i < WAYS; ++i) {
+    const inverse_entry *candidate = &bucket->ways[i];
+    if (eq4(candidate->divisor, a) && eq4(candidate->modulus, m)) {
+      memcpy(r, candidate->inverse, sizeof(candidate->inverse));
+      return 1;
+    }
   }
   static _Thread_local mpz_t R_z;
   static _Thread_local int init = 0;
@@ -137,6 +142,7 @@ static int invert_mod(u64 r[4], const u64 a[4], const u64 m[4]) {
   if (!mpz_invert(R_z, A, M)) return 0;
   size_t n = mpz_size(R_z);
   for (int i = 0; i < 4; i++) r[i] = (size_t)i < n ? mpz_getlimbn(R_z, i) : 0;
+  inverse_entry *entry = &bucket->ways[bucket->next++ % WAYS];
   memcpy(entry->divisor, a, 32);
   memcpy(entry->modulus, m, 32);
   memcpy(entry->inverse, r, 32);
