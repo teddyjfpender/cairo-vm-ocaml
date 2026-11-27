@@ -144,19 +144,43 @@ external absorb_keccak : bytes -> int -> bytes -> int = "cvm_keccak_absorb"
 external snapshot_keccak : bytes -> int -> bytes -> unit = "cvm_keccak_snapshot"
 
 type keccak_prefix = {
-  owner : vm; start : int; state : bytes;
+  start : int; state : bytes;
   mutable words : int; mutable used : int;
 }
 
+(* Bound the retained sponge states independently of the number of segments
+   a program creates. Switching the VM drops all checkpoints. *)
+type keccak_cursors = {
+  mutable owner : vm option;
+  slots : keccak_prefix option array;
+  mutable next : int;
+}
+
+let keccak_cursors () = { owner = None; slots = Array.make 4 None; next = 0 }
+
+let fresh_prefix cache i start =
+  let p = { start; state = Bytes.make 200 '\000'; words = 0; used = 0 } in
+  cache.slots.(i) <- Some p;
+  p
+
+let rec find_prefix cache start n i =
+  if i = Array.length cache.slots then begin
+    let slot = cache.next in
+    cache.next <- (slot + 1) mod Array.length cache.slots;
+    fresh_prefix cache slot start
+  end else match cache.slots.(i) with
+    | Some p when p.start = start -> if p.words <= n then p else fresh_prefix cache i start
+    | _ -> find_prefix cache start n (i + 1)
+
 let finalize_keccak cache vm start n =
   if n < 0 || n > Sys.max_string_length / 16 then fail "Invalid Keccak input length";
-  let prefix = match !cache with
-    | Some p when p.owner == vm && p.start = start && p.words <= n -> p
-    | _ ->
-        let p = { owner = vm; start; state = Bytes.make 200 '\000'; words = 0; used = 0 } in
-        cache := Some p;
-        p
-  in
+  (match cache.owner with
+   | Some previous when previous == vm -> ()
+   | _ ->
+       Array.fill cache.slots 0 (Array.length cache.slots) None;
+       cache.owner <- Some vm;
+       cache.next <- 0);
+  let prefix = find_prefix cache start n 0 in
   while prefix.words < n do
     let count = min 4096 (n - prefix.words) in
     let bytes = keccak_input vm start ~first:prefix.words (16 * count) ~check_width:false in
@@ -436,7 +460,7 @@ let () =
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
   reg H.h41 (fun c ->
-      let prefix = ref None in
+      let prefix = keccak_cursors () in
       fun vm ->
       let st = get_member vm c "keccak_state" [ "start_ptr" ] and en = get_member vm c "keccak_state" [ "end_ptr" ] in
       let n = Felt.to_nat (value_sub en st) in

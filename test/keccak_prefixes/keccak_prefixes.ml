@@ -15,7 +15,7 @@ let () =
       Bytes.set expected (16*i + 15-j) (Char.chr (Z.to_int (Z.extract word (8*j) 8)))
     done
   done;
-  let cursor = ref None in
+  let cursor = Hints.keccak_cursors () in
   let check first n =
     let digest = Hints.finalize_keccak cursor vm (Felt.reloc 0 first) n in
     assert (digest = Hints.keccak256 (Bytes.sub expected (16*first) (16*n)))
@@ -30,6 +30,11 @@ let () =
     "a2ec22f2f2d5f5d30fce227c5d29939d57cc59a367f3560123720d2f92ecbe28");
   assert (hex (Hints.finalize_keccak cursor vm base 4100) =
     "9f9f41889bcd07fc4d45e22cf1883f0eb7db54c65903fd6d455bf794020fbdb2");
+  for length = 0 to 21 do
+    for start = 0 to 3 do check start length done
+  done;
+  (* Evict entries, revisit dropped starts, then rewind an existing one. *)
+  List.iter (fun start -> check start 300) [4;5;6;7;8;2;4;3;1;0];
   check 2 4001;
   (match Hints.finalize_keccak cursor vm base 4101 with
    | exception Vm.Vm_error _ -> () | _ -> assert false);
