@@ -5,6 +5,22 @@ and the method. Raw paired timings live in [`bench/results/`](https://github.com
 
 ## Native Starknet OS on Apple M4 Max
 
+The mixed five-block witness contains 282 transactions and executes 10,954,713
+Cairo steps. At revision `13d228a`, cold output took a median 3.106 s in Rust
+and 0.312 s in OCaml over three alternating pairs (9.97× median paired
+speedup). Writing the PIE brought the median paired speedup to 19.28×. The
+archive comparison checks every decompressed member. The two runners use
+different ZIP compression settings, as described below.
+[Cold pairs](../bench/results/native-os-282-cold-m4-max.csv).
+
+A persistent-worker measurement after the field-storage lifetime fix at
+`723b1a2` gave 6.37× on the same mixed witness, 7.47× on 2,048 storage
+transactions, 6.02× on 512 storage transactions, 5.20× on the 27-transaction
+five-block flow and 4.75× on alternating inner calls. Each worker ran one
+warmup and five measured requests. The CLI and benchmark worker use a larger
+minor heap for OS execution unless the caller supplies an OCaml runtime
+configuration. [Persistent pairs](../bench/results/native-os-persistent-syscalls-m4-max.csv).
+
 Revision `a6b5c3a` also measures sustained execution. The workers perform one
 warmup, then alternate five pairs. Each request rereads the witness and runs a
 fresh VM. Rust retains its initialized KZG setup, and OCaml retains its decoded

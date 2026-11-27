@@ -1,0 +1,7 @@
+case,mode,pair,first,rust_s,ocaml_s,speedup
+syscalls-282,pie,1,rust,12.403288,0.643294,19.281
+syscalls-282,pie,2,ocaml,12.444152,0.681605,18.257
+syscalls-282,pie,3,rust,12.547186,0.565922,22.171
+syscalls-282,output,1,rust,3.103392,0.310630,9.991
+syscalls-282,output,2,ocaml,3.106361,0.314906,9.864
+syscalls-282,output,3,rust,3.109183,0.311792,9.972
