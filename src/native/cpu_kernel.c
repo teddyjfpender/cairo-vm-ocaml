@@ -2,7 +2,6 @@
    steps. All pointers are borrowed for one bounded, nonallocating call. The
    OCaml runner owns decoding, hints, segment growth and builtin deduction. */
 #include <stdint.h>
-#include <string.h>
 #include <caml/mlvalues.h>
 #include <caml/bigarray.h>
 
@@ -65,7 +64,7 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
    execution-segment high-water mark, trace length, and next felt-pool slot. */
 static inline __attribute__((always_inline))
 value batch(value state, value cache, value segs, value flags, value highs,
-            value trace, value pool, intnat nsegs, const int tracing, value spans, value ped_cache) {
+            value trace, value pool, intnat nsegs, const int tracing, value ped_cache) {
   const intnat cache_size = Wosize_val(cache);
   if (Wosize_val(state) < 9 || nsegs < 2 || (uintnat)nsegs > Wosize_val(segs) ||
       (uintnat)nsegs > Wosize_val(flags) || (uintnat)nsegs > Wosize_val(highs))
@@ -95,38 +94,12 @@ value batch(value state, value cache, value segs, value flags, value highs,
        for the otherwise unused op0, which must still be assigned. */
     if ((shape == 0xe0a || shape == 0xe0e || shape == 0xe06) && (uint16_t)d == 0x8000) {
       if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1]) break;
-      intnat v, from = (shape == 0xe0a ? fp : ap) + (int)((d>>32)&65535) - 32768;
-      /* Consecutive frame arguments are pushed one cell per Cairo step.
-         A write-once program and its decoded hint bits fix the span. Only
-         copy an initialized, disjoint range into fresh stack space. */
-      if (shape == 0xe0a && ap >= high && fits(pc, Wosize_val(spans))) {
-        int n = Long_val(Field(spans, pc));
-        if (!n) {
-          n = 1;
-          while (n < 24 && pc+n < cache_size &&
-                 (uint64_t)Long_val(Field(cache, pc+n)) == d + ((uint64_t)n << 32)) ++n;
-          /* A not-yet-decoded successor may extend this span on a later visit. */
-          if (n > 1 || (pc+1 < cache_size && Long_val(Field(cache, pc+1)) != 0))
-            Field(spans, pc) = Val_int(n);
-        }
-        if (n > 1 && completed+n <= 8192 && from >= 0 && from+n <= ap && ap <= length-n &&
-            (!tracing || (pc+n <= 65536 && (ap+n) < (1<<23) && fp < (1<<23) && used+n <= trace_length))) {
-          int ready = 1;
-          for (int k=0; k<n; ++k) if (!stack[from+k] || stack[ap+k]) { ready=0; break; }
-          if (ready) {
-            memcpy(stack+ap, stack+from, (size_t)n * sizeof(*stack));
-            if (tracing) for (int k=0; k<n; ++k) {
-              entries[used++] = ((uint64_t)(pc+k)<<47) | ((ap+k)<<24) | (fp<<1) | 1;
-            }
-            pc += n; ap += n; high = ap; completed += n-1;
-            continue;
-          }
-        }
-      }
+      intnat v;
       if (shape == 0xe06) {
         if (!fits(pc+1, program_length)) break;
         v = program[pc+1]; next_pc = pc+2;
       } else {
+        intnat from = (shape == 0xe0a ? fp : ap) + (int)((d>>32)&65535) - 32768;
         if (!fits(from, length) || !stack[from]) goto general;
         v = stack[from];
       }
@@ -301,13 +274,13 @@ complete:
 }
 
 value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
-                    value trace, value pool, value nsegs, value tracing, value spans, value ped_cache) {
+                    value trace, value pool, value nsegs, value tracing, value ped_cache) {
   return Bool_val(tracing)
-    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, spans, ped_cache)
-    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, spans, ped_cache);
+    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache)
+    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache);
 }
 
 value cvm_cpu_batch_byte(value *argv, int argc) {
   (void)argc;
-  return cvm_cpu_batch(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8], argv[9], argv[10]);
+  return cvm_cpu_batch(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8], argv[9]);
 }
