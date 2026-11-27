@@ -295,9 +295,20 @@ let deduce_builtin vm (b : builtin) seg off =
       | Some inp -> (
           match b.kind with
           | Pedersen ->
-              reserve 1;
-              let r = c_pedersen !pool inp.(0) inp.(1) !pool_n in
-              commit r;
+              (* Equal adjacent inputs have equal hashes. Reuse only an
+                 output already computed by this builtin, never a memory
+                 value supplied by the program. *)
+              let prev = if inst >= cpi then cache_get b (off - cpi) else 0 in
+              let r =
+                if prev <> 0 && Felt.equal inp.(0) (read vm seg (inst - cpi))
+                   && Felt.equal inp.(1) (read vm seg (inst - cpi + 1)) then prev
+                else begin
+                  reserve 1;
+                  let result = c_pedersen !pool inp.(0) inp.(1) !pool_n in
+                  commit result;
+                  result
+                end
+              in
               cache_set b off r;
               r
           | Bitwise ->
