@@ -199,9 +199,9 @@ let () =
 (* split_felt writes ids.low / ids.high as plain felt variables *)
 let () =
   reg H.h16 (fun c vm ->
-      let v = felt_z vm c "value" in
-      set_val vm c "low" (zf (Z.logand v (mask 128)));
-      set_val vm c "high" (zf (Z.shift_right v 128)));
+      let low, high = Felt.split_at_limb ~two_limbs:true (get_felt vm c "value") in
+      set_val vm c "low" low;
+      set_val vm c "high" high);
   reg H.h17 (fun c vm ->
       let e = get_member_z vm c "prev_locs" [ "exp" ] in
       set_member vm c "locs" [ "bit" ] (zf (Z.logand e Z.one)));
@@ -658,9 +658,9 @@ let () =
         set_val vm c "is_elm_in_set" Felt.one
       end);
   reg H.h82 (fun c vm ->
-      let a = felt_z vm c "a" in
-      set_val vm c "low" (zf (Z.logand a (mask 64)));
-      set_val vm c "high" (zf (Z.shift_right a 64)));
+      let low, high = Felt.split_at_limb ~two_limbs:false (get_felt vm c "a") in
+      set_val vm c "low" low;
+      set_val vm c "high" high);
   reg H.h83 (fun c vm ->
       let n = Z.add (Z.shift_left (get_member_z vm c "n" [ "high" ]) 128) (get_member_z vm c "n" [ "low" ]) in
       let root = isqrt n in

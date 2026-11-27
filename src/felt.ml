@@ -46,6 +46,10 @@ external c_cmp : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged
   = "cvm_cmp_byte" "cvm_cmp"
 [@@noalloc]
 
+external c_split_part : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  -> (int[@untagged]) -> (int[@untagged]) = "cvm_split_part_byte" "cvm_split_part"
+[@@noalloc]
+
 external c_bits : bytes -> (int[@untagged]) -> (int[@untagged]) = "cvm_bits_byte" "cvm_bits"
 [@@noalloc]
 
@@ -169,6 +173,21 @@ let div a b =
   end
 
 let neg a = sub zero a
+
+(* The only supported boundaries are one or two limbs. *)
+let split_at_limb ~two_limbs c =
+  if is_small c && small_val c >= 0 then c, zero
+  else begin
+    let use_two = Bool.to_int two_limbs in
+    reserve 2;
+    let part high =
+      let result = c_split_part !pool c use_two high !pool_n in
+      commit result;
+      result
+    in
+    let low = part 0 in
+    low, part 1
+  end
 
 (* ---- conversion with Zarith ---- *)
 

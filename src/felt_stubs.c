@@ -327,6 +327,21 @@ value cvm_bitwise_byte(value pool, value op, value a, value b, value d) {
 }
 
 /* bit-length of value (0 for zero) */
+/* Copy the low or high part at a whole-limb boundary (64 or 128 bits). */
+intnat cvm_split_part(value pool, intnat code, intnat two_limbs, intnat high, intnat dst) {
+  size_t width = two_limbs ? 2 : 1;
+  u64 x[4], part[4] = {0};
+  load(pool, code, x);
+  if (high)
+    memcpy(part, x + width, (4 - width) * sizeof(u64));
+  else
+    memcpy(part, x, width * sizeof(u64));
+  return store(pool, part, dst);
+}
+value cvm_split_part_byte(value pool, value code, value two_limbs, value high, value dst) {
+  return Val_long(cvm_split_part(pool, Long_val(code), Long_val(two_limbs), Long_val(high), Long_val(dst)));
+}
+
 intnat cvm_bits(value pool, intnat a) {
   u64 x[4];
   load(pool, a, x);
