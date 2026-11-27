@@ -257,7 +257,7 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
   vm.steps <- vm.steps + 1
 
 (* Cached words are always Stone instructions (their bit 61 may carry
-   run_fast's hint flag); extension bits are only meaningful on a fresh
+   run's hint flag); extension bits are only meaningful on a fresh
    decode, since extension words are never cached. *)
 let[@inline never] step_uncached vm =
   let d = fetch_slow vm in
@@ -270,21 +270,21 @@ let[@inline] step vm =
   end
   else step_uncached vm
 
-(* ---------------- fast interpreter loop ----------------
+(* ---------------- interpreter loop ----------------
 
    Each iteration runs the hints of the current pc, then the native batch
    kernel, which executes that instruction and its successors until a hint
    pc or an instruction it declines.  A declined instruction takes the
    generic [step] above, which implements the full deduction semantics.
    Program counters carrying hints are flagged in the decoded cache, so the
-   kernel pays no lookup for hint detection. *)
+   kernel pays no lookup for hint detection.  The kernel also stops before
+   an uncached pc, so a program-segment stop pc only needs a flag while
+   cached.  The last steps of a bounded run, fewer than one batch, are
+   generic, which keeps the kernel's loop free of caller limits.  Once a hint
+   adds a relocation rule, memory reads go through the rules and every step
+   is generic. *)
 
 let hint_bit = 1 lsl 61
-
-(* Raised by [run_fast] after the hints of the current pc have run and a
-   relocation rule exists. The caller continues with [run_relocating],
-   which reads memory through the rules. *)
-exception Relocating
 let generic_steps = ref 0
 let hint_steps = ref 0
 
@@ -292,20 +292,25 @@ let hint_steps = ref 0
 external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
   seg -> bytes -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
-let run_fast vm (hints : (vm -> unit) array array) end_seg =
+let batch_max = 8192 (* cvm_cpu_batch's steps per call *)
+
+let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array array) =
+  let stop_seg, stop_pc = stop in
+  let cached = if stop_seg = 0 && 0 <= stop_pc && stop_pc < Array.length vm.icache then vm.icache.(stop_pc) else 0 in
+  if cached <> 0 then vm.icache.(stop_pc) <- cached lor hint_bit;
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
   let registers = Array.make 9 0 in
-  while not (vm.pc_seg = end_seg && vm.pc = 0) do
+  let first = vm.steps in
+  while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
     let hinted = vm.pc_seg = 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
     if hinted then begin
       incr hint_steps;
-      Array.iter (fun h -> h vm) (Array.unsafe_get hints pc);
-      if vm.relocating then raise Relocating
+      Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
     end;
     let count =
-      if vm.pc_seg <> 0 || end_seg = 0 then 0
+      if vm.pc_seg <> 0 || vm.relocating || steps - (vm.steps - first) < batch_max then 0
       else begin
         registers.(0) <- pc; registers.(1) <- vm.ap; registers.(2) <- vm.fp;
         registers.(3) <- vm.hi.(1); registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
@@ -323,24 +328,5 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
       if hinted && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then
         vm.icache.(pc) <- vm.icache.(pc) lor hint_bit
     end
-  done
-
-(* Generic loop used once relocation rules exist (rare: temporary segments).
-   [skip_hints] is true when the hints of the current pc already ran. *)
-let run_relocating vm (hints : (vm -> unit) array array) end_seg ~skip_hints =
-  let nh = Array.length hints in
-  let skip = ref skip_hints in
-  while not (vm.pc_seg = end_seg && vm.pc = 0) do
-    if (not !skip) && vm.pc_seg = 0 && vm.pc < nh then begin
-      let hs = Array.unsafe_get hints vm.pc in
-      for i = 0 to Array.length hs - 1 do
-        (Array.unsafe_get hs i) vm
-      done
-    end;
-    skip := false;
-    step vm
-  done
-
-let run vm hints end_seg =
-  try run_fast vm hints end_seg
-  with Relocating -> run_relocating vm hints end_seg ~skip_hints:true
+  done;
+  if cached <> 0 then vm.icache.(stop_pc) <- cached

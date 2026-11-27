@@ -190,34 +190,12 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
 
 (* ---- running ---- *)
 
-let run_hints r =
-  let vm = r.vm in
-  if vm.pc_seg = 0 && vm.pc < Array.length r.hints then begin
-    let hs = r.hints.(vm.pc) in
-    for i = 0 to Array.length hs - 1 do
-      hs.(i) vm
-    done
-  end
-
-(* Proof mode stops at a program-segment pc, which run_fast's interface
-   (stop at end_seg:0) cannot express; use the generic step. *)
-let run_until_pc r seg pc =
-  let vm = r.vm in
-  while not (vm.pc_seg = seg && vm.pc = pc) do
-    run_hints r;
-    step vm
-  done
-
-let run_for_steps r n =
-  for _ = 1 to n do
-    run_hints r;
-    step r.vm
-  done
+let run_for_steps r n = run ~steps:n r.vm r.hints
 
 let run_until_end r =
   if r.proof then begin
-    run_until_pc r 0 r.end_pc;
+    run ~stop:(0, r.end_pc) r.vm r.hints;
     (* one more step so that __end__ is the last executed instruction *)
     run_for_steps r 1
   end
-  else run r.vm r.hints r.end_seg
+  else run ~stop:(r.end_seg, 0) r.vm r.hints

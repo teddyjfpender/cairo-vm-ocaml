@@ -32,15 +32,12 @@ external cpu_batch :
   int array -> int array -> Segment.seg array -> Builtin.flag array -> int array -> Segment.seg -> bytes -> int ->
   bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch"
 [@@noalloc]
-(** Native kernel: run cached program-segment instructions (including a
-    first instruction whose hints already ran) until one needs the generic
-    path; returns the number executed. *)
+(** Native kernel: run up to 8,192 cached program-segment instructions
+    (including a first instruction whose hints already ran) until one is
+    uncached, flagged or needs the generic path; returns the number executed. *)
 
-val run_fast : Vm.vm -> (Vm.vm -> unit) array array -> int -> unit
-(** [run_fast vm hints end_seg] runs until pc = [end_seg:0], with the hints
-    indexed by program-segment pc. Hints must not add relocation rules;
-    use [run] otherwise. *)
-
-val run : Vm.vm -> (Vm.vm -> unit) array array -> int -> unit
-(** [run_fast], continuing in a rule-aware generic loop once a hint adds a
-    relocation rule. *)
+val run : ?stop:int * int -> ?steps:int -> Vm.vm -> (Vm.vm -> unit) array array -> unit
+(** [run ~stop:(seg, pc) ~steps vm hints] runs, with the hints indexed by
+    program-segment pc, until pc = [seg:pc] or after [steps] steps (by
+    default neither). Once a hint adds a relocation rule, the remaining
+    steps take the generic path. *)

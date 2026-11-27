@@ -24,8 +24,8 @@ type vm = {
   (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
      rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
      relocation_rules. [relocating] is set once a rule exists: memory reads
-     then translate temporary relocatables, so the interpreter leaves its
-     fast path (see [Relocating]). *)
+     then translate temporary relocatables, so [Cpu.run] stops using the
+     native kernel. *)
   mutable tsegs : seg array;
   mutable thi : int array;
   mutable ntsegs : int;
@@ -48,7 +48,10 @@ let create ~trace =
     steps = 0;
     icache = [||];
     trace_on = trace;
-    trace = (if trace then seg_make (1 lsl 26) else empty_seg);
+    (* lazily committed; the two extra words are record_trace's headroom, so
+       a power-of-two run of packed entries (a padded proof run) fits without
+       doubling at every size *)
+    trace = (if trace then seg_make ((1 lsl 26) + 2) else empty_seg);
     tlen = 0;
     builtins = [];
     tsegs = [||];
