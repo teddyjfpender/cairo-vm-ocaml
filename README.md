@@ -144,8 +144,8 @@ python test/cli/compare.py /path/to/rust/cairo-vm-cli /path/to/ocaml/cairo-vm-cl
 - Native execution supports non-proof mode. Proof mode requires the configured Rust CLI.
 - Builtins: output, pedersen, range_check, range_check96, bitwise, ec_op, keccak, poseidon.
   ecdsa, add_mod and mul_mod are rejected explicitly, as are the Blake and QM31 opcode extensions.
-- Hints: the 86 cairo-lang hints used by the benchmark suite, matched by exact code string as
-  cairo-vm does. Any other hint fails when executed.
+- The native hint processor recognizes the 86 cairo-lang hints used by the benchmark suite
+  and the Uint256 multiply/divide-with-remainder hint. It matches exact code strings, as cairo-vm does.
 - Big-felt intermediates are kept in an append-only pool for the life of the process.
 - Passing differential tests is evidence of compatibility, not a proof of refinement.
 

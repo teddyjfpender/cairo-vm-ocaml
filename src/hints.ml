@@ -30,6 +30,15 @@ let split3 num =
   check (Z.sign num >= 0 && Z.numbits num <= 258) "split: value too large";
   [Z.extract num 0 86; Z.extract num 86 86; Z.extract num 172 86]
 
+let read_uint256 vm c name =
+  let low = get_member_z vm c name [ "low" ] in
+  let high = get_member_z vm c name [ "high" ] in
+  Z.add (Z.shift_left high 128) low
+
+let write_uint256 vm c name value =
+  set_member vm c name [ "low" ] (zf (Z.extract value 0 128));
+  set_member vm c name [ "high" ] (zf (Z.shift_right value 128))
+
 let isqrt n = Z.sqrt n
 
 (* ---- blake2s ---- *)
@@ -917,14 +926,20 @@ let () =
       set_member vm c "root" [ "high" ] Felt.zero);
   reg H.h84 (fun c vm -> write_ap vm (of_bool (Z.lt (get_member_z vm c "a" [ "high" ]) (two_pow 127))));
   reg H.h85 (fun c vm ->
-      let u n = Z.add (Z.shift_left (get_member_z vm c n [ "high" ]) 128) (get_member_z vm c n [ "low" ]) in
-      let a = u "a" and d = u "div" in
+      let a = read_uint256 vm c "a" and d = read_uint256 vm c "div" in
       if Z.equal d Z.zero then fail "uint256_unsigned_div_rem: division by zero";
       let q, r = Z.ediv_rem a d in
-      set_member vm c "quotient" [ "low" ] (zf (Z.logand q (mask 128)));
-      set_member vm c "quotient" [ "high" ] (zf (Z.shift_right q 128));
-      set_member vm c "remainder" [ "low" ] (zf (Z.logand r (mask 128)));
-      set_member vm c "remainder" [ "high" ] (zf (Z.shift_right r 128)))
+      write_uint256 vm c "quotient" q;
+      write_uint256 vm c "remainder" r);
+  reg H.uint256_mul_div_mod (fun c vm ->
+      let a = read_uint256 vm c "a" and b = read_uint256 vm c "b" in
+      let d = read_uint256 vm c "div" in
+      if Z.equal d Z.zero then fail "uint256_mul_div_mod: division by zero";
+      let q, r = Z.ediv_rem (Z.mul a b) d in
+      (* Rust's Uint512::split writes exactly four 128-bit quotient limbs. *)
+      write_uint256 vm c "quotient_low" (Z.extract q 0 256);
+      write_uint256 vm c "quotient_high" (Z.extract q 256 256);
+      write_uint256 vm c "remainder" r)
 
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in

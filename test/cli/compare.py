@@ -51,6 +51,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for proof, name in [(False, "program.json"), (True, "proof.json")]:
         subprocess.run([compiler, *(["--proof_mode"] if proof else []),
                         source.resolve(), "--output", name], check=True)
+    subprocess.run([compiler, source.with_name("uint256_mul_div.cairo"),
+                    "--output", "uint256.json"], check=True)
+    compare(["uint256.json", "--layout=all_cairo", "--trace_file=trace", "--memory_file=mem"],
+            files=["trace", "mem"])
+    compare(["uint256.json", "--layout=all_cairo", "--entrypoint=zero_divisor"], status=1)
     base = ["--layout=all_cairo", "--print_output", "--entrypoint=main"]
     sizes = []
     for fill in ["false", "true"]:
