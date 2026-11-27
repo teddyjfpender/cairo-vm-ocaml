@@ -384,6 +384,27 @@ let () =
       t.current_ptr <- get_ptr vm c "squashed_dict_end");
   reg H.h39 (fun c vm -> write_ap vm (new_dict vm c.scopes None (Some (get_val vm c "default_value"))))
 
+(* Rows before the last result were strictly below its key. Write-once
+   memory preserves that fact, even for an unsorted array. A larger query
+   can resume at the result itself; a smaller one must restart. *)
+let search_lower cursor vm arr width length key =
+  let start =
+    match !cursor with
+    | Some (owner, base, stride, last_key, index)
+      when owner == vm && arr = base && width = stride && Felt.compare key last_key >= 0 ->
+        min length index
+    | _ -> 0
+  in
+  let rec scan i =
+    if i = length then i
+    else
+      let v = mem_at vm arr (width * i) in
+      if Felt.is_reloc v || Felt.compare v key >= 0 then i else scan (i + 1)
+  in
+  let index = scan start in
+  cursor := Some (vm, arr, width, key, index);
+  index
+
 let () =
   (* unsafe_keccak *)
   reg H.h40 (fun c vm ->
@@ -483,19 +504,17 @@ let () =
         else go (i + 1)
       in
       go 0);
-  reg H.h55 (fun c vm ->
-      let arr = get_ptr vm c "array_ptr" in
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      if es <= 0 then fail "Invalid value for elm_size.";
-      let n = Felt.to_nat (get_felt vm c "n_elms") in
-      if n < 0 then fail "Invalid value for n_elms.";
-      let key = get_felt vm c "key" in
-      let rec go i =
-        if i >= n then set_val vm c "index" (Felt.small n)
-        else if compare_values (mem_at vm arr (es * i)) key >= 0 then set_val vm c "index" (Felt.small i)
-        else go (i + 1)
-      in
-      go 0);
+  reg H.h55 (fun c ->
+      let cursor = ref None in
+      fun vm ->
+        let arr = get_ptr vm c "array_ptr" in
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        if es <= 0 then fail "Invalid value for elm_size.";
+        let n = Felt.to_nat (get_felt vm c "n_elms") in
+        if n < 0 then fail "Invalid value for n_elms.";
+        let key = get_felt vm c "key" in
+        let index = search_lower cursor vm arr es n key in
+        set_val vm c "index" (Felt.small index));
   reg H.h56 (fun c _ -> enter c.scopes [ ("__usort_max_size", Nothing) ]);
   reg H.h57 (fun c vm ->
       let inp = get_ptr vm c "input" in
@@ -681,7 +700,7 @@ let () =
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in
   match Hashtbl.find_opt table h.code with
-  | Some f -> fun vm -> f ctx vm
+  | Some f -> f ctx
   | None ->
       fun _ ->
         fail "Unknown hint: %s" (if String.length h.code > 80 then String.sub h.code 0 80 ^ "..." else h.code)
