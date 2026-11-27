@@ -22,13 +22,15 @@ let felt = function
   | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
   | j -> felt_slow j
 
-let from_file ~os_program ~watch ~accessed ~set_pages path =
+let read_input path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
   let block_fields = Fields ["transactions", Elements Encoded; "tx_execution_infos", Elements Encoded] in
   let projection = Fields ["os_input", Fields ["os_block_inputs", Elements block_fields]] in
-  let hints = Json_reader.from_file ~projection path in
+  Json_reader.from_file ~projection path
+
+let register ~os_program ~watch ~accessed ~set_pages hints =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let rng = lazy (
@@ -124,7 +126,7 @@ let from_file ~os_program ~watch ~accessed ~set_pages path =
       set_val vm c "full_output" (of_bool full));
   compile
 
-let initialize ?layout_def ?(record_trace=true) ~proof ~path cfg prog =
+let initialize_input ?layout_def ?(record_trace=true) ~proof hints cfg prog =
   let runner = ref None in
   let watch = not (record_trace || cfg.Runner.trace || proof) in
   let accessed ptr length =
@@ -132,10 +134,29 @@ let initialize ?layout_def ?(record_trace=true) ~proof ~path cfg prog =
     if watch then Vm.watched_range r.Runner.vm ptr length else Resources.range_accessed r ptr length in
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
-  let compile_hint = from_file ~os_program:prog ~watch ~accessed ~set_pages path in
+  let compile_hint = register ~os_program:prog ~watch ~accessed ~set_pages hints in
   let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
   runner := Some r;
   r
+
+let initialize ?layout_def ?record_trace ~proof ~path cfg prog =
+  initialize_input ?layout_def ?record_trace ~proof (read_input path) cfg prog
+
+let initialize_files ?layout_def ?record_trace ~proof ~path cfg program_path =
+  (* Parsing only produces immutable program and witness data. VM setup and
+     all accesses to its felt pool remain on the caller's domain. *)
+  let worker =
+    if Domain.recommended_domain_count () < 2 then None
+    else try Some (Domain.spawn (fun () -> read_input path)) with Failure _ -> None in
+  let program =
+    match Program.load_file program_path with
+    | p -> p
+    | exception exn ->
+        let backtrace = Printexc.get_raw_backtrace () in
+        Option.iter (fun d -> try ignore (Domain.join d) with _ -> ()) worker;
+        Printexc.raise_with_backtrace exn backtrace in
+  let input = match worker with Some d -> Domain.join d | None -> read_input path in
+  initialize_input ?layout_def ?record_trace ~proof input cfg program
 
 let run_output_file ~path cfg prog =
   Felt.with_temporary_slots (fun () ->

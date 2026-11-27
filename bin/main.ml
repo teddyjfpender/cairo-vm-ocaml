@@ -125,12 +125,11 @@ let () =
         res.runner, t1, Unix.gettimeofday ()
       end else
       let () = if Option.is_some !os_hints then Os_hints.configure_batch_gc () in
-      let prog = Program.load_file file in
       let execute on_pie_loaded =
         let r = match !bootloader_input, !os_hints with
-          | Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg prog
-          | _, Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
-          | None, None -> Runner.initialize ?layout_def ~proof cfg prog in
+          | Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg (Program.load_file file)
+          | _, Some path -> Os_hints.initialize_files ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
+          | None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         Runner.run_until_end r;
         r, t1, Unix.gettimeofday () in
