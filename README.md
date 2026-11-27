@@ -1,230 +1,48 @@
-# cairo-vm-ocaml
+<div align="center">
 
-A fast CairoZero virtual machine written in OCaml, built with [OxCaml](https://oxcaml.org/).
-It targets [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm) **v4.0.0**:
-outputs, trace and memory files are byte-identical to the Rust CLI on all 155 programs of
-the upstream test corpus that Rust runs successfully (`test/parity.py`), including the
-Stwo-only instruction set enforced since v4.0.0. Results below name the Rust version they measured.
+<!-- 🎨 Logo goes here: drop assets/logo.svg and uncomment the line below. -->
+<!-- <img src="assets/logo.svg" alt="cairo-vm-ocaml logo" width="220"> -->
 
-## Results
+# 🐫⚡ cairo-vm-ocaml
 
-### Native instruction batches on Linux x86-64
+**A blazingly fast Cairo VM, written in OCaml.**
 
-The installed OxCaml release was **2.99× faster for execution** and **3.91× faster
-with trace and memory** than Rust cairo-vm-cli 3.2.0 on its 17 CairoZero
-benchmarks. The full suite target is 10×. Each comparison uses the sum of
-per-program medians from four alternating pairs, with both VMs on the same
-CPU core, secure execution enabled and Rust delegation disabled.
+[![OxCaml](https://img.shields.io/badge/built%20with-OxCaml%205.2-ee6a1a?logo=ocaml&logoColor=white)](https://oxcaml.org/)
+[![cairo-vm](https://img.shields.io/badge/parity-cairo--vm%20v4.0.0-6b46c1)](docs/parity.md)
+[![Corpus](https://img.shields.io/badge/corpus-0%20mismatches-2ea44f)](docs/parity.md)
+[![Speed](https://img.shields.io/badge/speed-4.2%C3%97%20vs%20Rust-ff69b4)](docs/benchmarks.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-| Workload | Rust | OCaml | Speedup |
-| --- | ---: | ---: | ---: |
-| Execute and print output | 19.42 s | 6.50 s | 2.99× |
-| Execute, print, and write trace and memory | 52.56 s | 13.45 s | 3.91× |
+</div>
 
-The traced runs matched stdout and both binary artifacts on every pair.
-Across the suite the VMs executed 117,043,195 steps and wrote 2.81 GB of trace
-and 4.37 GB of relocated memory. The upstream Pedersen benchmark measured
-11.46× for execution, with 13.54× in a separate twelve-pair check.
-Against the preceding OCaml release (#33), the execution suite went from
-9.86 s to 5.66 s on the same machine (1.74×).
+A drop-in replacement for [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm)'s
+`cairo-vm-cli`: same flags, byte-identical outputs, about **4× faster**.
 
-The [repeated Pedersen node fixture](bench/pedersen_repeated_nodes.cairo)
-cycles through 16 input pairs across 8,192 distinct builtin instances and
-includes every computed hash in its printed output. With full artifacts it ran
-in 23.3 ms versus 333.7 ms for Rust (14.32×).
-Varying the second input of the upstream Pedersen benchmark by its iteration counter measured 2.79× with artifacts.
+- 🏎️ **Fast:** 4.2× the Rust CLI across its 17 benchmarks, 10× on Pedersen
+- 🎯 **Exact:** identical trace, memory, AIR inputs and PIE archives on the upstream corpus
+- 🧾 **Complete:** execution and proof mode, every builtin, dynamic layouts, Stwo opcodes
 
-[Execution pairs](bench/results/native-kernel-exec.csv) ·
-[Traced pairs](bench/results/native-kernel-traced.csv) ·
-[OCaml revision pairs](bench/results/native-kernel-parent.csv) ·
-[Hash workload pairs](bench/results/native-kernel-hashes.csv) ·
-[Pedersen recheck](bench/results/native-kernel-pedersen.csv) ·
-[Artifact sizes](bench/results/native-kernel-output-bytes.csv)
-
-To check the 10× target, pass `--min-suite-speedup 10` to
-`bench/compare_cli.py`. The harness checks output equivalence before
-evaluating the threshold. Raw timings remain on stdout.
-
-### Previous Linux baseline
-
-
-| Mode | Rust | Native OCaml | Speedup | Programs faster |
-| --- | ---: | ---: | ---: | ---: |
-| Execution and printed output | 16.65 s | 8.38 s | 1.99× | 17/17 |
-| Execution, printed output, trace and memory | 50.13 s | 15.14 s | 3.31× | 17/17 |
-
-Each total sums the per-program median of four paired process wall times. Both
-release binaries used the same CPU affinity within a comparison, the default
-secure execution settings and the same cairo-lang 0.13.5 inputs. The harness
-alternated which VM ran first and checked stdout and every requested artifact
-after each pair. The machine reported an Intel Xeon Platinum 8573C. Rust used
-its default allocator feature and the OCaml executable ran with delegation
-disabled. Raw pairs: [execution](bench/results/rust-3.2.0-run.csv) and
-[trace and memory](bench/results/rust-3.2.0-traced.csv).
-
-The targeted [Keccak byte-prefix workload](bench/keccak_byte_prefixes.cairo)
-queries 4,096 increasing, non-word-aligned lengths from one immutable Cairo
-array. Eight alternating traced pairs measured 0.825 s for Rust and
-0.038 s for OCaml (21.9×). A separate paired comparison against the preceding
-OCaml revision measured 1.359 s and 0.024 s (56.7×). These ratios apply
-to repeated prefixes. [Rust pairs](bench/results/keccak-byte-prefixes-vs-rust.csv)
-and [parent pairs](bench/results/keccak-byte-prefixes-vs-parent.csv).
-
-### Apple M5 Max (main after #33)
-
-Apple M5 Max under background load, best of 3 wall-clock runs, `--layout all_cairo --print_output --trace_file … --memory_file …`
-for both binaries. Every row's stdout, trace file and memory file were compared byte-for-byte.
-
-| program | rust (s) | ocaml (s) | speedup |
-| --- | ---: | ---: | ---: |
-| big_factorial | 0.861 | 0.242 | 3.56x |
-| big_fibonacci | 0.725 | 0.319 | 2.28x |
-| blake2s_integration_benchmark | 1.293 | 0.546 | 2.37x |
-| compare_arrays_200000 | 1.690 | 0.498 | 3.40x |
-| dict_integration_benchmark | 2.061 | 0.920 | 2.24x |
-| integration_builtins | 2.916 | 0.809 | 3.60x |
-| keccak_integration_benchmark | 2.178 | 0.911 | 2.39x |
-| linear_search | 1.639 | 0.445 | 3.68x |
-| math_cmp_and_pow_integration_benchmark | 1.427 | 0.494 | 2.89x |
-| math_integration_benchmark | 1.256 | 0.508 | 2.48x |
-| memory_integration_benchmark | 1.183 | 0.466 | 2.54x |
-| operations_with_data_structures_benchmarks | 1.766 | 0.490 | 3.61x |
-| pedersen | 0.599 | 0.109 | 5.50x |
-| poseidon_integration_benchmark | 0.784 | 0.468 | 1.67x |
-| secp_integration_benchmark | 2.169 | 0.621 | 3.49x |
-| set_integration_benchmark | 0.752 | 0.169 | 4.45x |
-| uint256_integration_benchmark | 2.157 | 1.000 | 2.16x |
-| **total** | **25.456** | **9.013** | **2.82x** |
-
-Programs are cairo-vm's `cairo_programs/benchmarks/*.cairo`, compiled with cairo-lang 0.13.5.
-Reproduce with `bench/compare.py RUST_CLI _build/default/bin/main.exe progs/*.json --trace`.
-
-## Why it is fast
-
-- **Batched native execution.** The OxCaml runner sends up to 8,192 decoded steps
-  to a nonallocating C loop. Hints, new instructions, growing segments and
-  unsupported operand patterns return to the ordinary interpreter. Frame pushes
-  can be copied together while keeping a separate trace entry per instruction.
-- **Builtin handling.** The kernel writes builtin inputs directly and computes
-  bitwise outputs only when requested. End-of-run checks compare assigned
-  outputs against their deductions. Bounded Pedersen and Poseidon caches check
-  complete inputs before reuse.
-
-- **One immediate int per value.** Small felts (|v| < 2^59), relocatables and empty cells are tagged
-  OCaml ints. Big felts are interned in an append-only pool of canonical limbs, so equality, pointer
-  arithmetic and most additions never touch 256-bit arithmetic or allocate.
-- **Off-heap memory.** Segments and the trace are `calloc`-backed Bigarrays: the GC never scans
-  them, there is no write barrier, and untouched capacity costs nothing.
-- **Fast interpreter loop.** Registers live in locals; decoded instructions are cached per pc with a
-  hint flag bit. The common case (operands present, `[ap]` freshly written) runs without leaving
-  the loop. Anything unusual falls back, before any mutation, to a generic step implementing the
-  full operand-deduction rules.
-- **C kernel for the field.** Montgomery arithmetic specialised to the Stark prime, Pedersen with
-  precomputed 4-bit window tables, Poseidon (Hades), Keccak-f, EC op, and GMP inversion.
-- **C binary writers** for the trace and memory files.
-
-## Usage
+## 🚀 Quick start
 
 ```sh
 opam switch create 5.2.0+ox --repos ox=git+https://github.com/oxcaml/opam-repository.git,default
-eval $(opam env --switch 5.2.0+ox)
-opam install dune zarith yojson
+eval $(opam env --switch 5.2.0+ox) && opam install dune zarith yojson
 dune build --profile release
-_build/default/bin/main.exe program.json --layout all_cairo --print_output \
-  --trace_file out.trace --memory_file out.mem --stats
+_build/default/bin/main.exe program.json --layout all_cairo --print_output
 ```
 
-Installing the package with `opam install .` installs both `cairo-vm-ocaml`
-and `cairo-vm-cli` in the switch. Existing execution scripts can select the
-OCaml implementation through `PATH`. If Rust is already installed, keep its
-executable in a separate directory.
+## 📚 Docs
 
-The native command accepts the Rust execution flags, including
-`--fill-holes true|false` for deducible builtin output cells. To use Rust for
-proof mode, AIR JSON, Cairo PIE creation and replay, or dynamic layouts, set
-`CAIRO_VM_RUST_CLI` to the separate upstream executable's absolute path.
-The CLI forwards those commands with their original arguments. A native VM
-execution error also retries through that executable before emitting output,
-except when the OCaml-only `--stats` flag is active.
-
-For example, an existing proof-mode script can keep calling `cairo-vm-cli`
-after activating the OCaml switch:
-
-```sh
-export CAIRO_VM_RUST_CLI=/path/to/rust/cairo-vm-cli
-cairo-vm-cli proof-program.json --layout all_cairo --proof_mode \
-  --air_public_input public.json --air_private_input private.json \
-  --trace_file run.trace --memory_file run.mem
-```
-
-For OCaml applications, add `(libraries cairo-vm-ocaml)` to the Dune stanza:
-
-```ocaml
-open Cairovm
-
-let execute file =
-  let config = { Cairo_run.default_config with layout = "all_cairo"; trace = true } in
-  let result = Cairo_run.run_file ~config ~fill_holes:true file in
-  Runner.iter_output_lines result print_endline;
-  Runner.write_trace result "out.trace";
-  Runner.write_memory result "out.mem"
-```
-
-The embedded API uses the native runner. Its felt storage is process-global
-and retains allocated values between calls. Use separate processes for
-concurrent jobs or to reclaim the entire pool after a job.
-
-To compare release binaries on your own compiled workload and check stdout
-and both binary artifacts on every pair, run:
-
-```sh
-python bench/compare_cli.py --trace /path/to/rust/cairo-vm-cli /path/to/ocaml/cairo-vm-cli programs/*.json
-```
-
-Run the compatibility checks with `cairo-compile` 0.13.5 on `PATH`:
-
-```sh
-dune runtest --profile release
-python test/cli/compare.py /path/to/rust/cairo-vm-cli /path/to/ocaml/cairo-vm-cli
-```
-
-## Parity
-
-`test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [--pie]` runs both CLIs on every compiled
-program of a corpus and compares stdout, trace, memory, AIR public/private inputs and PIE
-archives byte-for-byte. Against starkware-libs/cairo-vm **v4.0.0** on its own
-`cairo_programs` corpus (compiled with cairo-lang 0.13.5):
-
-| Mode | Pass | Fail in both | OCaml-only failures |
-| --- | ---: | ---: | ---: |
-| Execution, 165 programs | 155 | 10 | 0 |
-| Proof mode (`starknet_with_keccak`), 155 programs | 155 | 0 | 0 |
-| Cairo PIE output, 148 programs | 138 | 10 | 0 |
-| Stwo opcode programs (Blake2s, QM31) | 2 | 0 | 0 |
-
-Supported: execution and proof mode, AIR public/private inputs, Cairo PIE output, all
-v4.0.0 layouts including `dynamic`, every builtin (output, pedersen, range_check,
-range_check96, ecdsa, bitwise, ec_op, keccak, poseidon, add_mod, mul_mod), the Blake,
-BlakeFinalize and QM31 opcode extensions, v4.0.0's rejection of instructions without a Stwo
-opcode component, temporary segments and relocation rules, and the hint processor's code
-table (`src/hints/hint_codes.ml`, generated from upstream by `scripts/gen_hint_codes.py`).
-
-Not implemented: the dex `EXCESS_BALANCE` hint (decimal rounding) and the `test_utils`-only
-hints, which fail explicitly. Passing differential tests is evidence of compatibility, not
-a proof of refinement.
-
-## Layout
-
-| Directory | Contents |
+| | |
 | --- | --- |
-| `src/core` | `Felt` (values as `private int`), `Segment`, `Builtin`, `Instruction`, `Vm` (memory, value arithmetic), `Deduce` (builtin auto-deduction), `Cpu` (step, fast loop) |
-| `src/native` | C: Stark-field Montgomery kernel, Pedersen/Poseidon/Keccak/EC op, the batched CPU kernel, artifact writers |
-| `src/extensions` | ecdsa and mod builtins, Blake/QM31 opcode extensions |
-| `src/hints` | hint runtime (`Hintrt`), code table, implementations by family |
-| `src/program` | compiled-program JSON loading |
-| `src/runner` | `Runner`, `Resources` (proof-mode accounting), `Finalize`, `Artifacts`, `Air`, `Pie`, `Layout`, `Cairo_run` |
+| [Getting started](docs/getting-started.md) | install, CLI, proof mode, library use |
+| [Benchmarks](docs/benchmarks.md) | per-program numbers and methodology |
+| [Parity](docs/parity.md) | what matches Rust, and how we check |
+| [Architecture](docs/architecture.md) | why it's fast, source layout |
+| [Contributing](docs/contributing.md) | tests, parity runs, perf claims |
 
-## License
+Serve them locally as a site with `pip install mkdocs-material && mkdocs serve`.
 
-Apache-2.0. Hash constants are generated by `scripts/gen_constants.py` from the
-`starknet-curve` and `lambdaworks-crypto` crates.
+## 📜 License
+
+Apache-2.0

@@ -1,0 +1,21 @@
+site_name: cairo-vm-ocaml
+site_description: A blazingly fast Cairo VM written in OCaml
+repo_url: https://github.com/teddyjfpender/cairo-vm-ocaml
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: deep orange
+      toggle: { icon: material/weather-night, name: Dark mode }
+    - scheme: slate
+      primary: deep orange
+      toggle: { icon: material/weather-sunny, name: Light mode }
+  features: [navigation.instant, content.code.copy]
+markdown_extensions: [admonition, tables, toc]
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Benchmarks: benchmarks.md
+  - Parity: parity.md
+  - Architecture: architecture.md
+  - Contributing: contributing.md
