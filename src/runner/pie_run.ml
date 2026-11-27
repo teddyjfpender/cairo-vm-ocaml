@@ -27,6 +27,9 @@ let n_offset_bits = 47
 let offset_mask = (1 lsl n_offset_bits) - 1
 let addr_of_word w = ((w lsr n_offset_bits) land 0xffff, w land offset_mask)
 
+external address_bounds : bytes -> int array -> int array -> int -> bool
+  = "cvm_pie_address_bounds" [@@noalloc]
+
 let validity_checks pie =
   let nb = List.length pie.builtins in
   if pie.main > Array.length pie.data then pie_error "Invalid main() address.";
@@ -52,12 +55,7 @@ let validity_checks pie =
       if s.index >= Array.length sizes then pie_error "Invalid segment index";
       sizes.(s.index) <- s.size) infos;
   let occupied = Array.make (Array.length sizes) 0 in
-  let m = pie.memory in
-  for i = 0 to n_cells pie - 1 do
-    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le m (i * cell_bytes))) in
-    if seg >= Array.length sizes || off >= sizes.(seg) || off > Vm.max_off then pie_error "Invalid address";
-    if off >= occupied.(seg) then occupied.(seg) <- off + 1
-  done;
+  if not (address_bounds pie.memory sizes occupied Vm.max_off) then pie_error "Invalid address";
   if List.length pie.builtin_instance_counter <> nb
      || not (List.for_all (fun b -> List.mem_assoc b pie.builtin_instance_counter) pie.builtins)
   then pie_error "Builtin list mismatch in builtin_segments.";

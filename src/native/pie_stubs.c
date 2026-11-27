@@ -85,6 +85,36 @@ value cvm_pie_crc_update(value crc, value bytes, value len) {
   return Val_long(crc32_z(Long_val(crc), (const Bytef *)Bytes_val(bytes), Long_val(len)));
 }
 
+/* Validate every serialized address before allocating VM storage. Group
+   adjacent cells by segment, including sparse or out-of-order addresses.
+   Only the highest occupied offset is needed for each allocation. */
+value cvm_pie_address_bounds(value memory, value sizes, value occupied, value max_offset) {
+  const size_t count = caml_string_length(memory)/40;
+  const unsigned char *data = (const unsigned char *)Bytes_val(memory);
+  const uint64_t mask = (UINT64_C(1)<<47)-1, max_off = Long_val(max_offset);
+  if (Wosize_val(sizes) != Wosize_val(occupied)) return Val_false;
+  uint64_t current = UINT64_MAX, limit = 0, high = 0;
+  for (size_t i=0; i<count; ++i) {
+    uint64_t word;
+    memcpy(&word,data+40*i,8);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    word = __builtin_bswap64(word);
+#endif
+    uint64_t seg = (word>>47)&UINT16_MAX, off = word&mask;
+    if (seg != current) {
+      if (seg >= Wosize_val(sizes)) return Val_false;
+      if (current != UINT64_MAX) Field(occupied,current) = Val_long(high);
+      current = seg; high = Long_val(Field(occupied,seg));
+      limit = Long_val(Field(sizes,seg));
+      if (limit > max_off+1) limit = max_off+1;
+    }
+    if (off >= limit) return Val_false;
+    if (off >= high) high = off+1;
+  }
+  if (current != UINT64_MAX) Field(occupied,current) = Val_long(high);
+  return Val_true;
+}
+
 /* Load increasing addresses into empty cells of one pre-sized plain segment.
    Stop before any exceptional cell: OCaml handles validation, duplicate
    writes, pool exhaustion and segment transitions with the usual VM rules.
