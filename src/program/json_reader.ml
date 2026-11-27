@@ -13,12 +13,24 @@ external skip_value : string -> int -> int = "cvm_json_skip" [@@noalloc]
 type projection =
   | Json
   | Program
-  | Identifier
   | Debug_info
   | Fields of (string * projection) list
   | Only of (string * projection) list
+  | Values of projection
   | Elements of projection
   | Encoded
+
+(* Intern common schema keys and skip unused fields while still validating
+   their JSON. Object keys in identifier, member and hint maps remain dynamic. *)
+let identifier =
+  Only ["type",Json; "value",Json; "pc",Json; "destination",Json;
+        "members",Values (Only ["offset",Json; "cairo_type",Json])]
+
+let tracking = Only ["group",Json; "offset",Json]
+let reference_manager = Only ["references",Elements (Only ["ap_tracking_data",tracking; "value",Json])]
+let hint_table =
+  Values (Elements (Only ["code",Json; "accessible_scopes",Json;
+    "flow_tracking_data",Only ["ap_tracking",tracking; "reference_ids",Json]]))
 
 external project_key : string -> int ref -> (string * projection) list -> (string * projection) list
   = "cvm_json_project_key" [@@noalloc]
@@ -93,7 +105,7 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
                        fold_items '}' () (fun () ->
                            let name = string () in
                            expect ':';
-                           add name (value Identifier));
+                           add name (value identifier));
                        `Null
                      end else (pos := skip !pos; `Null)
                  | Program, "attributes" ->
@@ -111,8 +123,10 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
                          Program_metadata.validate key Program_metadata.instruction
                            (value (Only ["inst", Json; "hints", Json])));
                      `Assoc []
-                 | Debug_info, _ | Program, "identifiers"
-                 | Identifier, ("references" | "full_name" | "cairo_type" | "decorators" | "size") ->
+                 | Program, "reference_manager" -> value reference_manager
+                 | Program, "hints" -> value hint_table
+                 | Values v, _ -> value v
+                 | Debug_info, _ | Program, "identifiers" ->
                      pos := skip !pos; `Null
                  | Fields fields, key -> value (Option.value (List.assoc_opt key fields) ~default:Json)
                  | _ -> value Json in
