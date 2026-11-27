@@ -26,6 +26,7 @@ type vm = {
   mutable code_seg : int;
   mutable code_base : int;
   mutable code_page : int array;
+  mutable watched : Bytes.t array; (** accessed words of selected contract bytecode segments *)
   trace_on : bool;
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
@@ -36,13 +37,18 @@ type vm = {
   mutable ntsegs : int;
   rules : (int, Felt.t) Hashtbl.t;  (** temporary index -> destination *)
   mutable relocating : bool;
-      (** a rule exists: reads translate temporary relocatables, so the
-          interpreter leaves its fast path *)
+      (** reads translate temporary relocatables when a rule exists *)
   mutable had_temp : bool;
 }
 
 val create : trace:bool -> vm
 (** An empty machine; [trace] preallocates the trace buffer. *)
+
+val watch_segment : vm -> int -> int -> unit
+(** Track accesses to the first words of a newly allocated contract bytecode segment. *)
+
+val mark_watched : vm -> int -> int -> unit
+val watched_range : vm -> Felt.t -> int -> bool
 
 val add_segment : vm -> int
 (** Append a real segment and return its index. *)

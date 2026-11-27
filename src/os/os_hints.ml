@@ -7,7 +7,7 @@ let felt j =
   if Z.sign z < 0 || Z.geq z Felt.p then fail "OS input field element out of range";
   Felt.of_z z
 
-let from_file ~accessed ~set_pages path =
+let from_file ~watch ~accessed ~set_pages path =
   let hints = Json_reader.from_file path in
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
@@ -59,7 +59,7 @@ let from_file ~accessed ~set_pages path =
       set_val vm c "n_compiled_class_facts" (Felt.small (List.length classes));
       List.iteri (fun i (hash, cls) ->
           let class_hash = Felt.of_z hash in
-          let tree = Casm_class.load ~syscall:(Os_syscalls.run calls c) vm c ~felt ~class_hash
+          let tree = Casm_class.load ~watch ~syscall:(Os_syscalls.run calls c) vm c ~felt ~class_hash
             ~fact:(Casm_class.at facts (2*i)) ~builtin_costs:(get_ptr vm c "builtin_costs") cls in
           Felt_tbl.replace structures class_hash tree) classes);
   reg "ChainIdAndFeeTokenAddress" (fun c vm ->
@@ -88,12 +88,15 @@ let from_file ~accessed ~set_pages path =
       set_val vm c "full_output" (of_bool full));
   compile
 
-let initialize ?layout_def ~proof ~path cfg prog =
+let initialize ?layout_def ?(record_trace=true) ~proof ~path cfg prog =
   let runner = ref None in
-  let accessed ptr length = Resources.range_accessed (Option.get !runner) ptr length in
+  let watch = not (record_trace || cfg.Runner.trace || proof) in
+  let accessed ptr length =
+    let r = Option.get !runner in
+    if watch then Vm.watched_range r.Runner.vm ptr length else Resources.range_accessed r ptr length in
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
-  let compile_hint = from_file ~accessed ~set_pages path in
-  let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = true } prog in
+  let compile_hint = from_file ~watch ~accessed ~set_pages path in
+  let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
   runner := Some r;
   r

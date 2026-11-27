@@ -148,6 +148,8 @@ let () =
   let code = add_segment vm in
   let jump = Felt.of_z (Z.of_string "0x10780017fff7fff") in
   Array.iteri (write vm code) [|jump; Felt.small 2; jump; Felt.small (-2)|];
+  write vm code 4 Felt.one;
+  watch_segment vm code 5;
   write vm 1 0 Felt.one;
   vm.ap <- 1; vm.fp <- 1; vm.pc_seg <- code;
   run ~steps:8200 vm [||];
@@ -157,4 +159,7 @@ let () =
       register_runtime_hints vm ~segment:code ~pc
         [|(fun current -> assert (current.pc = pc); counters.(i) <- counters.(i) + 1)|]) [|0; 2|];
   run ~steps:18000 vm [||];
-  assert (vm.pc = 0 && counters = [|9000; 9000|])
+  assert (vm.pc = 0 && counters = [|9000; 9000|]);
+  for i = 0 to 3 do assert (watched_range vm (Felt.reloc code i) 1) done;
+  assert (not (watched_range vm (Felt.reloc code 4) 1));
+  assert (vm.tlen = 0)

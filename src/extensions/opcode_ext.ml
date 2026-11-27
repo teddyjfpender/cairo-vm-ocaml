@@ -138,6 +138,10 @@ let step vm d =
     | _ -> fail "Opcode extension with op1 addressed through op0"
   in
   if op1_off < 0 then fail "Negative op1 address";
+  if Array.length vm.watched <> 0 then begin
+    mark_watched vm pc_seg pc;
+    mark_watched vm op1_seg op1_off
+  end;
   let size = if (d lsr 50) land 3 = 1 then 2 else 1 in
   let dst = read vm 1 dst_addr and op0 = read vm 1 op0_addr and op1 = get vm op1_seg op1_off in
   if vm.trace_on then record_trace vm pc_seg pc ap fp;
@@ -163,6 +167,8 @@ let step vm d =
       let f0 = if ext = 2 then 0xFFFFFFFF else 0 in
       let h = Blake2s.compress state message counter 0 f0 0 in
       Array.iteri (fun i w -> write_checked vm (Felt.rseg out) (Felt.roff out + i) (Felt.small w)) h;
+      if Array.length vm.watched <> 0 then
+        for i = 0 to 7 do mark_watched vm (Felt.rseg out) (Felt.roff out + i) done;
       finish vm d pc ap size
   | 3 ->
       let mul = (d lsr 52) land 3 = 2 in

@@ -18,6 +18,13 @@ static inline int mark(value maps, value counts, intnat seg, intnat off) {
   return 1;
 }
 
+static inline int mark_stack(unsigned char *map, size_t length, uintnat off, intnat *new_cells) {
+  if (off >= length) return 0;
+  *new_cells += !map[off];
+  map[off] = 1;
+  return 1;
+}
+
 value cvm_trace_access(value trace, value end, value cache, value stack,
                        value maps, value counts, value state, value page) {
   const uint64_t *entries = Caml_ba_data_val(trace);
@@ -25,6 +32,11 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
   const size_t stack_len = Caml_ba_array_val(stack)->dim[0];
   intnat cursor = Long_val(Field(state, 0)), stop = Long_val(end);
   intnat lo = Long_val(Field(state, 1)), hi = Long_val(Field(state, 2));
+  if (Wosize_val(maps) < 2 || Wosize_val(counts) < 2) return Val_unit;
+  value stack_map = Field(maps, 1);
+  unsigned char *seen = (unsigned char *)Bytes_val(stack_map);
+  size_t seen_len = caml_string_length(stack_map);
+  intnat new_cells = 0, program_len = Long_val(Field(state, 5));
   while (cursor < stop) {
     uint64_t w = entries[cursor];
     intnat pc, ap, fp, code_seg = 0, width;
@@ -54,7 +66,8 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
     int f0 = d & 65535, f1 = (d >> 16) & 65535, f2 = (d >> 32) & 65535;
     intnat dst = ((d >> 48) & 1 ? fp : ap) + f0 - 32768;
     intnat op0 = ((d >> 49) & 1 ? fp : ap) + f1 - 32768;
-    if (!mark(maps, counts, 1, dst) || !mark(maps, counts, 1, op0)) break;
+    if (!mark_stack(seen, seen_len, dst, &new_cells) ||
+        !mark_stack(seen, seen_len, op0, &new_cells)) break;
     intnat seg = 1, base = 0, delta = f2 - 32768;
     switch ((d >> 50) & 3) {
       case 0: {
@@ -68,7 +81,13 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
       case 2: base = fp; break;
       case 3: base = ap; break;
     }
-    if (!mark(maps, counts, seg, base + delta) || !mark(maps, counts, code_seg, pc)) break;
+    intnat address = base + delta;
+    if (seg == 1) {
+      if (!mark_stack(seen, seen_len, address, &new_cells)) break;
+    } else if ((seg != 0 || (uintnat)address >= (uintnat)program_len) &&
+               !mark(maps, counts, seg, address)) break;
+    if ((code_seg != 0 || (uintnat)pc >= (uintnat)program_len) &&
+        !mark(maps, counts, code_seg, pc)) break;
     if (f0 < lo) lo = f0;
     if (f1 < lo) lo = f1;
     if (f2 < lo) lo = f2;
@@ -77,6 +96,7 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
     if (f2 > hi) hi = f2;
     cursor += width;
   }
+  Field(counts, 1) += 2 * new_cells;
   Field(state, 0) = Val_long(cursor);
   Field(state, 1) = Val_long(lo);
   Field(state, 2) = Val_long(hi);

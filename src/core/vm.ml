@@ -22,6 +22,7 @@ type vm = {
   mutable code_seg : int;
   mutable code_base : int;
   mutable code_page : int array;
+  mutable watched : Bytes.t array;
   trace_on : bool;
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
@@ -55,6 +56,7 @@ let create ~trace =
     runtime_hints = Hashtbl.create 8;
     code_pages = Hashtbl.create 8;
     code_seg = -1; code_base = 0; code_page = [||];
+    watched = [||];
     trace_on = trace;
     (* lazily committed; the two extra words are record_trace's headroom, so
        a power-of-two run of packed entries (a padded proof run) fits without
@@ -70,6 +72,28 @@ let create ~trace =
     relocating = false;
     had_temp = false;
   }
+
+let watch_segment vm seg length =
+  if seg < 2 || seg >= vm.nsegs || length < 0 || length > vm.hi.(seg) then
+    fail "Invalid watched contract bytecode segment";
+  if seg >= Array.length vm.watched then begin
+    let maps = Array.make vm.nsegs Bytes.empty in
+    Array.blit vm.watched 0 maps 0 (Array.length vm.watched);
+    vm.watched <- maps
+  end;
+  vm.watched.(seg) <- Bytes.make length '\000'
+
+let[@inline] mark_watched vm seg off =
+  if seg >= 2 && seg < Array.length vm.watched then
+    let map = vm.watched.(seg) in
+    if off >= 0 && off < Bytes.length map then Bytes.unsafe_set map off '\001'
+
+let watched_range vm ptr length =
+  let seg = rseg ptr and off = roff ptr in
+  if seg < 2 || seg >= Array.length vm.watched then fail "Untracked bytecode segment";
+  let map = vm.watched.(seg) in
+  if length < 0 || off > Bytes.length map - length then fail "Invalid bytecode range";
+  match Bytes.index_from_opt map off '\001' with Some i -> i-off < length | None -> false
 
 let add_segment vm =
   let n = vm.nsegs in

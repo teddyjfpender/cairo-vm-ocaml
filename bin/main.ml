@@ -122,7 +122,7 @@ let () =
       end else
       let prog = Program.load_file file in
       let r = match !os_hints with
-        | Some path -> Os_hints.initialize ?layout_def ~proof ~path cfg prog
+        | Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
         | None -> Runner.initialize ?layout_def ~proof cfg prog in
       let t1 = Unix.gettimeofday () in
       Runner.run_until_end r;

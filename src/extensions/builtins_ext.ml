@@ -176,6 +176,7 @@ let accessed_log : (int * int) list ref = ref []
 
 let insert vm (seg, off) v =
   write_checked vm seg off v;
+  if Array.length vm.watched <> 0 then mark_watched vm seg off;
   accessed_log := (seg, off) :: !accessed_log
 
 (* words and value; None if a word is missing *)

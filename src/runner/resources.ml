@@ -63,7 +63,7 @@ let update_accessed r =
       mark acc 0 i
     done;
   let t = vm.trace in
-  let state = [|acc.cursor; acc.rc_lo; acc.rc_hi; -1; 0|] in
+  let state = [|acc.cursor; acc.rc_lo; acc.rc_hi; -1; 0; Array.length r.prog.data|] in
   let page = ref [||] in
   while state.(0) < vm.tlen do
     trace_access t vm.tlen vm.icache vm.segs.(1) acc.bits acc.count state !page;

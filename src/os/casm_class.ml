@@ -6,7 +6,7 @@ module U = Yojson.Safe.Util
 let segment vm = Felt.reloc (Vm.add_segment vm) 0
 let at ptr offset = Vm.reloc_add_felt ptr (Felt.small offset)
 
-let load ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
+let load ~watch ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let compiled = segment vm in
   let entry_points = U.member "entry_points_by_type" j in
   let load_entries kind =
@@ -28,6 +28,7 @@ let load ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let words = List.map felt (U.to_list (U.member "bytecode" j)) in
   let code = Hintrt.gen_arg vm words in
   let length = List.length words in
+  if watch then Vm.watch_segment vm (Felt.rseg code) length;
   let name = "starkware.starknet.core.os.contract_class.compiled_class_struct.COMPILED_CLASS_VERSION" in
   let version = match Hashtbl.find_opt ctx.Hintrt.prog.Program.identifiers name with
     | Some {i_value = Some v; _} -> Felt.of_z v

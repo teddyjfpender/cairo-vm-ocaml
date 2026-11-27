@@ -34,6 +34,13 @@ static inline int same_value(value pool, intnat a, intnat b) {
   return a == b || ((a & b & 3) == 3 && eq4(SLOT(pool, a >> 2), SLOT(pool, b >> 2)));
 }
 
+static inline void mark_watched(value maps, intnat seg, intnat off) {
+  if (seg >= 2 && (uintnat)seg < Wosize_val(maps)) {
+    value map = Field(maps, seg);
+    if ((uintnat)off < caml_string_length(map)) Bytes_val(map)[off] = 1;
+  }
+}
+
 /* Invert an ASSERT_EQ only when both known operands support the Stone
    deduction rule. Zero asks the OCaml runner to handle the instruction. */
 static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
@@ -66,7 +73,7 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
    execution-segment high-water mark, trace length, and next felt-pool slot. */
 static inline __attribute__((always_inline))
 value batch(value state, value cache, value segs, value flags, value highs,
-            value trace, value pool, intnat nsegs, const int tracing, value ped_cache) {
+            value trace, value pool, intnat nsegs, const int tracing, value ped_cache, value watched) {
   const intnat cache_size = Wosize_val(cache);
   if (Wosize_val(state) < 9 || nsegs < 2 || (uintnat)nsegs > Wosize_val(segs) ||
       (uintnat)nsegs > Wosize_val(flags) || (uintnat)nsegs > Wosize_val(highs))
@@ -177,6 +184,7 @@ general:;
         value ba = Field(segs, sg);
         if (!fits(at, CAPACITY(ba))) break;
         intnat *cells = CELLS(ba);
+        if (watched) mark_watched(watched, sg, at);
         b = cells[at];
         if (!b) {
           int kind = Long_val(Field(flags, sg));
@@ -266,6 +274,10 @@ general:;
       next_ap = ap + (ap_update == 2);
     }
 complete:
+    if (watched && code_seg >= 2) {
+      mark_watched(watched, code_seg, pc);
+      if (((d >> 50) & 3) == 1) mark_watched(watched, code_seg, pc+1);
+    }
     if (tracing) {
       last_trace = used;
       if (code_seg == 0 && pc < 65536 && (ap | fp) < (1 << 23))
@@ -284,11 +296,22 @@ complete:
 value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
                     value trace, value pool, value nsegs, value tracing, value ped_cache) {
   return Bool_val(tracing)
-    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache)
-    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache);
+    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, 0)
+    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, 0);
 }
 
 value cvm_cpu_batch_byte(value *argv, int argc) {
   (void)argc;
   return cvm_cpu_batch(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7], argv[8], argv[9]);
+}
+
+value cvm_cpu_batch_watched(value state, value cache, value segs, value flags, value highs,
+                            value trace, value pool, value nsegs, value watched, value ped_cache) {
+  return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched);
+}
+
+value cvm_cpu_batch_watched_byte(value *argv, int argc) {
+  (void)argc;
+  return cvm_cpu_batch_watched(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
+                               argv[6], argv[7], argv[8], argv[9]);
 }

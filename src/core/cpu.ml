@@ -113,6 +113,10 @@ let rec step_instr vm d =
     | _ -> (1, ap + off2)
   in
   if op1_off < 0 then fail "Negative op1 address";
+  if Array.length vm.watched <> 0 then begin
+    mark_watched vm pc_seg pc;
+    mark_watched vm op1_seg op1_off
+  end;
   let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else Felt.empty) else slow_operand_read vm op1_seg op1_off in
   let op1 = if vm.relocating then relocate_temp_value vm op1 else op1 in
   let size = if op1_src = 1 then 2 else 1 in
@@ -315,6 +319,10 @@ let hint_steps = ref 0
 external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
   seg -> pool -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
+external cpu_batch_watched : int array -> int array -> seg array -> flag array -> int array ->
+  seg -> pool -> int -> Bytes.t array -> Felt.t array -> int
+  = "cvm_cpu_batch_watched_byte" "cvm_cpu_batch_watched" [@@noalloc]
+
 let register_runtime_hints vm ~segment ~pc handlers =
   if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
   Hashtbl.replace vm.runtime_hints (segment, pc) handlers;
@@ -353,8 +361,12 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
         let cache = if vm.pc_seg = 0 then vm.icache else contract_page vm in
         registers.(10) <- vm.pc_seg;
         registers.(11) <- if vm.pc_seg = 0 then 0 else vm.code_base;
-        let count = cpu_batch registers cache vm.segs vm.seg_flag vm.hi vm.trace
-          pool vm.nsegs vm.trace_on (match pedersen with Some b -> b.cache | None -> [||]) in
+        let ped_cache = match pedersen with Some b -> b.cache | None -> [||] in
+        let count =
+          if Array.length vm.watched = 0 then
+            cpu_batch registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs vm.trace_on ped_cache
+          else
+            cpu_batch_watched registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs vm.watched ped_cache in
         vm.pc <- registers.(0); vm.ap <- registers.(1); vm.fp <- registers.(2);
         vm.hi.(1) <- registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
         if count > 0 && vm.trace_on then vm.last_trace <- registers.(9);
