@@ -117,20 +117,7 @@ let initialize (cfg : config) (prog : Program.t) : t =
     prog.hints;
   { vm; prog; end_seg; hints; prog_builtins; scopes }
 
-let run_until_end r =
-  let vm = r.vm in
-  let hints = r.hints in
-  let nh = Array.length hints in
-  let end_seg = r.end_seg in
-  while not (vm.pc_seg = end_seg && vm.pc = 0) do
-    (if vm.pc_seg = 0 && vm.pc < nh then
-       let hs = Array.unsafe_get hints vm.pc in
-       if Array.length hs <> 0 then
-         for i = 0 to Array.length hs - 1 do
-           (Array.unsafe_get hs i) vm
-         done);
-    step vm
-  done
+let run_until_end r = run_fast r.vm r.hints r.end_seg
 
 (* ---- end of run ---- *)
 
@@ -228,68 +215,19 @@ let relocation_table vm =
   done;
   t
 
+external c_write_trace : string -> seg -> int -> int array -> unit = "cvm_write_trace"
+
+external c_write_memory : string -> seg array -> int array -> int array -> int -> bytes -> unit
+  = "cvm_write_memory_byte" "cvm_write_memory"
+
 let write_trace r path =
   let vm = r.vm in
-  let t = relocation_table vm in
-  let oc = open_out_bin path in
-  let chunk = 3 * 8 * 65536 in
-  let buf = Bytes.create chunk in
-  let pos = ref 0 in
-  let base1 = t.(1) in
-  let i = ref 0 in
-  while !i < vm.tlen do
-    let pc = vm.trace.(!i) in
-    let pcr = t.(Felt.rseg pc) + Felt.roff pc in
-    Bytes.set_int64_le buf !pos (Int64.of_int (base1 + vm.trace.(!i + 1)));
-    Bytes.set_int64_le buf (!pos + 8) (Int64.of_int (base1 + vm.trace.(!i + 2)));
-    Bytes.set_int64_le buf (!pos + 16) (Int64.of_int pcr);
-    pos := !pos + 24;
-    if !pos = chunk then begin
-      output oc buf 0 !pos;
-      pos := 0
-    end;
-    i := !i + 3
-  done;
-  output oc buf 0 !pos;
-  close_out oc
+  c_write_trace path vm.trace vm.tlen (relocation_table vm)
 
 let write_memory r path =
   let vm = r.vm in
-  let t = relocation_table vm in
-  let oc = open_out_bin path in
-  let chunk = 40 * 65536 in
-  let buf = Bytes.make chunk '\000' in
-  let pos = ref 0 in
-  for s = 0 to vm.nsegs - 1 do
-    let a = vm.segs.(s) in
-    let n = used_size vm s in
-    let base = t.(s) in
-    for off = 0 to n - 1 do
-      let v = Array.unsafe_get a off in
-      if v <> 0 then begin
-        let p = !pos in
-        Bytes.set_int64_le buf p (Int64.of_int (base + off));
-        if Felt.is_reloc v then begin
-          let sg = Felt.rseg v in
-          if sg < 0 || sg >= vm.nsegs then fail "Cannot relocate value in segment %d" sg;
-          Bytes.set_int64_le buf (p + 8) (Int64.of_int (t.(sg) + Felt.roff v));
-          Bytes.fill buf (p + 16) 24 '\000'
-        end
-        else if Felt.is_small v && Felt.small_val v >= 0 then begin
-          Bytes.set_int64_le buf (p + 8) (Int64.of_int (Felt.small_val v));
-          Bytes.fill buf (p + 16) 24 '\000'
-        end
-        else Felt.c_put_code !Felt.pool v buf (p + 8);
-        pos := p + 40;
-        if !pos = chunk then begin
-          output oc buf 0 !pos;
-          pos := 0
-        end
-      end
-    done
-  done;
-  output oc buf 0 !pos;
-  close_out oc
+  let sizes = Array.init vm.nsegs (used_size vm) in
+  c_write_memory path vm.segs sizes (relocation_table vm) vm.nsegs !Felt.pool
 
 let output_lines r =
   let vm = r.vm in

@@ -6,4 +6,4 @@
  (foreign_stubs
   (language c)
   (names felt_stubs)
-  (flags (:standard -O3 -mcpu=native))))
+  (flags (:standard -O3 -mcpu=native -I/opt/homebrew/include -I/usr/local/include))))

@@ -625,11 +625,21 @@ let () =
       check (es > 0) "assert ids.elm_size > 0";
       let sp = get_ptr vm c "set_ptr" and se = get_ptr vm c "set_end_ptr" in
       check (Felt.rseg sp = Felt.rseg se && Felt.roff sp <= Felt.roff se) "assert ids.set_ptr <= ids.set_end_ptr";
-      let elm = read_range vm (get_ptr vm c "elm_ptr") es in
+      let ep = get_ptr vm c "elm_ptr" in
+      let elm = Array.of_list (read_range vm ep es) in
       let total = Felt.roff se - Felt.roff sp in
+      let sseg = Felt.rseg sp and soff = Felt.roff sp in
+      let a = vm.segs.(sseg) in
+      let cell k =
+        let o = soff + k in
+        let v = if o < slen a then sget a o else 0 in
+        if v = 0 then fail "Unknown memory cell %d:%d" sseg o;
+        v
+      in
+      let rec matches i j = j >= es || (Felt.equal (cell (i + j)) elm.(j) && matches i (j + 1)) in
       let rec go i =
         if i >= total then set_val vm c "is_elm_in_set" Felt.zero
-        else if List.for_all2 Felt.equal (read_range vm (value_add sp (Felt.small i)) es) elm then begin
+        else if matches i 0 then begin
           set_val vm c "index" (Felt.small (i / es));
           set_val vm c "is_elm_in_set" Felt.one
         end

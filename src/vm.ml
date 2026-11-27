@@ -75,6 +75,18 @@ type builtin = {
   mutable cache : int array; (* deduced output codes by offset, 0 = none *)
 }
 
+
+(* Memory segments and the trace live outside the OCaml heap: every cell is an
+   immediate, so there is nothing for the GC to scan or barrier. *)
+module BA = Bigarray.Array1
+type seg = (int, Bigarray.int_elt, Bigarray.c_layout) BA.t
+external seg_make : int -> seg = "cvm_zalloc"
+let empty_seg : seg = seg_make 0
+let[@inline] slen (a : seg) = BA.dim a
+let[@inline] sget (a : seg) i = BA.unsafe_get a i
+let[@inline] sset (a : seg) i v = BA.unsafe_set a i v
+let seg_grow (a : seg) n = let na = seg_make n in BA.blit a (BA.sub na 0 (BA.dim a)); na
+
 (* segment flags *)
 let k_plain = 0
 let k_rc = 1
@@ -83,9 +95,10 @@ let k_deduce = 3 (* pedersen, bitwise, ec_op, keccak, poseidon *)
 let k_ecdsa = 4
 
 type vm = {
-  mutable segs : int array array;
+  mutable segs : seg array;
   mutable nsegs : int;
   mutable seg_flag : int array;
+  mutable hi : int array; (* used size: max written offset + 1 *)
   mutable seg_builtin : builtin option array;
   mutable pc_seg : int;
   mutable pc : int;
@@ -96,16 +109,17 @@ type vm = {
   mutable icache : int array;
   (* trace *)
   trace_on : bool;
-  mutable trace : int array; (* pc_off, ap, fp triples; pc segment assumed 0, else tagged *)
+  mutable trace : seg; (* pc_off, ap, fp triples; pc segment assumed 0, else tagged *)
   mutable tlen : int;
   mutable builtins : builtin list;
 }
 
 let create ~trace =
   {
-    segs = Array.make 16 [||];
+    segs = Array.make 16 empty_seg;
     nsegs = 0;
     seg_flag = Array.make 16 0;
+    hi = Array.make 16 0;
     seg_builtin = Array.make 16 None;
     pc_seg = 0;
     pc = 0;
@@ -114,7 +128,7 @@ let create ~trace =
     steps = 0;
     icache = [||];
     trace_on = trace;
-    trace = (if trace then Array.make (3 * 65536) 0 else [||]);
+    trace = (if trace then seg_make (3 lsl 26) else empty_seg);
     tlen = 0;
     builtins = [];
   }
@@ -123,11 +137,12 @@ let add_segment vm =
   let n = vm.nsegs in
   if n >= Array.length vm.segs then begin
     let grow a d = Array.append a (Array.make (Array.length a) d) in
-    vm.segs <- grow vm.segs [||];
+    vm.segs <- grow vm.segs empty_seg;
     vm.seg_flag <- grow vm.seg_flag 0;
+    vm.hi <- grow vm.hi 0;
     vm.seg_builtin <- grow vm.seg_builtin None
   end;
-  vm.segs.(n) <- Array.make (if n = 1 then 1 lsl 16 else 16) 0;
+  vm.segs.(n) <- seg_make (if n = 1 then 1 lsl 27 else 16);
   vm.nsegs <- n + 1;
   n
 
@@ -137,7 +152,7 @@ let[@inline] seg_ok vm seg = seg >= 0 && seg < vm.nsegs
 
 let[@inline] read vm seg off =
   let a = Array.unsafe_get vm.segs seg in
-  if off < Array.length a then Array.unsafe_get a off else 0
+  if off < slen a then sget a off else 0
 
 let get vm seg off =
   if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
@@ -145,13 +160,11 @@ let get vm seg off =
 
 let[@inline never] grow_seg vm seg off =
   let a = vm.segs.(seg) in
-  let n = ref (max 16 (Array.length a)) in
+  let n = ref (max 16 (slen a)) in
   while !n <= off do
     n := 2 * !n
   done;
-  let na = Array.make !n 0 in
-  Array.blit a 0 na 0 (Array.length a);
-  vm.segs.(seg) <- na
+  vm.segs.(seg) <- seg_grow a !n
 
 let value_to_string v =
   if v = 0 then "<empty>"
@@ -171,11 +184,12 @@ let[@inline never] validate vm seg off v =
 let[@inline] write vm seg off v =
   if off < 0 then fail "Negative memory offset %d:%d" seg off;
   let a = Array.unsafe_get vm.segs seg in
-  if off >= Array.length a then grow_seg vm seg off;
+  if off >= slen a then grow_seg vm seg off;
   let a = Array.unsafe_get vm.segs seg in
-  let cur = Array.unsafe_get a off in
+  let cur = sget a off in
   if cur = 0 then begin
-    Array.unsafe_set a off v;
+    sset a off v;
+    if off >= Array.unsafe_get vm.hi seg then Array.unsafe_set vm.hi seg (off + 1);
     if Array.unsafe_get vm.seg_flag seg <> 0 then validate vm seg off v
   end
   else if not (Felt.equal cur v) then
@@ -187,13 +201,7 @@ let write_checked vm seg off v =
   write vm seg off v
 
 (* last assigned offset + 1 *)
-let used_size vm seg =
-  let a = vm.segs.(seg) in
-  let n = ref (Array.length a) in
-  while !n > 0 && a.(!n - 1) = 0 do
-    decr n
-  done;
-  !n
+let used_size vm seg = vm.hi.(seg)
 
 (* ---------------- value arithmetic (MaybeRelocatable) ---------------- *)
 
@@ -432,9 +440,7 @@ let[@inline never] fetch_slow vm =
 (* ---------------- step ---------------- *)
 
 let[@inline never] trace_grow vm =
-  let na = Array.make (2 * Array.length vm.trace) 0 in
-  Array.blit vm.trace 0 na 0 vm.tlen;
-  vm.trace <- na
+  vm.trace <- seg_grow vm.trace (2 * slen vm.trace)
 
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off
 
@@ -443,11 +449,11 @@ let[@inline never] slow_operand_read vm seg off = if seg_ok vm seg then read vm 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
   if vm.trace_on then begin
-    if vm.tlen + 3 > Array.length vm.trace then trace_grow vm;
+    if vm.tlen + 3 > slen vm.trace then trace_grow vm;
     let t = vm.trace and i = vm.tlen in
-    Array.unsafe_set t i (reloc pc_seg pc);
-    Array.unsafe_set t (i + 1) ap;
-    Array.unsafe_set t (i + 2) fp;
+    sset t i (reloc pc_seg pc);
+    sset t (i + 1) ap;
+    sset t (i + 2) fp;
     vm.tlen <- i + 3
   end;
   let off0 = (d land 0xffff) - 0x8000 in
@@ -457,9 +463,9 @@ let rec step_instr vm d =
   let op0_addr = (if d land (1 lsl 49) <> 0 then fp else ap) + off1 in
   if dst_addr < 0 || op0_addr < 0 then fail "Negative operand address";
   let exec = Array.unsafe_get vm.segs 1 in
-  let elen = Array.length exec in
-  let dst = if dst_addr < elen then Array.unsafe_get exec dst_addr else 0 in
-  let op0 = if op0_addr < elen then Array.unsafe_get exec op0_addr else 0 in
+  let elen = slen exec in
+  let dst = if dst_addr < elen then sget exec dst_addr else 0 in
+  let op0 = if op0_addr < elen then sget exec op0_addr else 0 in
   (* op1 address *)
   let op1_src = (d lsr 50) land 3 in
   let op1_seg, op1_off =
@@ -473,7 +479,7 @@ let rec step_instr vm d =
     | _ -> (1, ap + off2)
   in
   if op1_off < 0 then fail "Negative op1 address";
-  let op1 = if op1_seg = 1 then (if op1_off < elen then Array.unsafe_get exec op1_off else 0) else slow_operand_read vm op1_seg op1_off in
+  let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else 0) else slow_operand_read vm op1_seg op1_off in
   let size = if op1_src = 1 then 2 else 1 in
   let res_kind = (d lsr 52) land 3 in
   let opcode = (d lsr 58) land 3 in
@@ -647,3 +653,182 @@ let[@inline] step vm =
     else fetch_slow vm
   in
   step_instr vm d
+
+(* ---------------- fast interpreter loop ----------------
+
+   Registers live in locals.  Each iteration either executes the instruction
+   entirely on the fast path, or (before any mutation) falls back to the
+   generic [step] above, which implements the full deduction semantics.
+   Program counters carrying hints are flagged in the decoded cache, so the
+   fast path pays one load per step for hint detection. *)
+
+let hint_bit = 1 lsl 61
+
+let run_fast vm (hints : (vm -> unit) array array) end_seg =
+  let nh = Array.length hints in
+  let pc = ref vm.pc and ap = ref vm.ap and fp = ref vm.fp and pc_seg = ref vm.pc_seg in
+  let steps = ref vm.steps in
+  let hi1 = ref vm.hi.(1) in
+  while not (!pc_seg = end_seg && !pc = 0) do
+    let ic = vm.icache in
+    let d = if !pc_seg = 0 && !pc < Array.length ic then Array.unsafe_get ic !pc else 0 in
+    let fast = ref false in
+    if d <> 0 && d land hint_bit = 0 then begin
+      let pcv = !pc and apv = !ap and fpv = !fp in
+      let off0 = (d land 0xffff) - 0x8000 in
+      let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
+      let off2 = ((d lsr 32) land 0xffff) - 0x8000 in
+      let dst_addr = (if d land (1 lsl 48) <> 0 then fpv else apv) + off0 in
+      let op0_addr = (if d land (1 lsl 49) <> 0 then fpv else apv) + off1 in
+      let mem = Array.unsafe_get vm.segs 1 in
+      let len = slen mem in
+      if dst_addr >= 0 && op0_addr >= 0 && dst_addr < len - 2 then begin
+        let op0 = if op0_addr < len then sget mem op0_addr else 0 in
+        let src = (d lsr 50) land 3 in
+        let op1 =
+          match src with
+          | 1 ->
+              let prog = Array.unsafe_get vm.segs 0 in
+              let a = pcv + 1 in
+              if a < slen prog then sget prog a else 0
+          | 2 -> let a = fpv + off2 in if a >= 0 && a < len then sget mem a else 0
+          | 3 -> let a = apv + off2 in if a >= 0 && a < len then sget mem a else 0
+          | _ ->
+              if op0 land 3 = 2 && rseg op0 = 1 then
+                let a = roff op0 + off2 in
+                if a >= 0 && a < len then sget mem a else 0
+              else 0
+        in
+        let size = if src = 1 then 2 else 1 in
+        let opcode = (d lsr 58) land 3 in
+        let dst = sget mem dst_addr in
+        if op1 <> 0 then begin
+          (* ---- result ---- *)
+          let res_kind = (d lsr 52) land 3 in
+          let res =
+            match res_kind with
+            | 0 -> op1
+            | 1 ->
+                if op0 = 0 then 0
+                else if both_small op0 op1 then begin
+                  let s = (op0 asr 2) + (op1 asr 2) in
+                  if fits_small s then small s else Felt.add op0 op1
+                end
+                else if is_reloc op0 && is_small op1 then begin
+                  let o = roff op0 + small_val op1 in
+                  if o >= 0 && o <= max_off then reloc (rseg op0) o else 0
+                end
+                else if is_felt op0 && is_felt op1 then Felt.add op0 op1
+                else 0
+            | 2 -> if op0 <> 0 && is_felt op0 && is_felt op1 then Felt.mul op0 op1 else 0
+            | _ -> -1 (* unconstrained *)
+          in
+          let ok =
+            match opcode with
+            | 3 ->
+                if res = 0 || res = -1 || op0 = 0 then false
+                else if dst = 0 then begin
+                  sset mem dst_addr res;
+                  if dst_addr >= !hi1 then hi1 := dst_addr + 1;
+                  true
+                end
+                else Felt.equal dst res
+            | 1 ->
+                (* call: [ap] = fp, [ap+1] = return pc *)
+                let ret = reloc 0 (pcv + size) and fpr = reloc 1 fpv in
+                if !pc_seg <> 0 || res = 0 then false
+                else begin
+                  let o0 = op0 in
+                  if (dst = 0 || dst = fpr) && (o0 = 0 || o0 = ret) then begin
+                    if dst = 0 then sset mem dst_addr fpr;
+                    if o0 = 0 then sset mem op0_addr ret;
+                    if op0_addr >= !hi1 then hi1 := op0_addr + 1;
+                    true
+                  end
+                  else false
+                end
+            | _ -> dst <> 0 && op0 <> 0 (* NOP/RET: cairo-vm requires dst and op0 *)
+          in
+          if ok then begin
+            (* ---- register updates ---- *)
+            let dstv = if opcode = 3 && dst = 0 then res else if opcode = 1 && dst = 0 then reloc 1 fpv else dst in
+            let new_fp =
+              match opcode with
+              | 1 -> apv + 2
+              | 2 -> if is_reloc dstv then roff dstv else if is_small dstv && small_val dstv >= 0 then small_val dstv else -1
+              | _ -> fpv
+            in
+            let new_ap =
+              match (d lsr 56) land 3 with
+              | 0 -> apv
+              | 1 -> if is_small res then apv + small_val res else -1
+              | 2 -> apv + 1
+              | _ -> apv + 2
+            in
+            let pcu = (d lsr 54) land 3 in
+            let new_pc, new_seg =
+              match pcu with
+              | 0 -> (pcv + size, !pc_seg)
+              | 1 -> if res > 0 && is_reloc res then (roff res, rseg res) else (-1, 0)
+              | 2 -> if is_small res then (pcv + small_val res, !pc_seg) else (-1, 0)
+              | _ ->
+                  if dstv = zero then (pcv + size, !pc_seg)
+                  else if is_small op1 then (pcv + small_val op1, !pc_seg)
+                  else (-1, 0)
+            in
+            if new_fp >= 0 && new_ap >= 0 && new_pc >= 0 then begin
+              if vm.trace_on then begin
+                if vm.tlen + 3 > slen vm.trace then trace_grow vm;
+                let t = vm.trace and i = vm.tlen in
+                sset t i (reloc !pc_seg pcv);
+                sset t (i + 1) apv;
+                sset t (i + 2) fpv;
+                vm.tlen <- i + 3
+              end;
+              pc := new_pc;
+              pc_seg := new_seg;
+              ap := new_ap;
+              fp := new_fp;
+              incr steps;
+              fast := true
+            end
+            else if opcode = 3 && dst = 0 then
+              (* we already wrote dst; generic step will see it assigned and recompute identically *)
+              ()
+          end
+        end
+      end
+    end;
+    if not !fast then begin
+      vm.pc <- !pc;
+      vm.ap <- !ap;
+      vm.fp <- !fp;
+      vm.pc_seg <- !pc_seg;
+      vm.steps <- !steps;
+      if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
+      if !pc_seg = 0 && !pc < nh then begin
+        let hs = Array.unsafe_get hints !pc in
+        for i = 0 to Array.length hs - 1 do
+          (Array.unsafe_get hs i) vm
+        done
+      end;
+      step vm;
+      (* flag hint pcs in the decoded cache *)
+      if !pc_seg = 0 && !pc < nh && Array.length (Array.unsafe_get hints !pc) <> 0 then begin
+        let p0 = !pc in
+        if p0 < Array.length vm.icache && vm.icache.(p0) <> 0 then vm.icache.(p0) <- vm.icache.(p0) lor hint_bit
+      end;
+      pc := vm.pc;
+      ap := vm.ap;
+      fp := vm.fp;
+      pc_seg := vm.pc_seg;
+      steps := vm.steps;
+      hi1 := vm.hi.(1)
+    end
+  done;
+  if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
+  vm.pc <- !pc;
+  vm.ap <- !ap;
+  vm.fp <- !fp;
+  vm.pc_seg <- !pc_seg;
+  vm.steps <- !steps

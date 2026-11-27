@@ -96,8 +96,8 @@ static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
 }
 
-static inline void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
-static inline void from_mont(u64 r[4], const u64 a[4]) {
+static void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
+static void from_mont(u64 r[4], const u64 a[4]) {
   static const u64 one[4] = {1, 0, 0, 0};
   mont_mul(r, a, one);
 }
@@ -109,27 +109,35 @@ static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
   mont_mul(r, t, R2);
 }
 
-/* Montgomery-domain inverse via Fermat: a^(p-2). Input/output in Montgomery form. */
-static void mont_inv(u64 r[4], const u64 a[4]) {
-  /* p - 2 = 0x0800000000000010ffff...ffff (low 192 bits all ones, p3-1 = ...10) */
-  static const u64 E[4] = {0xffffffffffffffffULL, 0xffffffffffffffffULL, 0xffffffffffffffffULL,
-                           0x0800000000000010ULL};
-  u64 acc[4];
-  memcpy(acc, ONE_M, 32);
-  for (int i = 3; i >= 0; i--)
-    for (int j = 63; j >= 0; j--) {
-      mont_mul(acc, acc, acc);
-      if ((E[i] >> j) & 1) mont_mul(acc, acc, a);
-    }
-  memcpy(r, acc, 32);
+/* Inverse of a canonical value via GMP's mpz_invert (Lehmer/HGCD; ~5x faster
+   than Fermat at 256 bits).  Variable time is fine: nothing here is secret. */
+#include <gmp.h>
+static void canon_inv(u64 r[4], const u64 a[4]) {
+  static mpz_t P_z, R_z;
+  static int init = 0;
+  if (!init) {
+    mpz_init(P_z); mpz_import(P_z, 4, -1, 8, 0, 0, P);
+    mpz_init2(R_z, 320);
+    init = 1;
+  }
+  mpz_t A;
+  mpz_roinit_n(A, (const mp_limb_t *)a, 4);
+  if (!mpz_invert(R_z, A, P_z)) { r[0] = r[1] = r[2] = r[3] = 0; return; }
+  size_t n = mpz_size(R_z);
+  for (int i = 0; i < 4; i++) r[i] = (size_t)i < n ? mpz_getlimbn(R_z, i) : 0;
 }
 
-static void finv(u64 r[4], const u64 a[4]) {
-  u64 m[4];
-  to_mont(m, a);
-  mont_inv(m, m);
-  from_mont(r, m);
+/* Montgomery-domain inverse: (aR)^-1 R = from(aR)^-1 * R^2 * R^-1 ... computed as to_mont(inv(from_mont(x))). */
+static void to_mont(u64 r[4], const u64 a[4]);
+static void from_mont(u64 r[4], const u64 a[4]);
+static void mont_inv(u64 r[4], const u64 a[4]) {
+  u64 c[4], i[4];
+  from_mont(c, a);
+  canon_inv(i, c);
+  to_mont(r, i);
 }
+
+static void finv(u64 r[4], const u64 a[4]) { canon_inv(r, a); }
 
 static int initialized = 0;
 static void init_consts(void) {
@@ -643,4 +651,85 @@ void cvm_put_code(value pool, intnat code, value buf, intnat pos) {
 value cvm_put_code_byte(value pool, value c, value b, value p) {
   cvm_put_code(pool, Long_val(c), b, Long_val(p));
   return Val_unit;
+}
+
+/* Zero-initialized int Bigarray backed by calloc: large requests are served by
+   lazily-zeroed pages, so untouched capacity costs no time or RSS. */
+#include <caml/bigarray.h>
+#include <caml/alloc.h>
+#include <caml/memory.h>
+#include <caml/fail.h>
+value cvm_zalloc(value vn) {
+  intnat n = Long_val(vn);
+  if (n < 1) n = 1;
+  void *p = calloc((size_t)n, sizeof(intnat));
+  if (!p) caml_raise_out_of_memory();
+  return caml_ba_alloc_dims(CAML_BA_CAML_INT | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1, p, n);
+}
+
+/* ---------- binary trace / memory writers (cairo-vm format) ---------- */
+#include <stdio.h>
+#define OFF_MASK ((1LL << 40) - 1)
+static inline intnat rel_seg(intnat c) { return c >> 42; }
+static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
+
+/* trace: bigarray of (pc code, ap, fp) triples; table: OCaml int array of segment bases */
+value cvm_write_trace(value path, value trace, value vlen, value table) {
+  FILE *f = fopen(String_val(path), "wb");
+  if (!f) caml_failwith("cannot open trace file");
+  static char buf[1 << 22];
+  setvbuf(f, NULL, _IONBF, 0);
+  intnat *t = (intnat *)Caml_ba_data_val(trace);
+  intnat n = Long_val(vlen);
+  intnat base1 = Long_val(Field(table, 1));
+  size_t pos = 0;
+  for (intnat i = 0; i < n; i += 3) {
+    intnat pc = t[i];
+    u64 e[3];
+    e[0] = (u64)(base1 + t[i + 1]);
+    e[1] = (u64)(base1 + t[i + 2]);
+    e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    memcpy(buf + pos, e, 24);
+    pos += 24;
+    if (pos + 24 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }
+  }
+  fwrite(buf, 1, pos, f);
+  fclose(f);
+  return Val_unit;
+}
+
+/* memory: segs is an OCaml array of segment bigarrays, sizes an int array */
+value cvm_write_memory(value path, value segs, value sizes, value table, value vnsegs, value pool) {
+  FILE *f = fopen(String_val(path), "wb");
+  if (!f) caml_failwith("cannot open memory file");
+  setvbuf(f, NULL, _IONBF, 0);
+  static char buf[40 * 100000];
+  size_t pos = 0;
+  intnat nsegs = Long_val(vnsegs);
+  for (intnat s = 0; s < nsegs; s++) {
+    intnat *a = (intnat *)Caml_ba_data_val(Field(segs, s));
+    intnat n = Long_val(Field(sizes, s));
+    u64 base = (u64)Long_val(Field(table, s));
+    for (intnat off = 0; off < n; off++) {
+      intnat v = a[off];
+      if (v == 0) continue;
+      u64 w[5] = {base + (u64)off, 0, 0, 0, 0};
+      if ((v & 3) == 2) {
+        intnat sg = rel_seg(v);
+        if (sg < 0 || sg >= nsegs) { fclose(f); caml_failwith("cannot relocate value"); }
+        w[1] = (u64)Long_val(Field(table, sg)) + (u64)rel_off(v);
+      } else {
+        load(pool, v, &w[1]);
+      }
+      memcpy(buf + pos, w, 40);
+      pos += 40;
+      if (pos + 40 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }
+    }
+  }
+  fwrite(buf, 1, pos, f);
+  fclose(f);
+  return Val_unit;
+}
+value cvm_write_memory_byte(value *argv, int argc) {
+  return cvm_write_memory(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
