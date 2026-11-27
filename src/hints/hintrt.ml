@@ -184,8 +184,10 @@ let rec compile_expr ctx (r : P.reference) expr =
       (fun vm -> read_reference vm (addr vm))
   | P.Add (e, P.Int n) | P.Add (e, P.Neg (P.Int n)) ->
       let n = match expr with P.Add (_, P.Neg _) -> Z.neg n | _ -> n in
-      let base = compile_expr ctx r e and offset = Felt.of_z n in
-      (fun vm -> value_add (base vm) offset)
+      let offset = Felt.of_z n in
+      (match e with
+       | P.Reg_fp -> fun vm -> reloc_add_felt (Felt.reloc 1 vm.fp) offset
+       | _ -> let base = compile_expr ctx r e in fun vm -> value_add (base vm) offset)
   | _ -> (fun vm -> eval vm ctx r expr)
 
 let binding ctx name =
@@ -203,36 +205,6 @@ let binding ctx name =
       in
       ctx.bindings <- (name, plan) :: ctx.bindings;
       plan
-
-(* The compiler can resolve a simple FP address in one operation. Keep the
-   ordinary expression path for out-of-range offsets and uncommon shapes. *)
-let bound_address ctx name =
-  let plan = lazy (
-    match (find_ref ctx name).r_expr with
-    | P.Deref (P.Cast (P.Reg_fp, _)) -> (fun vm -> Felt.reloc 1 vm.fp)
-    | P.Deref (P.Cast (P.Add (P.Reg_fp, (P.Int n | P.Neg (P.Int n) as term)), _))
-      when Z.fits_int n && Z.lt (Z.abs n) (Z.of_int 65536) ->
-        let delta = Z.to_int n * (match term with P.Neg _ -> -1 | _ -> 1) in
-        (fun vm -> let off = vm.fp + delta in
-          if off < 0 || off > Felt.off_mask then (binding ctx name).address vm
-          else Felt.reloc 1 off)
-    | _ -> (binding ctx name).address)
-  in fun vm -> (Lazy.force plan) vm
-
-let bound_felt ctx name =
-  let plan = lazy (match (find_ref ctx name).r_expr with
-    | P.Deref _ -> let addr = bound_address ctx name in (fun vm -> read_reference vm (addr vm))
-    | _ -> (binding ctx name).value) in
-  fun vm -> let v = (Lazy.force plan) vm in
-    if not (Felt.is_felt v) then fail "ids.%s: expected an integer" name;
-    v
-
-let bound_set ctx name =
-  let addr = bound_address ctx name in
-  fun vm v ->
-    let a = addr vm in
-    if not (Felt.is_reloc a) then fail "ids.%s has no address" name;
-    write_checked vm (Felt.rseg a) (Felt.roff a) v
 
 let get_val vm ctx name = (binding ctx name).value vm
 

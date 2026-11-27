@@ -209,9 +209,8 @@ let () =
   (* memory[ap] = segments.add() *)
   reg H.add_segment (fun _ vm -> write_ap vm (Felt.reloc (add_segment vm) 0));
   (* assert_nn *)
-  reg H.assert_nn (fun c ->
-      let read = bound_felt c "a" in fun vm ->
-      let a = read vm in
+  reg H.assert_nn (fun c vm ->
+      let a = get_felt vm c "a" in
       if not (Felt.is_small a && a > Felt.empty) && Felt.bits a > 128 then
         fail "a = %s is out of range." (Z.to_string (Felt.to_z a)));
   (* assert_le_felt *)
@@ -251,13 +250,11 @@ let () =
   reg H.assert_lt_felt (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
       if Z.geq a b then fail "a = %s is not less than b = %s." (Z.to_string a) (Z.to_string b));
-  reg H.is_nn (fun c ->
-      let read = bound_felt c "a" in fun vm ->
-      let a = read vm in
+  reg H.is_nn (fun c vm ->
+      let a = get_felt vm c "a" in
       write_ap vm (of_bool (if Felt.is_small a then a < Felt.empty else Felt.bits a > 128)));
-  reg H.is_nn_out_of_range (fun c ->
-      let read = bound_felt c "a" in fun vm ->
-      write_ap vm (of_bool (Felt.bits (Felt.sub (Felt.neg (read vm)) Felt.one) > 128)));
+  reg H.is_nn_out_of_range (fun c vm ->
+      write_ap vm (of_bool (Felt.bits (Felt.sub (Felt.neg (get_felt vm c "a")) Felt.one) > 128)));
   reg H.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "n")) ]);
   reg H.memset_continue_loop (fun c vm ->
       let n = Z.pred (var_z c.scopes "n") in
@@ -840,12 +837,10 @@ let () =
           set_val vm c "index" (Felt.small found);
           set_val vm c "is_elm_in_set" Felt.one
         end);
-  reg H.split_64 (fun c ->
-      let read = bound_felt c "a" and lo = bound_set c "low" and hi = bound_set c "high" in
-      fun vm ->
-        let low, high = Felt.split_at_limb ~two_limbs:false (read vm) in
-        lo vm low;
-        hi vm high);
+  reg H.split_64 (fun c vm ->
+      let low, high = Felt.split_at_limb ~two_limbs:false (get_felt vm c "a") in
+      set_val vm c "low" low;
+      set_val vm c "high" high);
   reg H.uint256_sqrt (fun c vm ->
       let n = Z.add (Z.shift_left (get_member_z vm c "n" [ "high" ]) 128) (get_member_z vm c "n" [ "low" ]) in
       let root = isqrt n in
