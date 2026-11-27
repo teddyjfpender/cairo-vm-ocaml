@@ -415,86 +415,32 @@ static void jac_to_aff(aff *r, const jac *p) {
   mont_mul(r->y, p->y, zi3);
 }
 
-/* Pedersen: H(a,b) = [shift + a_low*P0 + a_high*P1 + b_low*P2 + b_high*P3].x
-   a_low = low 248 bits, a_high = top 4 bits. Tables use 4-bit windows. */
-#define PW 62 /* windows for 248 bits */
-static aff *ped_tab = 0; /* [4][PW][16] (index 0 unused) */
-static aff ped_shift;
+/* Fixed-base tables store nonzero multiples in Montgomery affine form. */
+#include "pedersen_table.h"
 
-static void batch_to_aff(aff *out, jac *in, int n) {
-  /* Montgomery's trick */
-  static u64 (*acc)[4] = 0;
-  static int cap = 0;
-  if (cap < n) { acc = realloc(acc, sizeof(u64[4]) * n); cap = n; }
-  u64 run[4];
-  memcpy(run, ONE_M, 32);
-  for (int k = 0; k < n; k++) { memcpy(acc[k], run, 32); mont_mul(run, run, in[k].z); }
-  u64 inv[4];
-  mont_inv(inv, run);
-  for (int k = n - 1; k >= 0; k--) {
-    u64 zi[4], zi2[4], zi3[4];
-    mont_mul(zi, inv, acc[k]);
-    mont_mul(inv, inv, in[k].z);
-    mont_sqr(zi2, zi); mont_mul(zi3, zi2, zi);
-    mont_mul(out[k].x, in[k].x, zi2);
-    mont_mul(out[k].y, in[k].y, zi3);
-  }
-}
-
-
-static void ped_init(void) {
-  if (ped_tab) return;
-  init_consts();
-  const u64 *xs[4] = {PEDERSEN_P0_X, PEDERSEN_P1_X, PEDERSEN_P2_X, PEDERSEN_P3_X};
-  const u64 *ys[4] = {PEDERSEN_P0_Y, PEDERSEN_P1_Y, PEDERSEN_P2_Y, PEDERSEN_P3_Y};
-  to_mont(ped_shift.x, SHIFT_POINT_X);
-  to_mont(ped_shift.y, SHIFT_POINT_Y);
-  int n = 4 * PW * 16;
-  aff *tab = calloc(n, sizeof(aff));
-  jac *tmp = calloc(n, sizeof(jac));
-  for (int pt = 0; pt < 4; pt++) {
-    jac base;
-    to_mont(base.x, xs[pt]); to_mont(base.y, ys[pt]); memcpy(base.z, ONE_M, 32);
-    for (int w = 0; w < PW; w++) {
-      jac *row = &tmp[(pt * PW + w) * 16];
-      /* row[j] = j * base, base = 16^w * P */
-      memset(&row[0], 0, sizeof(jac));
-      row[1] = base;
-      aff ba; jac_to_aff(&ba, &base);
-      for (int j = 2; j < 16; j++) jac_add_aff(&row[j], &row[j - 1], &ba);
-      for (int d = 0; d < 4; d++) jac_double(&base, &base);
+static void ped_accum(jac *acc, const aff low[31][255], const aff high[15], const u64 s[4]) {
+  for (int limb = 0; limb < 4; limb++) {
+    u64 bits = s[limb];
+    if (limb == 3) bits &= 0x00ffffffffffffffULL;
+    for (int w = 8 * limb; bits; w++, bits >>= 8) {
+      unsigned digit = bits & 255;
+      if (digit) jac_add_aff(acc, acc, &low[w][digit - 1]);
     }
   }
-  /* convert all except index-0 entries (z = 0) */
-  for (int k = 0; k < n; k++)
-    if (is_zero(tmp[k].z)) memcpy(tmp[k].z, ONE_M, 32);
-  batch_to_aff(tab, tmp, n);
-  free(tmp);
-  ped_tab = tab;
-}
-
-static inline void ped_accum(jac *acc, int pt, const u64 s[4], int nwin) {
-  for (int w = 0; w < nwin; w++) {
-    int d = (s[w >> 4] >> ((w & 15) * 4)) & 15;
-    if (d) jac_add_aff(acc, acc, &ped_tab[(pt * PW + w) * 16 + d]);
-  }
+  unsigned top = s[3] >> 56;
+  if (top) jac_add_aff(acc, acc, &high[top - 1]);
 }
 
 static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  ped_init();
   jac acc;
   memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
-  u64 alow[4] = {a[0], a[1], a[2], a[3] & 0x00ffffffffffffffULL};
-  u64 ahigh[4] = {a[3] >> 56, 0, 0, 0};
-  u64 blow[4] = {b[0], b[1], b[2], b[3] & 0x00ffffffffffffffULL};
-  u64 bhigh[4] = {b[3] >> 56, 0, 0, 0};
-  ped_accum(&acc, 0, alow, PW);
-  ped_accum(&acc, 1, ahigh, 1);
-  ped_accum(&acc, 2, blow, PW);
-  ped_accum(&acc, 3, bhigh, 1);
-  aff r;
-  jac_to_aff(&r, &acc);
-  from_mont(out, r.x);
+  ped_accum(&acc, ped_a, ped_a_high[0], a);
+  ped_accum(&acc, ped_b, ped_b_high[0], b);
+  u64 zi[4], x[4];
+  mont_inv(zi, acc.z);
+  mont_sqr(zi, zi);
+  mont_mul(x, acc.x, zi);
+  from_mont(out, x);
 }
 
 intnat cvm_pedersen(value pool, intnat a, intnat b, intnat dst) {
