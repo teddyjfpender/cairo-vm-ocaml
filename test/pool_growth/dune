@@ -1,0 +1,3 @@
+(test
+ (name pool_growth)
+ (libraries cairovm))

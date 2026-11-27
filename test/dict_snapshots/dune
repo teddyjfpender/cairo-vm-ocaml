@@ -1,0 +1,3 @@
+(test
+ (name dict_snapshots)
+ (libraries cairovm))

@@ -46,6 +46,10 @@ external c_cmp : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged
   = "cvm_cmp_byte" "cvm_cmp"
 [@@noalloc]
 
+external c_split_part : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  -> (int[@untagged]) -> (int[@untagged]) = "cvm_split_part_byte" "cvm_split_part"
+[@@noalloc]
+
 external c_bits : bytes -> (int[@untagged]) -> (int[@untagged]) = "cvm_bits_byte" "cvm_bits"
 [@@noalloc]
 
@@ -83,7 +87,8 @@ let pool_n = ref scratch
 
 let[@inline never] grow_pool () =
   let b = !pool in
-  let nb = Bytes.make (2 * Bytes.length b) '\000' in
+  (* Every new felt slot is fully initialized before it can be read. *)
+  let nb = Bytes.create (2 * Bytes.length b) in
   Bytes.blit b 0 nb 0 (Bytes.length b);
   pool := nb
 
@@ -121,6 +126,11 @@ let of_int v =
 (* Field equality for felt codes; relocatables compare structurally. *)
 let[@inline] equal a b =
   a = b || (a land 3 = 3 && b land 3 = 3 && c_big_eq !pool a b = 1)
+
+external c_big_hash : bytes -> (int[@untagged]) -> (int[@untagged])
+  = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
+
+let hash v = if is_big v then c_big_hash !pool v else Hashtbl.hash v
 
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 
@@ -170,39 +180,51 @@ let div a b =
 
 let neg a = sub zero a
 
-(* ---- conversion with Zarith ---- *)
+(* The only supported boundaries are one or two limbs. *)
+let split_at_limb ~two_limbs c =
+  if is_small c && small_val c >= 0 then c, zero
+  else begin
+    let use_two = Bool.to_int two_limbs in
+    reserve 2;
+    let part high =
+      let result = c_split_part !pool c use_two high !pool_n in
+      commit result;
+      result
+    in
+    let low = part 0 in
+    low, part 1
+  end
 
-let limb_z (b : bytes) off =
-  let lo = Bytes.get_int64_le b off in
-  Z.extract (Z.of_int64 lo) 0 64
+(* ---- conversion with Zarith ---- *)
 
 let to_z c =
   if is_small c then begin
     let v = small_val c in
     if v >= 0 then Z.of_int v else Z.add p (Z.of_int v)
   end
-  else begin
-    let b = !pool and o = (c asr 2) * 32 in
-    Z.logor
-      (Z.logor (limb_z b o) (Z.shift_left (limb_z b (o + 8)) 64))
-      (Z.logor (Z.shift_left (limb_z b (o + 16)) 128) (Z.shift_left (limb_z b (o + 24)) 192))
-  end
+  else Z.of_bits (Bytes.sub_string !pool ((c asr 2) * 32) 32)
 
-let mask64 = Z.pred (Z.shift_left Z.one 64)
+let small_limit_z = Z.of_int small_bound
+let negative_small_limit = Z.sub p small_limit_z
 
 let of_z z =
-  let z = Z.erem z p in
-  if Z.lt z (Z.of_int small_bound) then small (Z.to_int z)
-  else if Z.lt (Z.sub p z) (Z.of_int small_bound) then small (- Z.to_int (Z.sub p z))
+  if Z.fits_int z && fits_small (Z.to_int z) then small (Z.to_int z)
   else begin
-    reserve 1;
-    let b = !pool and o = !pool_n * 32 in
-    for i = 0 to 3 do
-      Bytes.set_int64_le b (o + (8 * i)) (Z.to_int64_unsigned (Z.logand (Z.shift_right z (64 * i)) mask64))
-    done;
-    let c = (!pool_n lsl 2) lor 3 in
-    incr pool_n;
-    c
+    let z = if Z.sign z >= 0 && Z.lt z p then z else Z.erem z p in
+    if Z.lt z small_limit_z then small (Z.to_int z)
+    else if Z.gt z negative_small_limit then small (- Z.to_int (Z.sub p z))
+    else begin
+      let bits = Z.to_bits z in
+      let len = String.length bits in
+      reserve 1;
+      let off = !pool_n * 32 in
+      Bytes.blit_string bits 0 !pool off len;
+      (* A short magnitude may reuse a slot touched by a builtin. *)
+      Bytes.fill !pool (off + len) (32 - len) '\000';
+      let c = (!pool_n lsl 2) lor 3 in
+      incr pool_n;
+      c
+    end
   end
 
 (* Signed representative in (-p/2, p/2], as cairo-vm's signed_felt. *)

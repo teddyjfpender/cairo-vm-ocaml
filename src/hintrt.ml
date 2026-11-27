@@ -6,8 +6,12 @@
 open Vm
 module P = Program
 
+module Dict_changes = Map.Make (Int)
+type snapshot = (int, int) Hashtbl.t * int Dict_changes.t
+
 type dict_tracker = {
   data : (int, int) Hashtbl.t; (* canonical key code -> value code *)
+  mutable changes : int Dict_changes.t option; (* Some freezes data for snapshots *)
   default : int option;
   mutable current_ptr : int; (* relocatable code *)
 }
@@ -20,6 +24,7 @@ type dyn =
   | Dict_manager of (int, dict_tracker) Hashtbl.t
   | Access_indices of (int, int list) Hashtbl.t
   | Positions of (int, int list) Hashtbl.t
+  | Dict_snapshot of snapshot
   | Initial_dict of (int, int) Hashtbl.t
   | Nothing
 
@@ -49,26 +54,28 @@ let var_z s name = match var s name with Int z -> z | Value v when Felt.is_felt 
 
 (* ---- canonical keys (big felts interned so keys are plain ints) ---- *)
 
-let intern : (Z.t, int) Hashtbl.t = Hashtbl.create 64
+module Felt_keys = Hashtbl.Make (struct
+  type t = int
+  let equal = Felt.equal
+  let hash = Felt.hash
+end)
+
+let intern = Felt_keys.create 64
 
 let canon v =
   if Felt.is_big v then begin
-    let z = Felt.to_z v in
-    match Hashtbl.find_opt intern z with
+    match Felt_keys.find_opt intern v with
     | Some c -> c
-    | None ->
-        Hashtbl.add intern z v;
-        v
-  end
-  else v
+    | None -> Felt_keys.add intern v v; v
+  end else v
 
 (* Python ordering on felt values (ints); relocatables after ints, ordered by (segment, offset) *)
 let compare_values a b =
   match (Felt.is_felt a, Felt.is_felt b) with
-  | true, true -> Z.compare (Felt.to_z a) (Felt.to_z b)
+  | true, true -> Felt.compare a b
   | true, false -> -1
   | false, true -> 1
-  | false, false -> compare (Felt.rseg a, Felt.roff a) (Felt.rseg b, Felt.roff b)
+  | false, false -> Stdlib.compare a b
 
 (* ---- compiled hint context ---- *)
 
@@ -288,4 +295,4 @@ let mem_at vm ptr k =
 
 let rc_bound = Z.shift_left Z.one 128
 
-let as_int z = if Z.lt z (Z.shift_right Felt.p 1) then z else Z.sub z Felt.p
+let as_int z = if Z.lt z Felt.half_p then z else Z.sub z Felt.p

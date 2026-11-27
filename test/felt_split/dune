@@ -1,0 +1,3 @@
+(test
+ (name felt_split)
+ (libraries cairovm))

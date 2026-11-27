@@ -1,0 +1,4 @@
+program,paired_runs,previous_seconds,candidate_seconds,speedup,previous_peak_rss_kib,candidate_peak_rss_kib,cairo_steps,previous_cpu_seconds,candidate_cpu_seconds
+operations_with_data_structures_benchmarks,15,0.680314,0.696602,0.977,124528,128980,5989012,0.679767,0.696064
+dict_integration_benchmark,15,0.832235,0.855014,0.973,131660,130960,6813814,0.831266,0.854416
+memory_integration_benchmark,15,0.649646,0.662775,0.98,128668,129400,7367965,0.649122,0.662115

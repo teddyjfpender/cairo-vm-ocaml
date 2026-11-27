@@ -15,6 +15,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <caml/mlvalues.h>
+#include <caml/fail.h>
+#include <caml/hash.h>
 
 typedef uint64_t u64;
 typedef unsigned __int128 u128;
@@ -72,11 +74,36 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
 static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
+/* For T = high * R + low, REDC(T) = high + REDC(low) before
+   the final conditional subtraction. Reduce only the low half in the four
+   cancellation rounds, then add high once. Since p = 1 + P3 * 2^192,
+   m = -x0 cancels the bottom word, carrying (x0 != 0) into x1. */
+static inline void mont_reduce(u64 r[4], u64 x0, u64 x1, u64 x2, u64 x3,
+                               u64 h0, u64 h1, u64 h2, u64 h3) {
+  u128 c;
+#define CANCEL(a, b, d, e) do {                                  \
+    u64 m = -(a);                                                 \
+    c = (u128)(b) + ((a) != 0); (b) = (u64)c;                    \
+    c = (u128)(d) + (u64)(c >> 64); (d) = (u64)c;                \
+    c = (u128)m * P[3] + (e) + (u64)(c >> 64);                    \
+    (e) = (u64)c; (a) = (u64)(c >> 64);                          \
+  } while (0)
+  CANCEL(x0, x1, x2, x3);
+  CANCEL(x1, x2, x3, x0);
+  CANCEL(x2, x3, x0, x1);
+  CANCEL(x3, x0, x1, x2);
+#undef CANCEL
+  const u64 low[4] = {x0, x1, x2, x3}, high[4] = {h0, h1, h2, h3};
+  add4(r, low, high);
+  /* T < p^2 and p < R, so the unreduced result is below 2p < R. */
+  if (geq_p(r)) sub4(r, r, P);
+}
+
 static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   /* 512-bit product, then four reduction rounds exploiting p = 1 + P3*2^192:
      adding m*p with m = -t[i] clears limb i (carry = t[i] != 0) and adds
      m*P3 at limb i+3 - one multiplication per round. */
-  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8;
+  u64 t0, t1, t2, t3, t4, t5, t6, t7;
   u128 c;
   u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
 #define ROW(bi, x0, x1, x2, x3, x4)                                   \
@@ -91,35 +118,14 @@ static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   ROW(b[2], t2, t3, t4, t5, t6)
   ROW(b[3], t3, t4, t5, t6, t7)
 #undef ROW
-  t8 = 0;
-  const u64 P3 = 0x0800000000000011ULL;
-#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
-  { u64 m = -x0; u64 cy = x0 != 0;                                    \
-    c = (u128)x1 + cy; x1 = (u64)c;                                   \
-    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
-    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
-    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
-    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
-    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
-    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
-    x8 += (u64)(c >> 64); }
-  { u64 d9 = 0;
-    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
-    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
-    { u64 d10 = 0; RED(t2, t3, t4, t5, t6, t7, t8, d9, d10) (void)d10; }
-    { u64 d11 = 0; RED(t3, t4, t5, t6, t7, t8, d9, d9, d11) (void)d11; }
-  }
-#undef RED
-  u64 t[4] = {t4, t5, t6, t7}; /* t8 == 0: result < 2p < 2^256 */
-  if (geq_p(t)) sub4(t, t, P);
-  r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
+  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 /* Montgomery squaring: 6 cross products doubled + 4 squares, then the same
    specialised reduction as mont_mul. */
 static inline void mont_sqr(u64 r[4], const u64 a[4]) {
   u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8 = 0;
+  u64 t0, t1, t2, t3, t4, t5, t6, t7;
   u128 c;
   c = (u128)a0 * a1; t1 = (u64)c;
   c = (u128)a0 * a2 + (u64)(c >> 64); t2 = (u64)c;
@@ -145,27 +151,7 @@ static inline void mont_sqr(u64 r[4], const u64 a[4]) {
   u128 s3 = (u128)a3 * a3;
   c = (u128)t6 + (u64)s3 + (u64)(c >> 64); t6 = (u64)c;
   c = (u128)t7 + (u64)(s3 >> 64) + (u64)(c >> 64); t7 = (u64)c;
-  const u64 P3 = 0x0800000000000011ULL;
-#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
-  { u64 m = -x0; u64 cy = x0 != 0;                                    \
-    c = (u128)x1 + cy; x1 = (u64)c;                                   \
-    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
-    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
-    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
-    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
-    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
-    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
-    x8 += (u64)(c >> 64); }
-  { u64 d9 = 0, d10 = 0, d11 = 0;
-    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
-    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
-    RED(t2, t3, t4, t5, t6, t7, t8, d9, d10)
-    RED(t3, t4, t5, t6, t7, t8, d9, d10, d11)
-    (void)d11; }
-#undef RED
-  u64 t[4] = {t4, t5, t6, t7};
-  if (geq_p(t)) sub4(t, t, P);
-  r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
+  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
 }
 
 static void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
@@ -174,11 +160,42 @@ static void from_mont(u64 r[4], const u64 a[4]) {
   mont_mul(r, a, one);
 }
 
-/* canonical multiply: (a*b*R^-1)*R^2*R^-1 */
+/* Reduce a canonical product without entering Montgomery form.
+   With B=2^64, 32p=B^4+544B^3+32. Fold the four high coefficients
+   using B^4 = -544B^3-32 (mod p). The largest temporary fits in
+   104 signed bits. Normalize carries, fold the carry above limb 3,
+   and finish with the top-limb quotient estimate for p. */
 static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 t[4];
-  mont_mul(t, a, b);
-  mont_mul(r, t, R2);
+  u64 t[8] = {0};
+  for (int i = 0; i < 4; i++) {
+    u128 carry = 0;
+    for (int j = 0; j < 4; j++) {
+      carry = (u128)a[i] * b[j] + t[i+j] + (u64)(carry >> 64);
+      t[i+j] = (u64)carry;
+    }
+    t[i+4] = (u64)(carry >> 64);
+  }
+
+  typedef __int128 wide;
+  wide h7 = t[7], h6 = (wide)t[6]-544*h7;
+  wide h5 = (wide)t[5]-544*h6, h4 = (wide)t[4]-544*h5;
+  wide x0 = (wide)t[0]-32*h4, x1 = (wide)t[1]-32*h5;
+  wide x2 = (wide)t[2]-32*h6, x3 = (wide)t[3]-32*h7-544*h4;
+  x1 += x0 >> 64; x2 += x1 >> 64; x3 += x2 >> 64;
+  wide extra = x3 >> 64;
+  x0 = (wide)(u64)x0 - 32*extra;
+  x1 = (wide)(u64)x1 + (x0 >> 64);
+  x2 = (wide)(u64)x2 + (x1 >> 64);
+  x3 = (wide)(u64)x3 - 544*extra + (x2 >> 64);
+
+  wide quotient = x3 >> 59;
+  x0 = (wide)(u64)x0 - quotient;
+  x1 = (wide)(u64)x1 + (x0 >> 64);
+  x2 = (wide)(u64)x2 + (x1 >> 64);
+  x3 = x3 - quotient*P[3] + (x2 >> 64);
+  r[0] = (u64)x0; r[1] = (u64)x1; r[2] = (u64)x2; r[3] = (u64)x3;
+  if (x3 < 0) add4(r, r, P);
+  else if (geq_p(r)) sub4(r, r, P);
 }
 
 /* Inverse of a canonical value via GMP's mpz_invert (Lehmer/HGCD; ~5x faster
@@ -246,11 +263,14 @@ static inline void load(value pool, intnat code, u64 out[4]) {
 static inline intnat store(value pool, const u64 x[4], intnat dst) {
   if (x[1] == 0 && x[2] == 0 && x[3] == 0 && x[0] < (u64)SMALL_BOUND)
     return (intnat)(((i64)x[0] << 2) | 1);
-  if (x[3] == P[3] && x[2] == 0 && x[1] == 0) {
-    /* p - x = 1 - x0 (mod 2^64) when x0 >= 1 */
-    u64 neg = 1 - x[0];
-    if (x[0] >= 1 && neg < (u64)SMALL_BOUND && neg != 0)
-      return (intnat)((-(i64)neg) * 4 + 1);
+  /* p = P3 * 2^192 + 1. For p-1 the low limbs are zero. For
+     p-n, 2 <= n < SMALL_BOUND, the borrow propagates to limb 3. */
+  if (x[3] == P[3] && (x[2] | x[1] | x[0]) == 0)
+    return -3; /* small(-1) */
+  if (x[3] == P[3] - 1 && x[2] == UINT64_MAX && x[1] == UINT64_MAX &&
+      x[0] > (u64)1 - (u64)SMALL_BOUND) {
+    u64 magnitude = 1 - x[0];
+    return -(intnat)magnitude * 4 + 1;
   }
   memcpy(SLOT(pool, dst), x, 32);
   return (intnat)((dst << 2) | 3);
@@ -258,9 +278,33 @@ static inline intnat store(value pool, const u64 x[4], intnat dst) {
 
 value cvm_init(value unit) { init_consts(); return Val_unit; }
 
+/* Multiply a canonical field element by an immediate signed word. With
+   B=2^64, p = P[3]*B^3 + 1. Divide the top two limbs by P[3], then
+   subtract the quotient from the low limbs. The intermediate is already
+   below p, or negative by at most one word. */
+static void fmul_word(u64 r[4], const u64 x[4], i64 word) {
+  u64 magnitude = word < 0 ? (u64)-word : (u64)word;
+  u128 product = 0;
+  for (int i = 0; i < 4; i++) {
+    product = (u128)x[i] * magnitude + (u64)(product >> 64);
+    r[i] = (u64)product;
+  }
+  u64 quotient = (u64)(product / P[3]);
+  r[3] = (u64)(product - (u128)quotient * P[3]);
+  u64 correction[4] = {quotient, 0, 0, 0};
+  fsub(r, r, correction);
+  if (word < 0 && !is_zero(r)) sub4(r, P, r);
+}
+
 /* op: 0 add, 1 sub, 2 mul, 3 div (returns 0 when b == 0) */
 intnat cvm_binop(value pool, intnat op, intnat a, intnat b, intnat dst) {
   u64 x[4], y[4], r[4];
+  if (op == 2 && ((a & 3) == 1 || (b & 3) == 1)) {
+    if ((a & 3) != 1) { intnat tmp = a; a = b; b = tmp; }
+    load(pool, b, y);
+    fmul_word(r, y, a >> 2);
+    return store(pool, r, dst);
+  }
   load(pool, a, x);
   load(pool, b, y);
   switch (op) {
@@ -269,8 +313,16 @@ intnat cvm_binop(value pool, intnat op, intnat a, intnat b, intnat dst) {
   case 2: fmul(r, x, y); break;
   default:
     if (is_zero(y)) return 0;
-    finv(y, y);
-    fmul(r, x, y);
+    /* A zero key is initially invalid because divisors are nonzero.
+       Store limbs, never a pool pointer or OCaml value. */
+    static _Thread_local u64 last_divisor[4], inverse_mont[4];
+    if (!eq4(last_divisor, y)) {
+      u64 inverse[4];
+      finv(inverse, y);
+      to_mont(inverse_mont, inverse);
+      memcpy(last_divisor, y, sizeof last_divisor);
+    }
+    mont_mul(r, x, inverse_mont);
   }
   return store(pool, r, dst);
 }
@@ -305,6 +357,16 @@ value cvm_code_of_slot_byte(value pool, value s, value d) {
   return Val_long(cvm_code_of_slot(pool, Long_val(s), Long_val(d)));
 }
 
+intnat cvm_big_hash(value pool, intnat code) {
+  const u64 *x = SLOT(pool, code >> 2);
+  uint32_t h = 0;
+  for (int i = 0; i < 4; i++) h = caml_hash_mix_int64(h, (int64_t)x[i]);
+  return h & 0x3fffffff;
+}
+value cvm_big_hash_byte(value pool, value code) {
+  return Val_long(cvm_big_hash(pool, Long_val(code)));
+}
+
 intnat cvm_big_eq(value pool, intnat a, intnat b) {
   return eq4(SLOT(pool, a >> 2), SLOT(pool, b >> 2));
 }
@@ -327,6 +389,21 @@ value cvm_bitwise_byte(value pool, value op, value a, value b, value d) {
 }
 
 /* bit-length of value (0 for zero) */
+/* Copy the low or high part at a whole-limb boundary (64 or 128 bits). */
+intnat cvm_split_part(value pool, intnat code, intnat two_limbs, intnat high, intnat dst) {
+  size_t width = two_limbs ? 2 : 1;
+  u64 x[4], part[4] = {0};
+  load(pool, code, x);
+  if (high)
+    memcpy(part, x + width, (4 - width) * sizeof(u64));
+  else
+    memcpy(part, x, width * sizeof(u64));
+  return store(pool, part, dst);
+}
+value cvm_split_part_byte(value pool, value code, value two_limbs, value high, value dst) {
+  return Val_long(cvm_split_part(pool, Long_val(code), Long_val(two_limbs), Long_val(high), Long_val(dst)));
+}
+
 intnat cvm_bits(value pool, intnat a) {
   u64 x[4];
   load(pool, a, x);
@@ -415,86 +492,42 @@ static void jac_to_aff(aff *r, const jac *p) {
   mont_mul(r->y, p->y, zi3);
 }
 
-/* Pedersen: H(a,b) = [shift + a_low*P0 + a_high*P1 + b_low*P2 + b_high*P3].x
-   a_low = low 248 bits, a_high = top 4 bits. Tables use 4-bit windows. */
-#define PW 62 /* windows for 248 bits */
-static aff *ped_tab = 0; /* [4][PW][16] (index 0 unused) */
-static aff ped_shift;
+/* Fixed-base tables store nonzero multiples in Montgomery affine form. */
+#include "pedersen_table.h"
 
-static void batch_to_aff(aff *out, jac *in, int n) {
-  /* Montgomery's trick */
-  static u64 (*acc)[4] = 0;
-  static int cap = 0;
-  if (cap < n) { acc = realloc(acc, sizeof(u64[4]) * n); cap = n; }
-  u64 run[4];
-  memcpy(run, ONE_M, 32);
-  for (int k = 0; k < n; k++) { memcpy(acc[k], run, 32); mont_mul(run, run, in[k].z); }
-  u64 inv[4];
-  mont_inv(inv, run);
-  for (int k = n - 1; k >= 0; k--) {
-    u64 zi[4], zi2[4], zi3[4];
-    mont_mul(zi, inv, acc[k]);
-    mont_mul(inv, inv, in[k].z);
-    mont_sqr(zi2, zi); mont_mul(zi3, zi2, zi);
-    mont_mul(out[k].x, in[k].x, zi2);
-    mont_mul(out[k].y, in[k].y, zi3);
-  }
-}
-
-
-static void ped_init(void) {
-  if (ped_tab) return;
-  init_consts();
-  const u64 *xs[4] = {PEDERSEN_P0_X, PEDERSEN_P1_X, PEDERSEN_P2_X, PEDERSEN_P3_X};
-  const u64 *ys[4] = {PEDERSEN_P0_Y, PEDERSEN_P1_Y, PEDERSEN_P2_Y, PEDERSEN_P3_Y};
-  to_mont(ped_shift.x, SHIFT_POINT_X);
-  to_mont(ped_shift.y, SHIFT_POINT_Y);
-  int n = 4 * PW * 16;
-  aff *tab = calloc(n, sizeof(aff));
-  jac *tmp = calloc(n, sizeof(jac));
-  for (int pt = 0; pt < 4; pt++) {
-    jac base;
-    to_mont(base.x, xs[pt]); to_mont(base.y, ys[pt]); memcpy(base.z, ONE_M, 32);
-    for (int w = 0; w < PW; w++) {
-      jac *row = &tmp[(pt * PW + w) * 16];
-      /* row[j] = j * base, base = 16^w * P */
-      memset(&row[0], 0, sizeof(jac));
-      row[1] = base;
-      aff ba; jac_to_aff(&ba, &base);
-      for (int j = 2; j < 16; j++) jac_add_aff(&row[j], &row[j - 1], &ba);
-      for (int d = 0; d < 4; d++) jac_double(&base, &base);
+static void ped_accum(jac *acc, const aff low[31][255], const aff high[15], const u64 s[4]) {
+  for (int limb = 0; limb < 4; limb++) {
+    u64 bits = s[limb];
+    if (limb == 3) bits &= 0x00ffffffffffffffULL;
+    for (int w = 8 * limb; bits; w++, bits >>= 8) {
+      unsigned digit = bits & 255;
+      if (digit) jac_add_aff(acc, acc, &low[w][digit - 1]);
     }
   }
-  /* convert all except index-0 entries (z = 0) */
-  for (int k = 0; k < n; k++)
-    if (is_zero(tmp[k].z)) memcpy(tmp[k].z, ONE_M, 32);
-  batch_to_aff(tab, tmp, n);
-  free(tmp);
-  ped_tab = tab;
-}
-
-static inline void ped_accum(jac *acc, int pt, const u64 s[4], int nwin) {
-  for (int w = 0; w < nwin; w++) {
-    int d = (s[w >> 4] >> ((w & 15) * 4)) & 15;
-    if (d) jac_add_aff(acc, acc, &ped_tab[(pt * PW + w) * 16 + d]);
-  }
+  unsigned top = s[3] >> 56;
+  if (top) jac_add_aff(acc, acc, &high[top - 1]);
 }
 
 static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  ped_init();
+  /* Fixed namespaces frequently hash different keys under the same prefix.
+     Keep only canonical coordinates, independent of any VM's felt pool. */
+  static _Thread_local struct { u64 key[4]; jac point; int valid; } previous;
   jac acc;
-  memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
-  u64 alow[4] = {a[0], a[1], a[2], a[3] & 0x00ffffffffffffffULL};
-  u64 ahigh[4] = {a[3] >> 56, 0, 0, 0};
-  u64 blow[4] = {b[0], b[1], b[2], b[3] & 0x00ffffffffffffffULL};
-  u64 bhigh[4] = {b[3] >> 56, 0, 0, 0};
-  ped_accum(&acc, 0, alow, PW);
-  ped_accum(&acc, 1, ahigh, 1);
-  ped_accum(&acc, 2, blow, PW);
-  ped_accum(&acc, 3, bhigh, 1);
-  aff r;
-  jac_to_aff(&r, &acc);
-  from_mont(out, r.x);
+  if (previous.valid && eq4(previous.key, a)) {
+    acc = previous.point;
+  } else {
+    memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
+    ped_accum(&acc, ped_a, ped_a_high[0], a);
+    memcpy(previous.key, a, 32);
+    previous.point = acc;
+    previous.valid = 1;
+  }
+  ped_accum(&acc, ped_b, ped_b_high[0], b);
+  u64 zi[4], x[4];
+  mont_inv(zi, acc.z);
+  mont_sqr(zi, zi);
+  mont_mul(x, acc.x, zi);
+  from_mont(out, x);
 }
 
 intnat cvm_pedersen(value pool, intnat a, intnat b, intnat dst) {
@@ -526,12 +559,25 @@ static inline void cube(u64 x[4]) {
   mont_mul(x, t, x);
 }
 
+/* Reduce a linear combination smaller than 7p. Its top five bits
+   estimate floor(x/p), with at most one unit of overestimation because
+   p = 2^251 + 17*2^192 + 1. */
+static inline void reduce_mix(u64 x[4]) {
+  u64 q = x[3] >> 59;
+  u64 multiple[4] = {q, 0, 0, q * P[3]};
+  if (sub4(x, x, multiple)) add4(x, x, P);
+}
+
 static inline void mix(u64 s0[4], u64 s1[4], u64 s2[4]) {
-  u64 t[4], d[4];
-  madd(t, s0, s1); madd(t, t, s2);
-  madd(d, s0, s0); madd(s0, t, d);
-  madd(d, s1, s1); msub(s1, t, d);
-  madd(d, s2, s2); madd(d, d, s2); msub(s2, t, d);
+  u64 sum[4], tmp[4];
+  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
+  add4(sum, s0, s1); add4(sum, sum, s2);
+  /* sum+2a, sum+p-2b, sum+2p-3c are nonnegative and fit in 256 bits. */
+  add4(tmp, s0, s0); add4(s0, sum, tmp);
+  add4(tmp, s1, s1); add4(s1, sum, P); sub4(s1, s1, tmp);
+  add4(tmp, s2, s2); add4(tmp, tmp, s2);
+  add4(s2, sum, two_p); sub4(s2, s2, tmp);
+  reduce_mix(s0); reduce_mix(s1); reduce_mix(s2);
 }
 
 static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
@@ -542,11 +588,25 @@ static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
     cube(s0); cube(s1); cube(s2);
     mix(s0, s1, s2);
   }
+  /* During partial rounds only c is cubed. Track a and l=a+b.
+     For t=(2a+c) mod p after the cube, the next (a,l,c) is
+     (t+l, 2t, l+2p-2c). This maintains a<3p, l<2p and c<4p.
+     Thus c+constant <5p. Even its square is below R*p (25p<R),
+     so ordinary Montgomery reduction still returns a canonical result. */
+  u64 sum[4], t[4], twice[4];
+  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
+  madd(sum, s0, s1);
   for (int r = 0; r < 83; r++, k++) {
-    madd(s2, s2, PRC[k]);
+    add4(s2, s2, PRC[k]);
     cube(s2);
-    mix(s0, s1, s2);
+    add4(t, s0, s0); add4(t, t, s2);
+    reduce_mix(t);
+    add4(s0, t, sum);
+    add4(twice, s2, s2); add4(s2, sum, two_p); sub4(s2, s2, twice);
+    add4(sum, t, t);
   }
+  reduce_mix(s0); reduce_mix(sum); reduce_mix(s2);
+  msub(s1, sum, s0);
   for (int r = 0; r < 4; r++, k += 3) {
     madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
     cube(s0); cube(s1); cube(s2);
@@ -653,6 +713,44 @@ value cvm_keccak_f_bytes(value st) { /* 200-byte state in place */
   return Val_unit;
 }
 
+/* Incremental Keccak-256 for snapshots of append-only Cairo word ranges.
+   The state includes the XORed partial rate block. Finalization only
+   permutes a copy, so a caller can continue absorbing after a snapshot. */
+value cvm_keccak_absorb(value state, value vpos, value input) {
+  const size_t rate = 136;
+  if (caml_string_length(state) != 200 || (uintnat)Long_val(vpos) >= rate)
+    caml_invalid_argument("keccak_absorb state");
+  u64 lanes[25];
+  memcpy(lanes, Bytes_val(state), sizeof lanes);
+  uint8_t *bytes = (uint8_t *)lanes;
+  const uint8_t *data = (const uint8_t *)Bytes_val(input);
+  size_t length = caml_string_length(input), pos = Long_val(vpos);
+  while (length) {
+    size_t n = rate - pos;
+    if (n > length) n = length;
+    for (size_t i = 0; i < n; i++) bytes[pos+i] ^= data[i];
+    length -= n;
+    data += n;
+    pos += n;
+    if (pos == rate) { keccak_f(lanes); pos = 0; }
+  }
+  memcpy(Bytes_val(state), lanes, sizeof lanes);
+  return Val_long(pos);
+}
+
+value cvm_keccak_snapshot(value state, value vpos, value output) {
+  if (caml_string_length(state) != 200 || (uintnat)Long_val(vpos) >= 136 || caml_string_length(output) != 32)
+    caml_invalid_argument("keccak_snapshot state");
+  u64 lanes[25];
+  memcpy(lanes, Bytes_val(state), sizeof lanes);
+  uint8_t *bytes = (uint8_t *)lanes;
+  bytes[Long_val(vpos)] ^= 0x01;
+  bytes[135] ^= 0x80;
+  keccak_f(lanes);
+  memcpy(Bytes_val(output), lanes, 32);
+  return Val_unit;
+}
+
 /* ---------- EC op builtin: R = P + m*Q (canonical affine, alpha = 1) ----------
    Slots: px py qx qy m at i0..i0+4; result rx ry to o0, o0+1.
    Returns 0 on success, 1 when P,Q x-coordinates collide during the ladder,
@@ -670,20 +768,15 @@ static int aff_on_curve(const u64 x[4], const u64 y[4]) { /* Montgomery inputs *
   return eq4(lhs, rhs);
 }
 
-static void jac_add(jac *r, const jac *p, const jac *q) {
-  if (is_zero(p->z)) { *r = *q; return; }
-  if (is_zero(q->z)) { *r = *p; return; }
-  u64 z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], rr[4], v[4], t[4];
+/* Called only after the EC builtin's mandatory unequal-x check. */
+static void ec_add(jac *r, const jac *p, const jac *q,
+                   const u64 z1z1[4], const u64 z2z2[4],
+                   const u64 u1[4], const u64 u2[4]) {
+  u64 s1[4], s2[4], h[4], i[4], j[4], rr[4], v[4], t[4];
   jac o;
-  mont_sqr(z1z1, p->z); mont_sqr(z2z2, q->z);
-  mont_mul(u1, p->x, z2z2); mont_mul(u2, q->x, z1z1);
   mont_mul(s1, p->y, q->z); mont_mul(s1, s1, z2z2);
   mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
   msub(h, u2, u1); msub(rr, s2, s1);
-  if (is_zero(h)) {
-    if (is_zero(rr)) { jac_double(r, p); return; }
-    memset(r, 0, sizeof *r); return;
-  }
   madd(i, h, h); mont_sqr(i, i);
   mont_mul(j, h, i);
   madd(rr, rr, rr);
@@ -701,21 +794,41 @@ intnat cvm_ec_op(value pool, intnat i0, intnat o0) {
   to_mont(px, SLOT(pool, i0)); to_mont(py, SLOT(pool, i0 + 1));
   to_mont(qx, SLOT(pool, i0 + 2)); to_mont(qy, SLOT(pool, i0 + 3));
   memcpy(m, SLOT(pool, i0 + 4), 32);
-  if (!aff_on_curve(px, py) || !aff_on_curve(qx, qy)) return 2;
-  jac ps, dp;
+  /* Powers are deterministic functions of a validated Q. Keep one ladder
+     per native thread; every call starts a fresh accumulator for its P. */
+  static _Thread_local struct {
+    jac power[256];
+    u64 z_squared[256][4];
+    int count;
+  } ladder;
+  if (!aff_on_curve(px, py)) return 2;
+  if (!ladder.count || !eq4(qx, ladder.power[0].x) || !eq4(qy, ladder.power[0].y)) {
+    if (!aff_on_curve(qx, qy)) return 2;
+    memcpy(ladder.power[0].x, qx, 32); memcpy(ladder.power[0].y, qy, 32);
+    memcpy(ladder.power[0].z, ONE_M, 32); memcpy(ladder.z_squared[0], ONE_M, 32);
+    ladder.count = 1;
+  }
+  jac ps;
+  u64 ps_z_squared[4];
   memcpy(ps.x, px, 32); memcpy(ps.y, py, 32); memcpy(ps.z, ONE_M, 32);
-  memcpy(dp.x, qx, 32); memcpy(dp.y, qy, 32); memcpy(dp.z, ONE_M, 32);
+  memcpy(ps_z_squared, ONE_M, 32);
   int bits = 0;
   for (int k = 3; k >= 0; k--) if (m[k]) { bits = k * 64 + 64 - __builtin_clzll(m[k]); break; }
-  if (bits > 256) bits = 256;
   for (int b = 0; b < bits; b++) {
-    /* projective x comparison as in cairo-vm (Jacobian: X1 Z2^2 == X2 Z1^2) */
-    u64 a1[4], a2[4], z[4];
-    mont_sqr(z, dp.z); mont_mul(a1, ps.x, z);
-    mont_sqr(z, ps.z); mont_mul(a2, dp.x, z);
-    if (eq4(a1, a2)) return 1;
-    if ((m[b >> 6] >> (b & 63)) & 1) jac_add(&ps, &ps, &dp);
-    jac_double(&dp, &dp);
+    if (b == ladder.count) {
+      jac_double(&ladder.power[b], &ladder.power[b-1]);
+      mont_sqr(ladder.z_squared[b], ladder.power[b].z);
+      ladder.count++;
+    }
+    const jac *q = &ladder.power[b];
+    u64 u1[4], u2[4];
+    mont_mul(u1, ps.x, ladder.z_squared[b]);
+    mont_mul(u2, q->x, ps_z_squared);
+    if (eq4(u1, u2)) return 1;
+    if ((m[b >> 6] >> (b & 63)) & 1) {
+      ec_add(&ps, &ps, q, ps_z_squared, ladder.z_squared[b], u1, u2);
+      mont_sqr(ps_z_squared, ps.z);
+    }
   }
   if (is_zero(ps.z)) return 3;
   aff r;
@@ -744,7 +857,6 @@ value cvm_put_code_byte(value pool, value c, value b, value p) {
 #include <caml/bigarray.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
-#include <caml/fail.h>
 value cvm_zalloc(value vn) {
   intnat n = Long_val(vn);
   if (n < 1) n = 1;
@@ -759,7 +871,7 @@ value cvm_zalloc(value vn) {
 static inline intnat rel_seg(intnat c) { return c >> 42; }
 static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
 
-/* trace: bigarray of (pc code, ap, fp) triples; table: OCaml int array of segment bases */
+/* Decode Vm.record_trace entries to ordinary relocated (ap, fp, pc) triples. */
 value cvm_write_trace(value path, value trace, value vlen, value table) {
   FILE *f = fopen(String_val(path), "wb");
   if (!f) caml_failwith("cannot open trace file");
@@ -769,12 +881,22 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   intnat n = Long_val(vlen);
   intnat base1 = Long_val(Field(table, 1));
   size_t pos = 0;
-  for (intnat i = 0; i < n; i += 3) {
-    intnat pc = t[i];
+  const u64 offset_mask = (1ULL << 23) - 1;
+  const u64 base0 = Long_val(Field(table, 0));
+  for (intnat i = 0; i < n;) {
+    intnat word = t[i++];
     u64 e[3];
-    e[0] = (u64)(base1 + t[i + 1]);
-    e[1] = (u64)(base1 + t[i + 2]);
-    e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    if (word & 1) {
+      u64 packed = (u64)word;
+      e[0] = base1 + ((packed >> 24) & offset_mask);
+      e[1] = base1 + ((packed >> 1) & offset_mask);
+      e[2] = base0 + ((packed >> 47) & 0xffff);
+    } else {
+      intnat pc = word;
+      e[0] = (u64)(base1 + t[i++]);
+      e[1] = (u64)(base1 + t[i++]);
+      e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+    }
     memcpy(buf + pos, e, 24);
     pos += 24;
     if (pos + 24 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }

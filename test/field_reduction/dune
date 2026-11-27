@@ -1,0 +1,3 @@
+(test
+ (name field_reduction)
+ (libraries cairovm zarith))

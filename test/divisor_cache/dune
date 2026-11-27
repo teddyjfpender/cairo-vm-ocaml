@@ -1,0 +1,3 @@
+(test
+ (name divisor_cache)
+ (libraries cairovm))
