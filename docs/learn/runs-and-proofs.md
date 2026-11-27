@@ -24,7 +24,9 @@ returns, it jumps to that sentinel address.
 - **Return values:** walking back from the final `ap`, each builtin's stop pointer must equal
   the end of the instances it used.
 - **Secure-run checks:** no builtin cell past its stop pointer, every used instance has all its
-  inputs, and nothing written past the program's code.
+  inputs, and nothing written past the program's code. Empty builtin outputs are deduced only
+  for their errors, so execution mode re-deduces just the last instance: the check above already
+  deduced every instance with an output below the used size.
 
 ## Write outputs (`Artifacts`)
 
