@@ -1,0 +1,3 @@
+(test
+ (name native_cpu)
+ (libraries cairovm))

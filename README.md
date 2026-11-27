@@ -6,7 +6,45 @@ Rust cairo-vm 3.2.0 on all 17 CairoZero benchmark programs below.
 
 ## Results
 
-### Linux x86-64, Rust 3.2.0 and the installed OCaml CLI
+### Native instruction batches on Linux x86-64
+
+The installed OxCaml release was **2.99× faster for execution** and **3.91× faster
+with trace and memory** than Rust cairo-vm-cli 3.2.0 on its 17 CairoZero
+benchmarks. The full suite target is 10×. Each comparison uses the sum of
+per-program medians from four alternating pairs, with both VMs on the same
+CPU core, secure execution enabled and Rust delegation disabled.
+
+| Workload | Rust | OCaml | Speedup |
+| --- | ---: | ---: | ---: |
+| Execute and print output | 19.42 s | 6.50 s | 2.99× |
+| Execute, print, and write trace and memory | 52.56 s | 13.45 s | 3.91× |
+
+The traced runs matched stdout and both binary artifacts on every pair.
+Across the suite the VMs executed 117,043,195 steps and wrote 2.81 GB of trace
+and 4.37 GB of relocated memory. The upstream Pedersen benchmark measured
+11.46× for execution, with 13.54× in a separate twelve-pair check.
+Against the preceding OCaml release (#33), the execution suite went from
+9.86 s to 5.66 s on the same machine (1.74×).
+
+The [repeated Pedersen node fixture](bench/pedersen_repeated_nodes.cairo)
+cycles through 16 input pairs across 8,192 distinct builtin instances and
+includes every computed hash in its printed output. With full artifacts it ran
+in 23.3 ms versus 333.7 ms for Rust (14.32×).
+Varying the second input of the upstream Pedersen benchmark by its iteration counter measured 2.79× with artifacts.
+
+[Execution pairs](bench/results/native-kernel-exec.csv) ·
+[Traced pairs](bench/results/native-kernel-traced.csv) ·
+[OCaml revision pairs](bench/results/native-kernel-parent.csv) ·
+[Hash workload pairs](bench/results/native-kernel-hashes.csv) ·
+[Pedersen recheck](bench/results/native-kernel-pedersen.csv) ·
+[Artifact sizes](bench/results/native-kernel-output-bytes.csv)
+
+To check the 10× target, pass `--min-suite-speedup 10` to
+`bench/compare_cli.py`. The harness checks output equivalence before
+evaluating the threshold. Raw timings remain on stdout.
+
+### Previous Linux baseline
+
 
 | Mode | Rust | Native OCaml | Speedup | Programs faster |
 | --- | ---: | ---: | ---: | ---: |
@@ -60,6 +98,15 @@ Programs are cairo-vm's `cairo_programs/benchmarks/*.cairo`, compiled with cairo
 Reproduce with `bench/compare.py RUST_CLI _build/default/bin/main.exe progs/*.json --trace`.
 
 ## Why it is fast
+
+- **Batched native execution.** The OxCaml runner sends up to 8,192 decoded steps
+  to a nonallocating C loop. Hints, new instructions, growing segments and
+  unsupported operand patterns return to the ordinary interpreter. Frame pushes
+  can be copied together while keeping a separate trace entry per instruction.
+- **Builtin handling.** The kernel writes builtin inputs directly and computes
+  bitwise outputs only when requested. End-of-run checks compare assigned
+  outputs against their deductions. Bounded Pedersen and Poseidon caches check
+  complete inputs before reuse.
 
 - **One immediate int per value.** Small felts (|v| < 2^59), relocatables and empty cells are tagged
   OCaml ints. Big felts are interned in an append-only pool of canonical limbs, so equality, pointer

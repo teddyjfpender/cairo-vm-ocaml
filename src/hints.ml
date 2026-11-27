@@ -221,9 +221,11 @@ let () =
   (* memory[ap] = segments.add() *)
   reg H.h0 (fun _ vm -> write_ap vm (Felt.reloc (add_segment vm) 0));
   (* assert_nn *)
-  reg H.h1 (fun c vm ->
-      let a = felt_z vm c "a" in
-      if Z.geq a rc_bound then fail "a = %s is out of range." (Z.to_string a));
+  reg H.h1 (fun c ->
+      let read = bound_felt c "a" in fun vm ->
+      let a = read vm in
+      if not (Felt.is_small a && a > 0) && Felt.bits a > 128 then
+        fail "a = %s is out of range." (Z.to_string (Felt.to_z a)));
   (* assert_le_felt *)
   reg H.h2 (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
@@ -261,7 +263,10 @@ let () =
   reg H.h10 (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
       if Z.geq a b then fail "a = %s is not less than b = %s." (Z.to_string a) (Z.to_string b));
-  reg H.h11 (fun c vm -> write_ap vm (if Z.lt (felt_z vm c "a") rc_bound then Felt.zero else Felt.one));
+  reg H.h11 (fun c ->
+      let read = bound_felt c "a" in fun vm ->
+      let a = read vm in
+      write_ap vm (of_bool (if Felt.is_small a then a < 0 else Felt.bits a > 128)));
   reg H.h12 (fun c vm ->
       let a = felt_z vm c "a" in
       write_ap vm (if Z.lt (Z.erem (Z.sub (Z.neg a) Z.one) pz) rc_bound then Felt.zero else Felt.one));
@@ -272,7 +277,7 @@ let () =
       set_val vm c "continue_loop" (of_bool (Z.gt n Z.zero)));
   (* uint256_add *)
   reg H.h15 (fun c vm ->
-      let shift = (try const_z c "SHIFT" with Vm_error _ -> two_pow 128) in
+      let shift = Option.value (const_opt c "SHIFT") ~default:rc_bound in
       let g n m = get_member_z vm c n [ m ] in
       let sum_low = Z.add (g "a" "low") (g "b" "low") in
       let carry_low = if Z.geq sum_low shift then Z.one else Z.zero in
@@ -622,9 +627,12 @@ let () =
       set_val vm c "high" (zf hi);
       set_val vm c "low" (zf lo));
   reg H.h50 (fun c vm ->
-      let v = as_int (felt_z vm c "value") in
-      if Z.geq (Z.abs v) rc_bound then fail "value=%s is out of the valid range." (Z.to_string v);
-      set_val vm c "is_positive" (of_bool (Z.gt v Z.zero)));
+      let a = get_felt vm c "value" in
+      let positive = if Felt.is_small a then Felt.small_val a > 0 else begin
+        let v = as_int (Felt.to_z a) in
+        if Z.geq (Z.abs v) rc_bound then fail "value=%s is out of the valid range." (Z.to_string v);
+        Z.sign v > 0
+      end in set_val vm c "is_positive" (of_bool positive));
   reg H.h51 (fun c vm -> if not (Z.equal (felt_z vm c "value") Z.zero) then fail "split_int(): value is out of range.");
   reg H.h52 (fun c vm ->
       let res = Z.erem (felt_z vm c "value") (felt_z vm c "base") in
@@ -914,10 +922,12 @@ let () =
           set_val vm c "index" (Felt.small found);
           set_val vm c "is_elm_in_set" Felt.one
         end);
-  reg H.h82 (fun c vm ->
-      let low, high = Felt.split_at_limb ~two_limbs:false (get_felt vm c "a") in
-      set_val vm c "low" low;
-      set_val vm c "high" high);
+  reg H.h82 (fun c ->
+      let read = bound_felt c "a" and lo = bound_set c "low" and hi = bound_set c "high" in
+      fun vm ->
+        let low, high = Felt.split_at_limb ~two_limbs:false (read vm) in
+        lo vm low;
+        hi vm high);
   reg H.h83 (fun c vm ->
       let n = Z.add (Z.shift_left (get_member_z vm c "n" [ "high" ]) 128) (get_member_z vm c "n" [ "low" ]) in
       let root = isqrt n in
