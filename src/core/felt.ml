@@ -91,8 +91,8 @@ let () = c_init ()
 let scratch = 64 (* slots 0..63 are scratch for multi-slot builtins *)
 (* One fixed reservation of lazily committed pages: slots never move, so no
    growth copies, and running out fails explicitly. *)
-let capacity = 1 lsl 28
-let pool = pool_make capacity
+let pool = pool_make (1 lsl 28)
+let capacity = Bigarray.Array1.dim pool lsr 5 (* slots actually reserved *)
 let pool_n = ref scratch
 
 (* Fail unless slots [pool_n .. pool_n + k) exist. *)

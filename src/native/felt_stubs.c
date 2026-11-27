@@ -158,8 +158,14 @@ value cvm_init(value unit) { init_consts(); return Val_unit; }
 /* Reserve the pool: [slots] 32-byte slots of lazily committed zero pages
    that are never moved or freed. */
 value cvm_pool_make(value slots) {
+  /* Halve the reservation when the OS refuses it (strict overcommit, ulimit -v);
+     the caller derives its capacity from the mapped length. */
   size_t length = (size_t)Long_val(slots) << 5;
-  void *p = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+  void *p = MAP_FAILED;
+  for (; length >= ((size_t)1 << 21); length >>= 1) {
+    p = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (p != MAP_FAILED) break;
+  }
   if (p == MAP_FAILED) caml_raise_out_of_memory();
   return caml_ba_alloc_dims(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL, 1, p, (intnat)length);
 }
@@ -201,7 +207,8 @@ value cvm_load_slot_byte(value pool, value c, value d) {
 /* Code of a canonical little-endian magnitude of at most 32 bytes. */
 intnat cvm_of_bits(value pool, value bits, intnat dst) {
   u64 x[4] = {0};
-  memcpy(x, String_val(bits), caml_string_length(bits));
+  size_t n = caml_string_length(bits);
+  memcpy(x, String_val(bits), n < 32 ? n : 32);
   return store(pool, x, dst);
 }
 value cvm_of_bits_byte(value pool, value bits, value dst) {
