@@ -92,6 +92,12 @@ let k_plain = 0
 let k_rc = 1
 let k_rc96 = 2
 let k_deduce = 3 (* pedersen, bitwise, ec_op, keccak, poseidon *)
+let k_bitwise = 5
+let k_pedersen = 6
+let k_poseidon = 7
+let k_keccak = 8
+let k_ec_op = 9
+let is_deducing k = k = k_deduce || (k >= k_bitwise && k <= k_ec_op)
 let k_ecdsa = 4
 
 type vm = {
@@ -112,6 +118,17 @@ type vm = {
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable builtins : builtin list;
+  (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
+     rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
+     relocation_rules. [relocating] is set once a rule exists: memory reads
+     then translate temporary relocatables, so the interpreter leaves its
+     fast path (see [Relocating]). *)
+  mutable tsegs : seg array;
+  mutable thi : int array;
+  mutable ntsegs : int;
+  mutable rules : (int * int) list; (* temp index -> destination relocatable *)
+  mutable relocating : bool;
+  mutable had_temp : bool;
 }
 
 let create ~trace =
@@ -131,6 +148,12 @@ let create ~trace =
     trace = (if trace then seg_make (1 lsl 26) else empty_seg);
     tlen = 0;
     builtins = [];
+    tsegs = [||];
+    thi = [||];
+    ntsegs = 0;
+    rules = [];
+    relocating = false;
+    had_temp = false;
   }
 
 let add_segment vm =
@@ -154,9 +177,51 @@ let[@inline] read vm seg off =
   let a = Array.unsafe_get vm.segs seg in
   if off < slen a then sget a off else 0
 
+(* ---- temporary segments (cairo-vm MemorySegmentManager.add_temp_segment) ---- *)
+
+let add_temp_segment vm =
+  let n = vm.ntsegs in
+  if n >= Array.length vm.tsegs then begin
+    let cap = max 4 (2 * n) in
+    let grow a d = Array.append a (Array.make (cap - Array.length a) d) in
+    vm.tsegs <- grow vm.tsegs empty_seg;
+    vm.thi <- grow vm.thi 0
+  end;
+  vm.tsegs.(n) <- seg_make 16;
+  vm.thi.(n) <- 0;
+  vm.ntsegs <- n + 1;
+  vm.had_temp <- true;
+  -(n + 1)
+
+let[@inline] temp_index seg = -(seg + 1)
+
+let temp_ok vm seg = seg < 0 && temp_index seg < vm.ntsegs
+
+let[@inline never] temp_read vm seg off =
+  if not (temp_ok vm seg) then fail "Unknown memory segment %d" seg;
+  let a = vm.tsegs.(temp_index seg) in
+  if off >= 0 && off < slen a then sget a off else 0
+
+(* Memory.relocate_value: one application of the current rules *)
+let[@inline never] relocate_temp_value vm v =
+  if is_reloc v && rseg v < 0 then
+    match List.assoc_opt (temp_index (rseg v)) vm.rules with
+    | Some dst ->
+        let o = roff dst + roff v in
+        if o > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
+        reloc (rseg dst) o
+    | None -> v
+  else v
+
 let get vm seg off =
-  if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
-  if off < 0 then 0 else read vm seg off
+  let v =
+    if seg < 0 then temp_read vm seg off
+    else begin
+      if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
+      if off < 0 then 0 else read vm seg off
+    end
+  in
+  if vm.relocating then relocate_temp_value vm v else v
 
 let[@inline never] grow_seg vm seg off =
   let a = vm.segs.(seg) in
@@ -171,6 +236,17 @@ let value_to_string v =
   else if is_reloc v then Printf.sprintf "%d:%d" (rseg v) (roff v)
   else Felt.to_string v
 
+(* Hooks for logic that lives in later modules (which depend on this one).
+   [ecdsa_validate vm seg off] is the signature builtin's validation rule for
+   a newly written cell; [ext_step vm d] executes one instruction carrying an
+   opcode extension (Blake, BlakeFinalize, QM31Operation).  Both fail
+   explicitly until installed. *)
+let ecdsa_validate : (vm -> int -> int -> unit) ref =
+  ref (fun _ seg off -> fail "ecdsa builtin is not supported by this VM (write at %d:%d)" seg off)
+
+let ext_step : (vm -> int -> unit) ref =
+  ref (fun _ d -> fail "Unsupported opcode extension %d" ((d lsr 61) land 3))
+
 let[@inline never] validate vm seg off v =
   let f = vm.seg_flag.(seg) in
   if f = k_rc || f = k_rc96 then begin
@@ -179,7 +255,7 @@ let[@inline never] validate vm seg off v =
     if not (is_small v && small_val v >= 0) && Felt.bits v > bound then
       fail "Range-check builtin: value %s at %d:%d is out of range [0, 2^%d)" (Felt.to_string v) seg off bound
   end
-  else if f = k_ecdsa then fail "ecdsa builtin is not supported by this VM (write at %d:%d)" seg off
+  else if f = k_ecdsa then !ecdsa_validate vm seg off
 
 let[@inline] write vm seg off v =
   if off < 0 then fail "Negative memory offset %d:%d" seg off;
@@ -196,9 +272,111 @@ let[@inline] write vm seg off v =
     fail "Inconsistent memory assignment at address %d:%d. %s != %s" seg off (value_to_string cur)
       (value_to_string v)
 
+let[@inline never] temp_write vm seg off v =
+  if not (temp_ok vm seg) then fail "Unknown memory segment %d" seg;
+  if off < 0 then fail "Negative memory offset %d:%d" seg off;
+  let k = temp_index seg in
+  let a = vm.tsegs.(k) in
+  if off >= slen a then begin
+    let n = ref (max 16 (slen a)) in
+    while !n <= off do n := 2 * !n done;
+    vm.tsegs.(k) <- seg_grow a !n
+  end;
+  let a = vm.tsegs.(k) in
+  let cur = sget a off in
+  if cur = 0 then begin
+    sset a off v;
+    if off >= vm.thi.(k) then vm.thi.(k) <- off + 1
+  end
+  else if not (Felt.equal cur v) then
+    fail "Inconsistent memory assignment at address %d:%d. %s != %s" seg off (value_to_string cur)
+      (value_to_string v)
+
 let write_checked vm seg off v =
-  if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
-  write vm seg off v
+  if seg < 0 then temp_write vm seg off v
+  else begin
+    if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
+    write vm seg off v
+  end
+
+(* Memory.add_relocation_rule (without extensive_hints) *)
+let add_relocation_rule vm src dst =
+  if not (is_reloc src) then fail "add_relocation_rule: src_ptr is not a relocatable";
+  if not (is_reloc dst) then fail "add_relocation_rule: dest_ptr is not a relocatable";
+  if rseg src >= 0 then fail "Address %d is not in a temporary segment" (rseg src);
+  if roff src <> 0 then fail "Non-zero offset %d in relocation source" (roff src);
+  let k = temp_index (rseg src) in
+  if List.mem_assoc k vm.rules then fail "Duplicated relocation rule for segment %d" (rseg src);
+  vm.rules <- (k, dst) :: vm.rules;
+  vm.relocating <- true
+
+(* Memory.relocate_memory, run at the start of end_run: flatten rule chains,
+   rewrite temporary relocatables in all memory, then move each relocated
+   temporary segment into real memory (descending index order, holes skip
+   addresses), with ordinary write-once and builtin validation. *)
+let relocate_temp_memory vm =
+  if vm.rules <> [] && vm.ntsegs > 0 then begin
+    let max_hops = List.length vm.rules + 1 in
+    let flat =
+      List.map
+        (fun (k, dst) ->
+          let rec go dst hops =
+            if rseg dst >= 0 then dst
+            else begin
+              let next =
+                match List.assoc_opt (temp_index (rseg dst)) vm.rules with
+                | Some n -> n
+                | None -> fail "Unmapped temporary segment %d" (rseg dst)
+              in
+              let o = roff next + roff dst in
+              if o > off_mask then fail "Offset exceeds range in relocation rule";
+              if hops + 1 > max_hops then fail "Relocation rule cycle";
+              go (reloc (rseg next) o) (hops + 1)
+            end
+          in
+          (k, go dst 0))
+        vm.rules
+    in
+    let relocate v =
+      if is_reloc v && rseg v < 0 then
+        match List.assoc_opt (temp_index (rseg v)) flat with
+        | Some dst ->
+            let o = roff dst + roff v in
+            if o > off_mask then fail "Offset exceeds range when relocating memory";
+            reloc (rseg dst) o
+        | None -> v
+      else v
+    in
+    let rewrite a n =
+      for i = 0 to n - 1 do
+        let v = sget a i in
+        if v land 3 = 2 && rseg v < 0 then sset a i (relocate v)
+      done
+    in
+    for s = 0 to vm.nsegs - 1 do rewrite vm.segs.(s) (min vm.hi.(s) (slen vm.segs.(s))) done;
+    for k = 0 to vm.ntsegs - 1 do rewrite vm.tsegs.(k) vm.thi.(k) done;
+    let keep = ref [] in
+    for k = vm.ntsegs - 1 downto 0 do
+      match List.assoc_opt k flat with
+      | Some dst ->
+          let a = vm.tsegs.(k) in
+          for i = 0 to vm.thi.(k) - 1 do
+            let v = sget a i in
+            if v <> 0 then begin
+              let o = roff dst + i in
+              if o > off_mask then fail "Offset exceeds range when relocating memory";
+              write_checked vm (rseg dst) o v
+            end
+          done
+      | None -> keep := (vm.tsegs.(k), vm.thi.(k)) :: !keep
+    done;
+    let kept = Array.of_list !keep in
+    vm.tsegs <- Array.map fst kept;
+    vm.thi <- Array.map snd kept;
+    vm.ntsegs <- Array.length kept;
+    vm.rules <- [];
+    vm.relocating <- false
+  end
 
 (* last assigned offset + 1 *)
 let used_size vm seg = vm.hi.(seg)
@@ -291,11 +469,31 @@ let cache_outputs b off first_output count =
     cache_set b (off + i) result
   done
 
+let bitwise_output vm seg off idx =
+  let base = off - idx in
+  let x = read vm seg base and y = read vm seg (base + 1) in
+  if (x <> 0 && not (is_felt x)) || (y <> 0 && not (is_felt y)) then
+    fail "Builtin %d: expected integer at %d:%d" seg seg
+      (if x <> 0 && not (is_felt x) then base else base + 1);
+  if x = 0 || y = 0 then 0
+  else if both_small x y && x >= 0 && y >= 0 then
+    (match idx with 2 -> x land y | 3 -> (x lxor y) lor 1 | _ -> x lor y)
+  else begin
+    reserve 1;
+    let r = c_bitwise !pool (idx - 2) x y !pool_n in
+    if r = 0 then
+      fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg
+        (if Felt.bits x > 251 then base else base + 1);
+    commit r;
+    r
+  end
+
 let deduce_builtin vm (b : builtin) seg off =
   let cpi = cells_per_instance b.kind in
   let idx = off mod cpi in
   let nin = n_input_cells b.kind in
   if idx < nin then 0
+  else if b.kind = Bitwise then bitwise_output vm seg off idx
   else begin
     let c = cache_get b off in
     if c <> 0 then c
@@ -322,29 +520,6 @@ let deduce_builtin vm (b : builtin) seg off =
               in
               cache_set b off r;
               r
-          | Bitwise ->
-              let x = inp.(0) and y = inp.(1) in
-              if both_small x y && x >= 0 && y >= 0 then begin
-                (* The low tag is 01 for both inputs. AND and OR retain it;
-                   XOR needs the tag restored. All three results fit. *)
-                cache_set b (inst + 2) (x land y);
-                cache_set b (inst + 3) ((x lxor y) lor 1);
-                cache_set b (inst + 4) (x lor y)
-              end else begin
-                let check v k =
-                  if Felt.bits v > 251 then
-                    fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg (inst + k)
-                in
-                check x 0;
-                check y 1;
-                for k = 2 to 4 do
-                  reserve 1;
-                  let r = c_bitwise !pool (k - 2) x y !pool_n in
-                  commit r;
-                  cache_set b (inst + k) r
-                done
-              end;
-              cache_get b off
           | Poseidon ->
               reserve 6;
               let s = !pool_n in
@@ -383,7 +558,7 @@ let deduce_builtin vm (b : builtin) seg off =
   end
 
 let[@inline never] deduce_cell vm seg off =
-  if seg >= 0 && seg < vm.nsegs && vm.seg_flag.(seg) = k_deduce then
+  if seg >= 0 && seg < vm.nsegs && is_deducing vm.seg_flag.(seg) then
     match vm.seg_builtin.(seg) with Some b -> deduce_builtin vm b seg off | None -> 0
   else 0
 
@@ -396,15 +571,26 @@ let[@inline never] deduce_cell vm seg off =
    54..55 pc (0 regular,1 jump,2 jump_rel,3 jnz),
    56..57 ap (0 regular,1 add,2 add1,3 add2),
    58..59 opcode (0 nop,1 call,2 ret,3 assert_eq),
-   60 valid *)
+   60 valid,
+   61..62 opcode extension (0 Stone, 1 Blake, 2 BlakeFinalize, 3 QM31Operation).
+   Only on a fresh decode: bit 61 of a cached word is run_fast's hint flag.
+   Words with a non-zero extension are never stored in the decoded
+   instruction cache, so the fast loop never sees them and they always run
+   through [step] / [ext_step]. *)
+
+let ext_shift = 61
+let ext_mask = 3 lsl ext_shift
+let two_128 = Z.shift_left Z.one 128
+let low_63 = Z.pred (Z.shift_left Z.one 63)
 
 let decode_word (w : Z.t) =
-  if Z.geq w (Z.shift_left Z.one 63) then begin
-    let ext = Z.shift_right w 63 in
-    if Z.lt ext (Z.of_int 4) then
-      fail "Unsupported opcode extension %s (Blake/QM31 are not implemented)" (Z.to_string ext)
-    else fail "Invalid opcode extension %s" (Z.to_string ext)
-  end;
+  if Z.geq w two_128 then fail "Invalid instruction encoding (does not fit in 128 bits)";
+  let ext =
+    let e = Z.shift_right w 63 in
+    if Z.geq e (Z.of_int 4) then fail "Invalid opcode extension %s" (Z.to_string e);
+    Z.to_int e
+  in
+  let w = Z.logand w low_63 in
   let w = Z.to_int64_unsigned w in
   let f k n = Int64.to_int (Int64.logand (Int64.shift_right_logical w k) (Int64.of_int ((1 lsl n) - 1))) in
   let off0 = f 0 16 and off1 = f 16 16 and off2 = f 32 16 in
@@ -426,8 +612,15 @@ let decode_word (w : Z.t) =
   let pcc = match pcu with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
   let apc = if apu = 0 then (if opc = 1 then 3 else 0) else if apu = 1 then 1 else 2 in
   let opcc = match opc with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
+  (* cairo-vm v3.2.0 decoder: flag restrictions of the Stwo extensions *)
+  if (ext = 1 || ext = 2)
+     && not (opc = 0 && (op1 = 2 || op1 = 4) && res = 0 && pcu = 0 && (apu = 0 || apu = 2)) then
+    fail "Invalid Blake2s flags: %d" flags;
+  if ext = 3
+     && not ((res = 1 || res = 2) && op1 <> 0 && pcu = 0 && opc = 4 && (apu = 0 || apu = 2)) then
+    fail "Invalid QM31 add/mul flags: %d" flags;
   if op1c = 1 && off2 <> 0x8001 then fail "Invalid immediate offset (op1 immediate requires off2 = 1)";
-  off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
+  (ext lsl ext_shift) lor off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
   lor (pcc lsl 54) lor (apc lsl 56) lor (opcc lsl 58) lor (1 lsl 60)
 
 let decode_at vm seg off =
@@ -448,7 +641,7 @@ let[@inline never] fetch_slow vm =
       vm.icache <- na
     end;
     let d = decode_at vm 0 vm.pc in
-    vm.icache.(vm.pc) <- d;
+    if d land ext_mask = 0 then vm.icache.(vm.pc) <- d;
     d
   end
   else decode_at vm vm.pc_seg vm.pc
@@ -477,7 +670,10 @@ let[@inline] record_trace vm pc_seg pc ap fp =
 
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off
 
-let[@inline never] slow_operand_read vm seg off = if seg_ok vm seg then read vm seg off else fail "Unknown segment %d" seg
+let[@inline never] slow_operand_read vm seg off =
+  if seg_ok vm seg then read vm seg off
+  else if seg < 0 then temp_read vm seg off
+  else fail "Unknown segment %d" seg
 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
@@ -492,6 +688,9 @@ let rec step_instr vm d =
   let elen = slen exec in
   let dst = if dst_addr < elen then sget exec dst_addr else 0 in
   let op0 = if op0_addr < elen then sget exec op0_addr else 0 in
+  (* with relocation rules, operands are read through Memory.get *)
+  let dst = if vm.relocating then relocate_temp_value vm dst else dst in
+  let op0 = if vm.relocating then relocate_temp_value vm op0 else op0 in
   (* op1 address *)
   let op1_src = (d lsr 50) land 3 in
   let op1_seg, op1_off =
@@ -506,6 +705,7 @@ let rec step_instr vm d =
   in
   if op1_off < 0 then fail "Negative op1 address";
   let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else 0) else slow_operand_read vm op1_seg op1_off in
+  let op1 = if vm.relocating then relocate_temp_value vm op1 else op1 in
   let size = if op1_src = 1 then 2 else 1 in
   let res_kind = (d lsr 52) land 3 in
   let opcode = (d lsr 58) land 3 in
@@ -671,14 +871,19 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
   vm.ap <- new_ap;
   vm.steps <- vm.steps + 1
 
+(* Cached words are always Stone instructions (their bit 61 may carry
+   run_fast's hint flag); extension bits are only meaningful on a fresh
+   decode, since extension words are never cached. *)
+let[@inline never] step_uncached vm =
+  let d = fetch_slow vm in
+  if d land ext_mask <> 0 then !ext_step vm d else step_instr vm d
+
 let[@inline] step vm =
-  let d =
-    if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then
-      let d = Array.unsafe_get vm.icache vm.pc in
-      if d <> 0 then d else fetch_slow vm
-    else fetch_slow vm
-  in
-  step_instr vm d
+  if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then begin
+    let d = Array.unsafe_get vm.icache vm.pc in
+    if d <> 0 then step_instr vm d else step_uncached vm
+  end
+  else step_uncached vm
 
 (* ---------------- fast interpreter loop ----------------
 
@@ -689,15 +894,34 @@ let[@inline] step vm =
    fast path pays one load per step for hint detection. *)
 
 let hint_bit = 1 lsl 61
+
+(* Raised by [run_fast] after the hints of the current pc have run and a
+   relocation rule exists. Registers are synchronized in [vm]; the caller
+   continues with [run_relocating], which reads memory through the rules. *)
+exception Relocating
 let generic_steps = ref 0
 let hint_steps = ref 0
+
+external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
+  seg -> bytes -> int -> bool -> int array -> int array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
   let pc = ref vm.pc and ap = ref vm.ap and fp = ref vm.fp and pc_seg = ref vm.pc_seg in
   let steps = ref vm.steps in
   let hi1 = ref vm.hi.(1) in
+  let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
+  let registers = Array.make 9 0 and spans = Array.make nh 0 in
   while not (!pc_seg = end_seg && !pc = 0) do
+    if !pc_seg = 0 && end_seg <> 0 then begin
+      registers.(0) <- !pc; registers.(1) <- !ap; registers.(2) <- !fp;
+      registers.(3) <- !hi1; registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
+      let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
+        !pool vm.nsegs vm.trace_on spans (match pedersen with Some b -> b.cache | None -> [||]) in
+      pc := registers.(0); ap := registers.(1); fp := registers.(2);
+      hi1 := registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
+      steps := !steps + count
+    end;
     let ic = vm.icache in
     let d = if !pc_seg = 0 && !pc < Array.length ic then Array.unsafe_get ic !pc else 0 in
     let hints_done = d land hint_bit <> 0 in
@@ -714,6 +938,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         for i = 0 to Array.length hs - 1 do
           (Array.unsafe_get hs i) vm
         done;
+        if vm.relocating then raise Relocating;
         hi1 := vm.hi.(1);
         d land lnot hint_bit
       end
@@ -748,11 +973,11 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                   let v = if a < slen sm then sget sm a else 0 in
                   (* op1 deduction for `[ptr + k] = dst` into a non-deducing segment *)
                   if v = 0 && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
-                     && Array.unsafe_get vm.seg_flag sg <> k_deduce then begin
+                     && not (is_deducing (Array.unsafe_get vm.seg_flag sg)) then begin
                     let dv = sget mem dst_addr in
                     if dv <> 0 then (write vm sg a dv; dv) else 0
                   end
-                  else if v = 0 && Array.unsafe_get vm.seg_flag sg = k_deduce then begin
+                  else if v = 0 && is_deducing (Array.unsafe_get vm.seg_flag sg) then begin
                     (* builtin auto-deduction of the op1 cell, as cairo-vm does first *)
                     let b = deduce_cell vm sg a in
                     if b <> 0 then (write vm sg a b; b) else 0
@@ -869,7 +1094,8 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         let hs = Array.unsafe_get hints !pc in
         for i = 0 to Array.length hs - 1 do
           (Array.unsafe_get hs i) vm
-        done
+        done;
+        if vm.relocating then raise Relocating
       end;
       step vm;
       (* flag hint pcs in the decoded cache *)
@@ -891,3 +1117,23 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
   vm.fp <- !fp;
   vm.pc_seg <- !pc_seg;
   vm.steps <- !steps
+
+(* Generic loop used once relocation rules exist (rare: temporary segments).
+   [skip_hints] is true when the hints of the current pc already ran. *)
+let run_relocating vm (hints : (vm -> unit) array array) end_seg ~skip_hints =
+  let nh = Array.length hints in
+  let skip = ref skip_hints in
+  while not (vm.pc_seg = end_seg && vm.pc = 0) do
+    if (not !skip) && vm.pc_seg = 0 && vm.pc < nh then begin
+      let hs = Array.unsafe_get hints vm.pc in
+      for i = 0 to Array.length hs - 1 do
+        (Array.unsafe_get hs i) vm
+      done
+    end;
+    skip := false;
+    step vm
+  done
+
+let run vm hints end_seg =
+  try run_fast vm hints end_seg
+  with Relocating -> run_relocating vm hints end_seg ~skip_hints:true

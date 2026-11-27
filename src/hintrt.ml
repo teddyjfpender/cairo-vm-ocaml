@@ -79,11 +79,15 @@ let compare_values a b =
 
 (* ---- compiled hint context ---- *)
 
+type access = { value : vm -> int; address : vm -> int }
+
 type ctx = {
   prog : P.t;
   hint : P.hint;
   scopes : scopes;
   refs : (string, P.reference) Hashtbl.t; (* short name -> reference *)
+  mutable constants : (string * Z.t option) list;
+  bindings : (string, access) Hashtbl.t;
   plans : (string * string list, bool * step list) Hashtbl.t; (* memoized member paths *)
 }
 
@@ -102,7 +106,13 @@ let make_ctx prog scopes (hint : P.hint) =
       in
       if id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
     hint.ref_ids;
-  { prog; hint; scopes; refs; plans = Hashtbl.create 4 }
+  { prog; hint; scopes; refs; constants = []; bindings = Hashtbl.create 4; plans = Hashtbl.create 4 }
+
+let read_reference vm a =
+  if not (Felt.is_reloc a) then fail "Dereference of a non-pointer in reference";
+  let v = get vm (Felt.rseg a) (Felt.roff a) in
+  if v = 0 then fail "Unknown memory cell %d:%d while evaluating a reference" (Felt.rseg a) (Felt.roff a);
+  v
 
 let rec eval vm ctx (r : P.reference) (e : P.expr) : int =
   match e with
@@ -113,12 +123,7 @@ let rec eval vm ctx (r : P.reference) (e : P.expr) : int =
       Felt.reloc 1 ap
   | P.Reg_fp -> Felt.reloc 1 vm.fp
   | P.Int z -> Felt.of_z z
-  | P.Deref e ->
-      let a = eval vm ctx r e in
-      if not (Felt.is_reloc a) then fail "Dereference of a non-pointer in reference";
-      let v = get vm (Felt.rseg a) (Felt.roff a) in
-      if v = 0 then fail "Unknown memory cell %d:%d while evaluating a reference" (Felt.rseg a) (Felt.roff a);
-      v
+  | P.Deref e -> read_reference vm (eval vm ctx r e)
   | P.Add (a, b) -> value_add (eval vm ctx r a) (eval vm ctx r b)
   | P.Sub (a, b) -> value_sub (eval vm ctx r a) (eval vm ctx r b)
   | P.Mul (a, b) -> value_mul (eval vm ctx r a) (eval vm ctx r b)
@@ -129,15 +134,82 @@ let rec eval vm ctx (r : P.reference) (e : P.expr) : int =
 let find_ref ctx name =
   match Hashtbl.find_opt ctx.refs name with Some r -> r | None -> fail "Unknown identifier ids.%s" name
 
-(* value of ids.name *)
-let get_val vm ctx name =
-  let r = find_ref ctx name in
-  eval vm ctx r r.r_expr
+(* Resolve the register, constant displacements and dereferences once per
+   used binding. AP group and address checks still run at the access site. *)
+let rec compile_expr ctx (r : P.reference) expr =
+  let immediate n = let code = Felt.of_z n in fun _ -> code in
+  match expr with
+  | P.Cast (e, _) -> compile_expr ctx r e
+  | P.Int n -> immediate n
+  | P.Neg (P.Int n) -> immediate (Z.neg n)
+  | P.Reg_fp -> (fun vm -> Felt.reloc 1 vm.fp)
+  | P.Reg_ap ->
+      let delta = ctx.hint.h_offset - r.r_offset in
+      if r.r_group <> ctx.hint.h_group then
+        (fun _ -> fail "AP tracking group mismatch when evaluating a reference")
+      else (fun vm ->
+        let ap = vm.ap - delta in
+        if ap < 0 then fail "Invalid ap correction";
+        Felt.reloc 1 ap)
+  | P.Deref e ->
+      let addr = compile_expr ctx r e in
+      (fun vm -> read_reference vm (addr vm))
+  | P.Add (e, P.Int n) | P.Add (e, P.Neg (P.Int n)) ->
+      let n = match expr with P.Add (_, P.Neg _) -> Z.neg n | _ -> n in
+      let base = compile_expr ctx r e and offset = Felt.of_z n in
+      (fun vm -> value_add (base vm) offset)
+  | _ -> (fun vm -> eval vm ctx r expr)
 
-(* address of ids.name: strip the outer dereference *)
+let binding ctx name =
+  match Hashtbl.find_opt ctx.bindings name with
+  | Some plan -> plan
+  | None ->
+      let r = find_ref ctx name in
+      let plan = match r.r_expr with
+        | P.Deref e ->
+            let address = compile_expr ctx r e in
+            {address; value = (fun vm -> read_reference vm (address vm))}
+        | e ->
+            let read = compile_expr ctx r e in
+            {address = read; value = read}
+      in
+      Hashtbl.add ctx.bindings name plan;
+      plan
+
+(* The compiler can resolve a simple FP address in one operation. Keep the
+   ordinary expression path for out-of-range offsets and uncommon shapes. *)
+let bound_address ctx name =
+  let plan = lazy (
+    match (find_ref ctx name).r_expr with
+    | P.Deref (P.Cast (P.Reg_fp, _)) -> (fun vm -> Felt.reloc 1 vm.fp)
+    | P.Deref (P.Cast (P.Add (P.Reg_fp, (P.Int n | P.Neg (P.Int n) as term)), _))
+      when Z.fits_int n && Z.lt (Z.abs n) (Z.of_int 65536) ->
+        let delta = Z.to_int n * (match term with P.Neg _ -> -1 | _ -> 1) in
+        (fun vm -> let off = vm.fp + delta in
+          if off < 0 || off > Felt.off_mask then (binding ctx name).address vm
+          else Felt.reloc 1 off)
+    | _ -> (binding ctx name).address)
+  in fun vm -> (Lazy.force plan) vm
+
+let bound_felt ctx name =
+  let plan = lazy (match (find_ref ctx name).r_expr with
+    | P.Deref _ -> let addr = bound_address ctx name in (fun vm -> read_reference vm (addr vm))
+    | _ -> (binding ctx name).value) in
+  fun vm -> let v = (Lazy.force plan) vm in
+    if not (Felt.is_felt v) then fail "ids.%s: expected an integer" name;
+    v
+
+let bound_set ctx name =
+  let addr = bound_address ctx name in
+  fun vm v ->
+    let a = addr vm in
+    if not (Felt.is_reloc a) then fail "ids.%s has no address" name;
+    write_checked vm (Felt.rseg a) (Felt.roff a) v
+
+let get_val vm ctx name = (binding ctx name).value vm
+
 let get_addr vm ctx name =
-  let r = find_ref ctx name in
-  let a = match r.r_expr with P.Deref e -> eval vm ctx r e | e -> eval vm ctx r e in
+  let a = (binding ctx name).address vm in
   if not (Felt.is_reloc a) then fail "ids.%s has no address" name;
   a
 
@@ -244,7 +316,7 @@ let set_member vm ctx name path v =
 
 (* ---- constants (ids.NAME for const identifiers) ---- *)
 
-let const_z ctx name =
+let resolve_constant ctx name =
   let from_scopes =
     List.find_map
       (fun sc ->
@@ -254,7 +326,7 @@ let const_z ctx name =
       (List.rev ctx.hint.scopes)
   in
   match from_scopes with
-  | Some v -> v
+  | Some _ as value -> value
   | None -> (
       let suffix = "." ^ name in
       let found = ref None in
@@ -264,7 +336,21 @@ let const_z ctx name =
              && String.sub k (String.length k - String.length suffix) (String.length suffix) = suffix
           then found := id.i_value)
         ctx.prog.P.identifiers;
-      match !found with Some v -> v | None -> fail "Missing constant %s" name)
+      !found)
+
+(* The identifier table and accessible scopes are fixed for a compiled hint.
+   Cache misses too: optional constants can otherwise scan every identifier
+   on every iteration. Keep lookup lazy for hints that never execute. *)
+let const_opt ctx name =
+  match List.assoc_opt name ctx.constants with
+  | Some cached -> cached
+  | None ->
+      let value = resolve_constant ctx name in
+      ctx.constants <- (name, value) :: ctx.constants;
+      value
+
+let const_z ctx name =
+  match const_opt ctx name with Some v -> v | None -> fail "Missing constant %s" name
 
 (* ---- misc helpers ---- *)
 

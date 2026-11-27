@@ -17,6 +17,7 @@
 #include <caml/mlvalues.h>
 #include <caml/fail.h>
 #include <caml/hash.h>
+#include <caml/bigarray.h>
 
 typedef uint64_t u64;
 typedef unsigned __int128 u128;
@@ -382,8 +383,38 @@ intnat cvm_bitwise(value pool, intnat op, intnat a, intnat b, intnat dst) {
   if ((x[3] >> 59) || (y[3] >> 59)) return 0;
   for (int i = 0; i < 4; i++)
     r[i] = op == 0 ? (x[i] & y[i]) : op == 1 ? (x[i] ^ y[i]) : (x[i] | y[i]);
+  if (eq4(r, x)) return a;
+  if (eq4(r, y)) return b;
   return store(pool, r, dst);
 }
+/* Compare assigned bitwise outputs directly in canonical limbs. Missing
+   outputs stay holes. Return false to request the detailed OCaml checks. */
+value cvm_verify_bitwise(value pool, value segment, value size) {
+  intnat end = Long_val(size);
+  if (end < 0 || end > Caml_ba_array_val(segment)->dim[0]) return Val_false;
+  intnat *cells = Caml_ba_data_val(segment);
+  for (intnat i = 0; i + 2 < end; i += 5) {
+    intnat a = cells[i], b = cells[i+1];
+    if ((a && !(a & 1)) || (b && !(b & 1))) return Val_false;
+    if (!a || !b) continue;
+    u64 x[4], y[4], actual[4];
+    load(pool, a, x); load(pool, b, y);
+    if ((x[3] | y[3]) >> 59) return Val_false;
+    for (int k = 0; k < 3 && i+2+k < end; ++k) {
+      intnat out = cells[i+2+k];
+      if (!out) continue;
+      if (!(out & 1)) return Val_false;
+      load(pool, out, actual);
+      for (int limb = 0; limb < 4; ++limb) {
+        u64 expected = k == 0 ? x[limb] & y[limb] :
+                       k == 1 ? x[limb] ^ y[limb] : x[limb] | y[limb];
+        if (actual[limb] != expected) return Val_false;
+      }
+    }
+  }
+  return Val_true;
+}
+
 value cvm_bitwise_byte(value pool, value op, value a, value b, value d) {
   return Val_long(cvm_bitwise(pool, Long_val(op), Long_val(a), Long_val(b), Long_val(d)));
 }
@@ -512,6 +543,18 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   /* Fixed namespaces frequently hash different keys under the same prefix.
      Keep only canonical coordinates, independent of any VM's felt pool. */
   static _Thread_local struct { u64 key[4]; jac point; int valid; } previous;
+  struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
+  static _Thread_local struct { struct pair_entry ways[4]; unsigned next; } pairs[32];
+  u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
+  unsigned index = (h ^ (h >> 32)) & 31;
+  for (int way = 0; way < 4; ++way) {
+    struct pair_entry *e = &pairs[index].ways[way];
+    if (e->valid && eq4(e->a, a) && eq4(e->b, b)) {
+      memcpy(out, e->hash, sizeof e->hash);
+      return;
+    }
+  }
+  struct pair_entry *entry = &pairs[index].ways[pairs[index].next++ & 3];
   jac acc;
   if (previous.valid && eq4(previous.key, a)) {
     acc = previous.point;
@@ -528,6 +571,35 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   mont_sqr(zi, zi);
   mont_mul(x, acc.x, zi);
   from_mont(out, x);
+  memcpy(entry->a, a, sizeof entry->a);
+  memcpy(entry->b, b, sizeof entry->b);
+  memcpy(entry->hash, out, sizeof entry->hash);
+  entry->valid = 1;
+}
+
+value cvm_verify_pedersen(value pool, value segment, value size, value cache) {
+  intnat n = Long_val(size);
+  if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
+  const intnat *cells = Caml_ba_data_val(segment);
+  for (intnat i=0; i+2<n; i+=3) {
+    intnat a = cells[i], b = cells[i+1], out = cells[i+2];
+    if ((a && !(a&1)) || (b && !(b&1))) return Val_false;
+    if (!a || !b || !out) continue;
+    if (!(out&1)) return Val_false;
+    if ((uintnat)(i+2) < Wosize_val(cache)) {
+      intnat verified = Long_val(Field(cache, i+2));
+      if (verified) {
+        if (verified != out && !((verified & out & 3) == 3 && cvm_big_eq(pool, verified, out)))
+          return Val_false;
+        continue;
+      }
+    }
+    u64 x[4], y[4], expected[4], actual[4];
+    load(pool, a, x); load(pool, b, y); load(pool, out, actual);
+    pedersen(expected, x, y);
+    if (!eq4(expected, actual)) return Val_false;
+  }
+  return Val_true;
 }
 
 intnat cvm_pedersen(value pool, intnat a, intnat b, intnat dst) {
@@ -616,10 +688,29 @@ static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
 
 /* inputs/outputs: pool slots in canonical form */
 void cvm_poseidon(value pool, intnat i0, intnat o0) {
+  /* Independent calls can revisit the same node of a Merkle tree. Keys
+     and values own their limbs, so pool growth and VM lifetimes are irrelevant. */
+  struct entry { u64 input[3][4], output[3][4]; int valid; };
+  static _Thread_local struct { struct entry ways[4]; unsigned next; } recent[64];
+  const u64 *input = SLOT(pool, i0);
+  u64 h = input[0] ^ (input[4] * UINT64_C(0x9e3779b97f4a7c15)) ^
+          (input[8] * UINT64_C(0xbf58476d1ce4e5b9)) ^ input[3] ^ input[7] ^ input[11];
+  unsigned index = (h ^ (h >> 32)) & 63;
+  for (int way = 0; way < 4; ++way) {
+    struct entry *e = &recent[index].ways[way];
+    if (e->valid && memcmp(e->input, input, sizeof e->input) == 0) {
+      memcpy(SLOT(pool, o0), e->output, sizeof e->output);
+      return;
+    }
+  }
+  struct entry *e = &recent[index].ways[recent[index].next++ & 3];
+  memcpy(e->input, input, sizeof e->input);
   u64 s[3][4];
   for (int k = 0; k < 3; k++) to_mont(s[k], SLOT(pool, i0 + k));
   hades(s[0], s[1], s[2]);
-  for (int k = 0; k < 3; k++) from_mont(SLOT(pool, o0 + k), s[k]);
+  for (int k = 0; k < 3; k++) from_mont(e->output[k], s[k]);
+  e->valid = 1;
+  memcpy(SLOT(pool, o0), e->output, sizeof e->output);
 }
 value cvm_poseidon_byte(value pool, value i, value o) {
   cvm_poseidon(pool, Long_val(i), Long_val(o));

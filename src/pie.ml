@@ -1,5 +1,5 @@
 (* Cairo PIE output (cairo-vm v3.2.0 vm/src/vm/runners/cairo_pie.rs and
-   CairoRunner::get_cairo_pie). The archive holds the same five members with
+   CairoRunner::get_cairo_pie; unchanged in v4.0.0). The archive holds the same five members with
    the same contents as cairo-vm's; entries are stored uncompressed, so the
    zip container bytes differ from cairo-vm's deflated archive. *)
 
@@ -188,7 +188,10 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
              match k with
              | Output -> Obj [ ("pages", Obj []); ("attributes", Obj []) ]
              | Pedersen -> Arr (List.map (fun o -> Arr [ int b.base; int o ]) (Runner.pedersen_verified ~secure r b))
-             | Ecdsa -> Arr []
+             | Ecdsa ->
+                 let sigs = List.sort compare (Hashtbl.fold (fun o rs acc -> (o, rs) :: acc) Builtins_ext.signatures []) in
+                 let num z = Num (Z.to_string (Z.erem z Felt.p)) in
+                 Arr (List.map (fun (o, (r_, s_)) -> Arr [ Arr [ int b.base; int o ]; Arr [ num r_; num s_ ] ]) sigs)
              | _ -> Null ))
          (by_ord (List.map (fun b -> (b.kind, b)) builtins)))
   in

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Differential parity check against cairo-vm-cli (Rust) over a corpus.
 
-usage: test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [-j N] [--filter SUBSTR] [--layout L] [--pie] [--verbose]
+usage: test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [-j N] [--filter SUBSTR] [--layout L] [--layout_params FILE] [--pie] [--verbose]
 
 For each compiled program in DIR, both CLIs run with identical flags. A program
 PASSES when both succeed with byte-identical stdout, trace, memory (and AIR
@@ -16,7 +16,8 @@ verbose = '--verbose' in argv
 jobs = int(argv[argv.index('-j') + 1]) if '-j' in argv else os.cpu_count() // 2
 filt = argv[argv.index('--filter') + 1] if '--filter' in argv else None
 layout_arg = argv[argv.index('--layout') + 1] if '--layout' in argv else None
-pos = [a for i, a in enumerate(argv) if not a.startswith('-') and (i == 0 or argv[i - 1] not in ('-j', '--filter', '--layout'))]
+params_arg = argv[argv.index('--layout_params') + 1] if '--layout_params' in argv else None
+pos = [a for i, a in enumerate(argv) if not a.startswith('-') and (i == 0 or argv[i - 1] not in ('-j', '--filter', '--layout', '--layout_params'))]
 rust, ocaml, corpus = pos[0], pos[1], pos[2]
 tmp = tempfile.mkdtemp()
 env_o = {k: v for k, v in os.environ.items() if k not in ('CAIRO_VM_RUST_CLI', 'CAIRO_VM_DELEGATED')}
@@ -27,6 +28,8 @@ def run(binary, prog, tag, env=None):
     cmd = [binary, prog, '--layout', layout, '--print_output',
            '--trace_file', base + '.trace', '--memory_file', base + '.mem']
     outs = [base + '.trace', base + '.mem']
+    if params_arg:
+        cmd += ['--cairo_layout_params_file', params_arg]
     if proof:
         cmd += ['--proof_mode', '--air_public_input', base + '.pub', '--air_private_input', base + '.priv',
                 '--fill-holes', 'false']

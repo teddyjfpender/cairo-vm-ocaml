@@ -1,10 +1,12 @@
 """Compare release builds of cairo-vm-cli and cairo-vm-ocaml on compiled programs."""
 import argparse
 import csv
+from collections import defaultdict
 import filecmp
 import os
 import random
 import subprocess
+import statistics
 import sys
 import tempfile
 import time
@@ -18,9 +20,14 @@ def main():
     parser.add_argument("programs", nargs="+", type=Path)
     parser.add_argument("--runs", type=int, default=4)
     parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--min-suite-speedup", type=float, metavar="RATIO",
+                        help="fail if the ratio of summed per-program median times is below RATIO")
     args = parser.parse_args()
     if args.runs < 2 or args.runs % 2:
         parser.error("--runs must be positive and even")
+    if args.min_suite_speedup is not None and not args.min_suite_speedup > 0:
+        parser.error("--min-suite-speedup must be positive")
+    samples = defaultdict(lambda: defaultdict(list))
     rng = random.Random(267)
     results = csv.writer(sys.stdout, lineterminator="\n")
     results.writerow(["round", "program", "first", "rust_seconds", "ocaml_seconds"])
@@ -52,8 +59,17 @@ def main():
                         paths = [Path(directory) / (tag + option) for tag in binaries]
                         if not filecmp.cmp(*paths, shallow=False):
                             raise ValueError(f"{prog}: different {option} bytes")
+                for tag, seconds in times.items():
+                    samples[prog][tag].append(seconds)
                 results.writerow([i + 1, prog.stem, order[0], times["rust"], times["ocaml"]])
                 sys.stdout.flush()
+
+    if args.min_suite_speedup is not None:
+        totals = {tag: sum(statistics.median(pair[tag]) for pair in samples.values()) for tag in binaries}
+        speedup = totals["rust"] / totals["ocaml"]
+        print(f"Suite speedup {speedup:.3f}x (required {args.min_suite_speedup:g}x)", file=sys.stderr)
+        if speedup < args.min_suite_speedup:
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

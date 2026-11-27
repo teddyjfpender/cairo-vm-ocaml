@@ -1,13 +1,13 @@
 (* Cairo layouts with the instance parameters proof mode needs, mirroring
-   cairo-vm v3.2.0 vm/src/types/layout.rs and instance_definitions/*.rs.
+   cairo-vm v4.0.0 vm/src/types/layout.rs and instance_definitions/*.rs.
 
-   The reference cairo-vm-cli is built without the [mod_builtin] cargo
-   feature, so add_mod/mul_mod are absent from every layout here
-   ([with_mod_builtin] = false). *)
+   In v4 the mod builtins are always compiled in (v3.2.0 gated them behind
+   the [mod_builtin] cargo feature, off in the default cairo-vm-cli build);
+   [with_mod_builtin] selects between the two. *)
 
 open Vm
 
-let with_mod_builtin = false
+let with_mod_builtin = true
 
 (* LowRatio: numerator / denominator; [num] = 0 is a dynamic-layout ratio 0 *)
 type ratio = { num : int; den : int }

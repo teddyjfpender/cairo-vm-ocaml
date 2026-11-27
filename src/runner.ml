@@ -64,6 +64,8 @@ type t = {
   seg_sizes : (int, int) Hashtbl.t; (* finalized segment sizes *)
   public_offsets : (int, (int * int) list) Hashtbl.t; (* segment -> (offset, page) *)
   acc : accessed;
+  mutable zero_seg : int; (* mod builtins' zero segment, -1 if none *)
+  mutable zero_size : int;
 }
 
 let rec is_subsequence xs ys =
@@ -75,7 +77,11 @@ let rec is_subsequence xs ys =
 let seg_flag_of = function
   | Range_check -> k_rc
   | Range_check96 -> k_rc96
-  | Pedersen | Bitwise | Ec_op | Keccak | Poseidon -> k_deduce
+  | Bitwise -> k_bitwise
+  | Pedersen -> k_pedersen
+  | Poseidon -> k_poseidon
+  | Keccak -> k_keccak
+  | Ec_op -> k_ec_op
   | Ecdsa -> k_ecdsa
   | _ -> k_plain
 
@@ -96,6 +102,15 @@ let entry_pc (cfg : config) (prog : Program.t) =
   match Hashtbl.find_opt prog.identifiers full with
   | Some { Program.i_pc = Some pc; _ } -> pc
   | _ -> ( match (name, prog.main) with "main", Some pc -> pc | _ -> fail "Entrypoint %s not found" name)
+
+(* cairo-vm creates the mod builtins' shared zero segment after the
+   entrypoint segments (CairoRunner::initialize) *)
+let add_zero_segment r =
+  match List.filter (fun b -> b.kind = Add_mod || b.kind = Mul_mod) r.vm.builtins with
+  | [] -> r
+  | mods ->
+      let seg = Builtins_ext.add_zero_segment r.vm mods in
+      { r with zero_seg = seg; zero_size = used_size r.vm seg }
 
 let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : t =
   let prog_builtins =
@@ -120,6 +135,9 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
       if (not (List.mem b layout_kinds)) && not cfg.allow_missing_builtins then
         fail "Program uses builtin %s, which is not present in layout %s" (bname b) cfg.layout)
     prog_builtins;
+  Builtins_ext.reset ();
+  Builtins_ext.install ();
+  Opcode_ext.install ();
   (* proof mode always records the trace: memory-hole accounting replays it *)
   let vm = create ~trace:(cfg.trace || proof) in
   let s0 = add_segment vm in
@@ -131,9 +149,6 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
     List.map
       (fun k ->
         let included = List.mem k prog_builtins in
-        (match k with
-        | (Ecdsa | Add_mod | Mul_mod) when included -> fail "Builtin %s is not supported by this VM" (bname k)
-        | _ -> ());
         let seg = add_segment vm in
         let b = { kind = k; base = seg; included; stop_ptr = -1; cache = [||] } in
         vm.seg_builtin.(seg) <- Some b;
@@ -158,6 +173,7 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
       end_pc = -1; initial_fp = 0; exec_public = []; eff_sizes = None; seg_sizes = Hashtbl.create 16;
       public_offsets = Hashtbl.create 16;
       acc = { bits = [||]; count = [||]; cursor = 0; rc_lo = max_int; rc_hi = min_int };
+      zero_seg = -1; zero_size = 0;
     }
   in
   let base =
@@ -173,6 +189,7 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
       vm.ap <- 2;
       vm.fp <- 2;
       { base with end_pc; initial_fp = 2; exec_public = List.rev (List.init (List.length stack) Fun.id) }
+      |> add_zero_segment
     end
     else begin
       let return_fp = add_segment vm in
@@ -185,7 +202,7 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
       vm.pc <- entry;
       vm.ap <- n;
       vm.fp <- n;
-      { base with end_seg; initial_fp = n }
+      { base with end_seg; initial_fp = n } |> add_zero_segment
     end
   in
   let scopes, hints = compile_hints prog in
@@ -223,7 +240,7 @@ let run_until_end r =
     (* one more step so that __end__ is the last executed instruction *)
     run_for_steps r 1
   end
-  else run_fast r.vm r.hints r.end_seg
+  else run r.vm r.hints r.end_seg
 
 (* ---- accessed addresses and instruction offset limits, from the trace ---- *)
 
@@ -257,8 +274,10 @@ let mark acc seg off =
     end
   end
 
+(* cached words are Stone instructions whose bit 61 may be run_fast's hint
+   flag; extension words are never cached and decode with their extension *)
 let decoded vm pc_seg pc =
-  if pc_seg = 0 && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then vm.icache.(pc) land lnot hint_bit
+  if pc_seg = 0 && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then vm.icache.(pc) land lnot ext_mask
   else decode_at vm pc_seg pc
 
 (* Trace layout (see Vm.record_trace): a packed word with low bit 1, or a
@@ -296,9 +315,20 @@ let update_accessed r =
     | 1 -> mark acc pc_seg (pc + 1)
     | 2 -> mark acc 1 (fp + off2)
     | _ -> mark acc 1 (ap + off2));
-    mark acc pc_seg pc
+    mark acc pc_seg pc;
+    (* Blake2s / BlakeFinalize write their 8 output words as accessed *)
+    let ext = (d lsr ext_shift) land 3 in
+    if ext = 1 || ext = 2 then begin
+      let out = read vm 1 ap in
+      if Felt.is_reloc out then
+        for k = 0 to 7 do
+          mark acc (Felt.rseg out) (Felt.roff out + k)
+        done
+    end
   done;
-  acc.cursor <- !i
+  acc.cursor <- !i;
+  List.iter (fun (sg, o) -> mark acc sg o) !Builtins_ext.accessed_log;
+  Builtins_ext.accessed_log := []
 
 let accessed_count r seg =
   update_accessed r;
@@ -306,10 +336,18 @@ let accessed_count r seg =
 
 (* ---- end of run ---- *)
 
+external verified_bitwise : bytes -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
+
+external verified_pedersen : bytes -> seg -> int -> int array -> bool = "cvm_verify_pedersen" [@@noalloc]
+
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
     (fun b ->
-      if vm.seg_flag.(b.base) = k_deduce then begin
+      if is_deducing vm.seg_flag.(b.base) &&
+         (fill_holes || not (match b.kind with
+          | Bitwise -> verified_bitwise !Felt.pool vm.segs.(b.base) (used_size vm b.base)
+          | Pedersen -> verified_pedersen !Felt.pool vm.segs.(b.base) (used_size vm b.base) b.cache
+          | _ -> false)) then begin
         let n = used_size vm b.base in
         let width = cells_per_instance b.kind and inputs = n_input_cells b.kind in
         let limit = if fill_holes then ((n + width - 1) / width) * width else n in
@@ -477,7 +515,9 @@ let memory_holes r =
   let holes = ref 0 in
   for seg = 0 to r.vm.nsegs - 1 do
     if not (is_builtin_seg r seg) then begin
-      let a = accessed_count r seg in
+      let a =
+        if seg = r.zero_seg && not (Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
+      in
       if a > 0 then begin
         let size = segment_size r seg in
         if a > size then fail "Segment %d has %d accessed addresses but its size is %d" seg a size;
@@ -587,7 +627,21 @@ let finalize_segments r =
       Hashtbl.replace r.seg_sizes b.base size;
       Hashtbl.replace r.public_offsets b.base
         (if b.kind = Output then List.init (used_cells r b) (fun i -> (i, 0)) else []))
-    r.vm.builtins
+    r.vm.builtins;
+  if r.zero_seg >= 0 then begin
+    Hashtbl.replace r.seg_sizes r.zero_seg r.zero_size;
+    Hashtbl.replace r.public_offsets r.zero_seg []
+  end
+
+let check_no_temp_values vm =
+  for s = 0 to vm.nsegs - 1 do
+    let a = vm.segs.(s) in
+    for i = 0 to min (used_size vm s) (slen a) - 1 do
+      let v = sget a i in
+      if Felt.is_reloc v && Felt.rseg v < 0 then
+        fail "Invalid memory value at %d:%d: temporary address %d:%d" s i (Felt.rseg v) (Felt.roff v)
+    done
+  done
 
 let verify_secure_runner r =
   let vm = r.vm in
@@ -598,12 +652,15 @@ let verify_secure_runner r =
       if b.stop_ptr >= 0 && n >= b.stop_ptr + 1 then fail "Out of bounds access to builtin segment %s" (bname b.kind))
     vm.builtins;
   if used_size vm 0 > Array.length r.prog.data then fail "Out of bounds access to program segment";
+  (* every temporary address must have been relocated to a real one *)
+  if vm.ntsegs > 0 then check_no_temp_values vm;
   (* builtin security checks: inputs of every instance must be present *)
   List.iter
     (fun b ->
       match b.kind with
       | Output -> ()
       | k ->
+          if k = Add_mod || k = Mul_mod then Builtins_ext.security_check vm b;
           let n = used_size vm b.base in
           if n > 0 then begin
             let cpi = cells_per_instance k and nin = n_input_cells k in
@@ -620,7 +677,7 @@ let verify_secure_runner r =
               done;
               for j = nin to cpi - 1 do
                 let off = (cpi * i) + j in
-                if read vm b.base off = 0 && vm.seg_flag.(b.base) = k_deduce then
+                if read vm b.base off = 0 && is_deducing vm.seg_flag.(b.base) then
                   ignore (deduce_builtin vm b b.base off)
               done
             done
@@ -639,6 +696,7 @@ let verify_secure_runner r =
   end
 
 let end_run ?(fill_holes=false) r ~secure ~allow_missing =
+  relocate_temp_memory r.vm;
   if r.proof then begin
     verify_auto_deductions ~fill_holes r.vm;
     if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";
@@ -686,6 +744,8 @@ let write_trace r path =
 
 let write_memory r path =
   let vm = r.vm in
+  (* relocate_value rejects temporary segments (TemporarySegmentInRelocation) *)
+  if vm.had_temp then check_no_temp_values vm;
   let sizes = Array.init vm.nsegs (used_size vm) in
   c_write_memory path vm.segs sizes (relocation_table r) vm.nsegs !Felt.pool
 

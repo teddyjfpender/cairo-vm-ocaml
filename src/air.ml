@@ -161,6 +161,50 @@ let instances vm b fields =
   done;
   List.rev !out
 
+(* ModBuiltinRunner::air_private_input: missing values default to 0 *)
+let mod_private_input (r : Runner.t) b =
+  let vm = r.vm in
+  let table = Runner.relocation_table r in
+  let cell (sg, o) = if sg >= 0 && sg < vm.nsegs && o >= 0 then read vm sg o else 0 in
+  let int_or0 a = let v = cell a in if v <> 0 && Felt.is_felt v then v else Felt.zero in
+  let reloc_or0 a = let v = cell a in if v <> 0 && Felt.is_reloc v then (Felt.rseg v, Felt.roff v) else (0, 0) in
+  let usize_or0 a =
+    let v = cell a in
+    if v <> 0 && Felt.is_felt v then (let n = Felt.to_nat v in if n < 0 then 0 else n) else 0
+  in
+  let relocate (sg, o) = if sg < Array.length table then table.(sg) + o else 0 in
+  let base = b.base in
+  let n_inst = used_size vm base / 7 in
+  let instances =
+    List.init n_inst (fun inst ->
+        let a0 = inst * 7 in
+        let values_ptr = reloc_or0 (base, a0 + 4) and offsets_ptr = reloc_or0 (base, a0 + 5) in
+        let n = usize_or0 (base, a0 + 6) in
+        let p = List.init 4 (fun i -> (Printf.sprintf "p%d" i, hex_felt (int_or0 (base, a0 + i)))) in
+        let fetch var idx =
+          let off = usize_or0 (fst offsets_ptr, snd offsets_ptr + (3 * idx) + var) in
+          let words = List.init 4 (fun i -> hex_felt (int_or0 (fst values_ptr, snd values_ptr + off + i))) in
+          (off, words)
+        in
+        let batch =
+          List.init 1 (fun idx ->
+              let vars =
+                List.concat_map
+                  (fun (var, name) ->
+                    let off, words = fetch var idx in
+                    ((name ^ "_offset"), Int off) :: List.mapi (fun i w -> (Printf.sprintf "%s%d" name i, w)) words)
+                  [ (0, "a"); (1, "b"); (2, "c") ]
+              in
+              Obj vars)
+        in
+        Obj
+          ((("index", Int inst) :: p)
+          @ [ ("values_ptr", Int (relocate values_ptr)); ("offsets_ptr", Int (relocate offsets_ptr)); ("n", Int n);
+              ("batch", Arr batch) ]))
+  in
+  let zero = if r.zero_seg >= 0 && r.zero_seg < Array.length table then table.(r.zero_seg) else 0 in
+  Obj [ ("instances", Arr instances); ("zero_value_address", Int zero) ]
+
 let builtin_private_input (r : Runner.t) b =
   let vm = r.vm in
   match b.kind with
@@ -179,21 +223,37 @@ let builtin_private_input (r : Runner.t) b =
   | Poseidon -> instances vm b [ "input_s0"; "input_s1"; "input_s2" ]
   | Keccak -> instances vm b (List.init 8 (Printf.sprintf "input_s%d"))
   | Ecdsa ->
-      (* signatures come from hints; this VM rejects the ecdsa builtin when used *)
-      if used_size vm b.base > 0 then fail "ecdsa private input is not supported";
-      []
-  | Add_mod | Mul_mod -> fail "mod builtin private input is not supported"
+      (* signatures recorded by the verify_ecdsa_signature hints, ordered by
+         instance index *)
+      let sigs = Hashtbl.fold (fun off rs acc -> (off, rs) :: acc) Builtins_ext.signatures [] in
+      let sigs = List.stable_sort (fun (a, _) (b, _) -> compare (a / 2) (b / 2)) (List.sort compare sigs) in
+      List.filter_map
+        (fun (off, (r_, s_)) ->
+          match (int_cell vm b.base off, int_cell vm b.base (off + 1)) with
+          | Some pk, Some msg ->
+              let w = try Z.invert s_ Builtins_ext.ec_order with _ -> Z.zero in
+              let w = Z.erem w Felt.p in
+              Some
+                (Obj
+                   [ ("index", Int (off / 2)); ("pubkey", hex_felt pk); ("msg", hex_felt msg);
+                     ("signature_input", Obj [ ("r", Str (hex_z (Z.erem r_ Felt.p))); ("w", Str (hex_z w)) ]) ])
+          | _ -> None)
+        sigs
+  | Add_mod | Mul_mod -> [ mod_private_input r b ]
   | Output -> []
 
 let private_input (r : Runner.t) ~trace_path ~memory_path =
   if not r.proof then fail "AIR private input requires proof mode";
   let canon p = try Unix.realpath p with Unix.Unix_error _ -> p in
-  let order = [ Pedersen; Range_check; Range_check96; Ecdsa; Bitwise; Ec_op; Keccak; Poseidon ] in
+  let order = [ Pedersen; Range_check; Range_check96; Ecdsa; Bitwise; Ec_op; Keccak; Poseidon; Add_mod; Mul_mod ] in
   let fields =
     List.filter_map
       (fun k ->
         match List.find_opt (fun b -> b.kind = k) r.vm.builtins with
-        | Some b -> Some (bname k, Arr (builtin_private_input r b))
+        | Some b -> (
+            match (k, builtin_private_input r b) with
+            | (Add_mod | Mul_mod), l -> Option.map (fun x -> (bname k, x)) (List.nth_opt l 0)
+            | _, l -> Some (bname k, Arr l))
         | None -> None)
       order
   in
