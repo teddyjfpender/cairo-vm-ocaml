@@ -49,7 +49,7 @@ The 2,048-transaction variant ran 13,101,755 steps. Both runners merged extra se
 for that fixture to fit the PIE address encoding. All three fixtures matched all five Rust PIE members. The sequencer’s alternating-inner-calls test ran 229,495 steps with SHA-256, SHA-512 and
 KZG data availability enabled. The five-block new-syscalls flow ran 27 transactions and 1,163,403 steps. It exercises Keccak,
 both secp256 curves, deterministic CASM elliptic-curve hints, circuit evaluation, and dictionary
-squashing. All five archive members matched, including 50,537 memory holes. The saved reverted
+squashing. All five archive members matched, including 50,537 memory holes. The scaled five-block fixture repeats the upstream Poseidon, Keccak, EC, secp256k1/r1, SHA and circuit invokes 16 times before advancing the state. Its 282 transactions ran 10,954,713 steps with 84,039 memory holes and matched all five sequencer PIE members. The saved reverted
 Invoke and execution-info fixtures also match. Other transaction and syscall paths remain experimental.
 
 The saved inputs and Rust archive member digests come from the upstream flow tests
