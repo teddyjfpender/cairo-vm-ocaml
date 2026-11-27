@@ -83,7 +83,8 @@ let pool_n = ref scratch
 
 let[@inline never] grow_pool () =
   let b = !pool in
-  let nb = Bytes.make (2 * Bytes.length b) '\000' in
+  (* Every new felt slot is fully initialized before it can be read. *)
+  let nb = Bytes.create (2 * Bytes.length b) in
   Bytes.blit b 0 nb 0 (Bytes.length b);
   pool := nb
 
