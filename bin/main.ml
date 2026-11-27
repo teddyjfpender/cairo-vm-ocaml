@@ -45,6 +45,8 @@ let () =
     Option.iter (Runner.write_trace r) !trace;
     Option.iter (Runner.write_memory r) !memory;
     if !stats then
+      Printf.eprintf "generic=%d hint_pcs=%d " !Vm.generic_steps !Vm.hint_steps;
+    if !stats then
       Printf.eprintf "steps=%d load=%.3fs run=%.3fs (%.1f Msteps/s) total=%.3fs\n" r.vm.steps (t1 -. t0) (t2 -. t1)
         (float r.vm.steps /. (t2 -. t1) /. 1e6) (Unix.gettimeofday () -. t0)
   with

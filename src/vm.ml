@@ -307,10 +307,13 @@ let deduce_builtin vm (b : builtin) seg off =
               in
               check inp.(0) 0;
               check inp.(1) 1;
-              reserve 1;
-              let r = c_bitwise !pool (idx - 2) inp.(0) inp.(1) !pool_n in
-              commit r;
-              r
+              for k = 2 to 4 do
+                reserve 1;
+                let r = c_bitwise !pool (k - 2) inp.(0) inp.(1) !pool_n in
+                commit r;
+                cache_set b (inst + k) r
+              done;
+              cache_get b off
           | Poseidon ->
               reserve 6;
               let s = !pool_n in
@@ -663,6 +666,8 @@ let[@inline] step vm =
    fast path pays one load per step for hint detection. *)
 
 let hint_bit = 1 lsl 61
+let generic_steps = ref 0
+let hint_steps = ref 0
 
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
@@ -672,8 +677,27 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
   while not (!pc_seg = end_seg && !pc = 0) do
     let ic = vm.icache in
     let d = if !pc_seg = 0 && !pc < Array.length ic then Array.unsafe_get ic !pc else 0 in
+    let hints_done = d land hint_bit <> 0 in
+    let d =
+      if hints_done then begin
+        (* hints cannot move registers: run them, then execute on the fast path *)
+        vm.pc <- !pc;
+        vm.ap <- !ap;
+        vm.fp <- !fp;
+        vm.pc_seg <- !pc_seg;
+        vm.steps <- !steps;
+        if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
+        let hs = Array.unsafe_get hints !pc in
+        for i = 0 to Array.length hs - 1 do
+          (Array.unsafe_get hs i) vm
+        done;
+        hi1 := vm.hi.(1);
+        d land lnot hint_bit
+      end
+      else d
+    in
     let fast = ref false in
-    if d <> 0 && d land hint_bit = 0 then begin
+    if d <> 0 then begin
       let pcv = !pc and apv = !ap and fpv = !fp in
       let off0 = (d land 0xffff) - 0x8000 in
       let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
@@ -694,9 +718,21 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
           | 2 -> let a = fpv + off2 in if a >= 0 && a < len then sget mem a else 0
           | 3 -> let a = apv + off2 in if a >= 0 && a < len then sget mem a else 0
           | _ ->
-              if op0 land 3 = 2 && rseg op0 = 1 then
-                let a = roff op0 + off2 in
-                if a >= 0 && a < len then sget mem a else 0
+              if op0 land 3 = 2 then begin
+                let sg = rseg op0 and a = roff op0 + off2 in
+                if sg >= 0 && sg < vm.nsegs && a >= 0 then begin
+                  let sm = Array.unsafe_get vm.segs sg in
+                  let v = if a < slen sm then sget sm a else 0 in
+                  (* op1 deduction for `[ptr + k] = dst` into a non-deducing segment *)
+                  if v = 0 && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
+                     && Array.unsafe_get vm.seg_flag sg <> k_deduce then begin
+                    let dv = sget mem dst_addr in
+                    if dv <> 0 then (write vm sg a dv; dv) else 0
+                  end
+                  else v
+                end
+                else 0
+              end
               else 0
         in
         let size = if src = 1 then 2 else 1 in
@@ -799,14 +835,16 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         end
       end
     end;
+    if hints_done then incr hint_steps;
     if not !fast then begin
+      incr generic_steps;
       vm.pc <- !pc;
       vm.ap <- !ap;
       vm.fp <- !fp;
       vm.pc_seg <- !pc_seg;
       vm.steps <- !steps;
       if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
-      if !pc_seg = 0 && !pc < nh then begin
+      if (not hints_done) && !pc_seg = 0 && !pc < nh then begin
         let hs = Array.unsafe_get hints !pc in
         for i = 0 to Array.length hs - 1 do
           (Array.unsafe_get hs i) vm

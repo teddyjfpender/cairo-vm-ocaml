@@ -77,7 +77,11 @@ type ctx = {
   hint : P.hint;
   scopes : scopes;
   refs : (string, P.reference) Hashtbl.t; (* short name -> reference *)
+  plans : (string * string list, bool * step list) Hashtbl.t; (* memoized member paths *)
 }
+
+(* A resolved member path: add an offset, or follow a pointer. *)
+and step = Off of int | Follow
 
 let make_ctx prog scopes (hint : P.hint) =
   let refs = Hashtbl.create 8 in
@@ -91,7 +95,7 @@ let make_ctx prog scopes (hint : P.hint) =
       in
       if id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
     hint.ref_ids;
-  { prog; hint; scopes; refs }
+  { prog; hint; scopes; refs; plans = Hashtbl.create 4 }
 
 let rec eval vm ctx (r : P.reference) (e : P.expr) : int =
   match e with
@@ -175,41 +179,46 @@ let member_offset ctx struct_t m =
       | None -> fail "Struct %s has no member %s" struct_t m)
   | None -> fail "Unknown struct type %s" struct_t
 
-let member_type ctx struct_t m =
-  (* we only need to know whether a member is itself a pointer; cairo-compile records cairo_type *)
-  ignore (ctx, struct_t, m);
-  None
-
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
-let member_addr vm ctx name path =
+let member_plan ctx name path =
   let t = var_type ctx name in
-  let base, st =
-    match strip_star t with
-    | Some st -> (get_ptr vm ctx name, st)
-    | None -> (get_addr vm ctx name, t)
-  in
-  let rec go addr st = function
-    | [] -> addr
-    | [ m ] -> value_add addr (Felt.small (member_offset ctx st m))
+  let is_ptr, st = match strip_star t with Some st -> (true, st) | None -> (false, t) in
+  let rec go st = function
+    | [] -> []
+    | [ m ] -> [ Off (member_offset ctx st m) ]
     | m :: rest ->
         let off = member_offset ctx st m in
-        (* nested struct members: look up the member's type *)
         let mt =
           match resolve_ident ctx st with
           | Some id -> (
               match List.assoc_opt m id.P.i_member_types with Some x -> x | None -> fail "Unknown type of %s.%s" st m)
           | None -> fail "Unknown struct %s" st
         in
-        let a = value_add addr (Felt.small off) in
-        (match strip_star mt with
-        | Some st' ->
-            let p = get vm (Felt.rseg a) (Felt.roff a) in
-            if not (Felt.is_reloc p) then fail "Expected pointer at member %s" m;
-            go p st' rest
-        | None -> go a mt rest)
+        (match strip_star mt with Some st' -> Off off :: Follow :: go st' rest | None -> Off off :: go mt rest)
   in
-  ignore member_type;
-  go base st path
+  (is_ptr, go st path)
+
+(* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
+let member_addr vm ctx name path =
+  let key = (name, path) in
+  let is_ptr, plan =
+    match Hashtbl.find_opt ctx.plans key with
+    | Some p -> p
+    | None ->
+        let p = member_plan ctx name path in
+        Hashtbl.replace ctx.plans key p;
+        p
+  in
+  let base = if is_ptr then get_ptr vm ctx name else get_addr vm ctx name in
+  List.fold_left
+    (fun a st ->
+      match st with
+      | Off k -> if k = 0 then a else value_add a (Felt.small k)
+      | Follow ->
+          let p = get vm (Felt.rseg a) (Felt.roff a) in
+          if not (Felt.is_reloc p) then fail "Expected pointer in member path of ids.%s" name;
+          p)
+    base plan
 
 let get_member vm ctx name path =
   let a = member_addr vm ctx name path in
