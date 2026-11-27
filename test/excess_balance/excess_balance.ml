@@ -1,5 +1,5 @@
 open Cairovm
-module D = Hints_misc.Dec
+module D = Excess_balance.Dec
 
 let z = Z.of_string
 let equal x y = let a, b, _ = D.align x y in Z.equal a b

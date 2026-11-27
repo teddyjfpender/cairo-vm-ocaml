@@ -137,6 +137,10 @@ type ctx = {
 (* A resolved member path: add an offset, or follow a pointer. *)
 and step = Off of int | Follow
 
+(* Hint families add each implementation, staged on its compiled context,
+   under its exact code string. *)
+type registrar = string -> (ctx -> vm -> unit) -> unit
+
 let make_ctx prog scopes (hint : P.hint) =
   let refs = Hashtbl.create 8 in
   let inner = match List.rev hint.scopes with s :: _ -> s | [] -> "" in
@@ -371,9 +375,17 @@ let const_opt ctx name =
 let const_z ctx name =
   match const_opt ctx name with Some v -> v | None -> fail "Missing constant %s" name
 
+(* get_constant_from_var_name: any constant whose last path component matches *)
+let const_suffix ctx name = Z.erem (const_z ctx name) Felt.p
+
+(* constants map lookup by full identifier path (cairo-vm `constants.get`) *)
+let const_full ctx full =
+  match Hashtbl.find_opt ctx.prog.P.identifiers full with
+  | Some { P.i_type = "const"; i_value = Some v; _ } -> Z.erem v Felt.p
+  | _ -> fail "Missing constant %s" full
+
 (* ---- misc helpers ---- *)
 
-let ap_addr vm = (1, vm.ap)
 let write_ap vm v = write_checked vm 1 vm.ap v
 let zf z = Felt.of_z z
 let of_bool b = if b then Felt.one else Felt.zero
@@ -401,3 +413,44 @@ let mem_at vm ptr k =
 let rc_bound = Z.shift_left Z.one 128
 
 let as_int z = if Z.lt z Felt.half_p then z else Z.sub z Felt.p
+
+let z = Z.of_int
+let two_pow n = Z.shift_left Z.one n
+let mask n = Z.pred (two_pow n)
+let check b msg = if not b then fail "%s" msg
+let set_int vm c name v = set_val vm c name (zf v)
+
+let find_builtin vm kind = List.find_opt (fun b -> b.Builtin.kind = kind) vm.builtins
+
+(* get_integer at an address *)
+let int_at vm a i =
+  let v = mem_at vm a i in
+  if not (Felt.is_felt v) then fail "Expected integer at %d:%d" (Felt.rseg a) (Felt.roff a + i);
+  v
+
+let z_at vm a i = Felt.to_z (int_at vm a i)
+
+(* Uint256 {low, high} at the address of ids.name *)
+let u256 vm c name =
+  let a = get_addr vm c name in
+  Z.add (Z.shift_left (z_at vm a 1) 128) (z_at vm a 0)
+
+let insert_limbs vm c name vals = write_arg vm (get_addr vm c name) (List.map zf vals)
+
+(* Uint256::split: masked low, unmasked high *)
+let insert_u256 vm c name v = insert_limbs vm c name [ Z.logand v (mask 128); Z.shift_right v 128 ]
+
+let z_of_be (s : string) =
+  let r = ref Z.zero in
+  String.iter (fun ch -> r := Z.add (Z.shift_left !r 8) (z (Char.code ch))) s;
+  !r
+
+(* ---- 32-bit words (Blake2s, SHA-256) ---- *)
+
+let m32 = 0xFFFFFFFF
+let rotr x n = ((x lsr n) lor (x lsl (32 - n))) land m32
+
+(* felt_to_u32 *)
+let u32 z = if Z.sign z >= 0 && Z.numbits z <= 32 then Z.to_int z else fail "Felt %s does not fit a u32" (Z.to_string z)
+
+let smalls a = Array.to_list (Array.map Felt.small a)
