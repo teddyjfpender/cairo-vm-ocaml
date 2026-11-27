@@ -30,9 +30,9 @@ OCaml revision measured 1.359 s and 0.024 s (56.7×). These ratios apply
 to repeated prefixes. [Rust pairs](bench/results/keccak-byte-prefixes-vs-rust.csv)
 and [parent pairs](bench/results/keccak-byte-prefixes-vs-parent.csv).
 
-### Earlier Apple M5 Max baseline
+### Apple M5 Max (main after #33)
 
-Apple M5 Max, best of 3 wall-clock runs, `--layout all_cairo --print_output --trace_file … --memory_file …`
+Apple M5 Max under background load, best of 3 wall-clock runs, `--layout all_cairo --print_output --trace_file … --memory_file …`
 for both binaries. Every row's stdout, trace file and memory file were compared byte-for-byte.
 
 | program | rust (s) | ocaml (s) | speedup |
