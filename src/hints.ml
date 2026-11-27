@@ -542,17 +542,28 @@ let () =
    be ruled out for any different first word, even if its suffix has holes.
    Cache the earliest row for each first word and check matching rows with
    the ordinary element comparison. Keep just one range per compiled hint. *)
+let set_word_hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
+
 module Set_words = Hashtbl.Make (struct
   type t = int
   let equal = Felt.equal
-  let hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
+  let hash = set_word_hash
 end)
+
+module Set_rows = Hashtbl.Make (struct
+  type t = int array
+  let equal a b = Array.length a = Array.length b && Array.for_all2 Felt.equal a b
+  let hash = Array.fold_left (fun h v -> (h * 65599) lxor set_word_hash v) 0
+end)
+
+type complete_rows = { rows : int Set_rows.t; mutable next : int }
 
 type set_index = {
   owner : vm;
   base : int;
   width : int;
   first : int Set_words.t;
+  mutable composite : complete_rows option;
   mutable scanned : int; (* cell offset of the next unindexed row *)
 }
 
@@ -571,7 +582,7 @@ let find_set_element cache vm base total elm =
     else match !cache with
       | Some t when t.owner == vm && t.base = base && t.width = es -> !cache
       | _ ->
-          let t = { owner = vm; base; width = es; first = Set_words.create 32; scanned = 0 } in
+          let t = { owner = vm; base; width = es; first = Set_words.create 32; scanned = 0; composite = None } in
           cache := Some t;
           (* A single lookup pays only for the scan. Start indexing if this
              hint sees the same range again. *)
@@ -581,7 +592,7 @@ let find_set_element cache vm base total elm =
     | None -> 0
     | Some t -> Option.value (Set_words.find_opt t.first e0) ~default:t.scanned
   in
-  let rec search i =
+  let rec search collisions i =
     if i >= total then -1
     else begin
       let off = start + i in
@@ -595,11 +606,39 @@ let find_set_element cache vm base total elm =
       if Felt.equal v e0 then begin
         let j = ref 1 in
         while !j < es && Felt.equal (cell (off + !j)) elm.(!j) do incr j done;
-        if !j = es then i / es else search (i + es)
-      end else search (i + es)
+        if !j = es then i / es else begin
+          if collisions = 15 && es > 1 then
+            (match index with
+             | Some t when t.composite = None ->
+                 t.composite <- Some {rows = Set_rows.create 32; next = 0}
+             | _ -> ());
+          search (collisions + 1) (i + es)
+        end
+      end else search collisions (i + es)
     end
   in
-  search from
+  match index with
+  | Some {composite = Some t; _} ->
+      (match Set_rows.find_opt t.rows elm with
+       | Some i -> if i < total then i / es else -1
+       | None ->
+           let rec extend i =
+             if i >= total then -1 else begin
+               let off = start + i in
+               (* A hole in an unexamined suffix is not necessarily an error.
+                  Resume the ordinary short-circuit comparison at this row. *)
+               let rec complete j = j = es || (sget mem (off+j) <> 0 && complete (j+1)) in
+               if es > capacity - off || not (complete 0) then search 0 (max i from)
+               else begin
+                 let row = Array.init es (fun j -> sget mem (off+j)) in
+                 if not (Set_rows.mem t.rows row) then Set_rows.add t.rows row i;
+                 t.next <- i + es;
+                 if Array.for_all2 Felt.equal row elm then i / es else extend t.next
+               end
+             end
+           in
+           extend t.next)
+  | _ -> search 0 from
 
 (* ---- secp ---- *)
 let () =
