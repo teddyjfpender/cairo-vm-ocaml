@@ -109,3 +109,13 @@ let () =
     in
     reject (); b.cache <- [||]; reject ())
     [Bitwise,k_bitwise,5,Some 3; Pedersen,k_pedersen,3,None]
+
+let () =
+  (* A low-level caller may use the first program word as its stop address. *)
+  let jump = encode 0x0107 (-1) (-1) 1 in
+  let words = [|Felt.zero; Felt.zero; Felt.of_z jump; Felt.small (-2)|] in
+  let vm = make_vm words (Array.make 16 Felt.one) in
+  vm.pc <- 2;
+  vm.icache <- [|0; 0; decode_word jump; 0|];
+  run_fast vm (Array.make 4 [||]) 0;
+  assert (vm.steps = 1 && vm.pc_seg = 0 && vm.pc = 0 && vm.tlen = 1)

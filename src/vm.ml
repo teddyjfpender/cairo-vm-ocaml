@@ -706,7 +706,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
   let registers = Array.make 9 0 and spans = Array.make nh 0 in
   while not (!pc_seg = end_seg && !pc = 0) do
-    if !pc_seg = 0 then begin
+    if !pc_seg = 0 && end_seg <> 0 then begin
       registers.(0) <- !pc; registers.(1) <- !ap; registers.(2) <- !fp;
       registers.(3) <- !hi1; registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
       let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
