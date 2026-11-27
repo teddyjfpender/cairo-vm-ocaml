@@ -3,6 +3,61 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Apple M5 Max, Rust cairo-vm v4.0.0 (main at a70bf22)
+
+After the non-moving felt pool with shared field arithmetic (`field.h`), Poseidon round two,
+hint hot spots, and proof mode on the native kernel. Best of three wall-clock runs per program,
+`--layout all_cairo --print_output`; every row matched Rust byte for byte.
+
+**Execution and printed output** (mean of per-program speedups: 6.7×)
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 0.367 | 0.061 | 6.03× |
+| big_fibonacci | 0.322 | 0.046 | 7.06× |
+| blake2s_integration_benchmark | 0.397 | 0.076 | 5.23× |
+| compare_arrays_200000 | 0.369 | 0.041 | 9.10× |
+| dict_integration_benchmark | 0.321 | 0.073 | 4.38× |
+| integration_builtins | 0.509 | 0.061 | 8.29× |
+| keccak_integration_benchmark | 0.500 | 0.104 | 4.81× |
+| linear_search | 0.388 | 0.040 | 9.61× |
+| math_cmp_and_pow_integration_benchmark | 0.388 | 0.060 | 6.52× |
+| math_integration_benchmark | 0.356 | 0.053 | 6.67× |
+| memory_integration_benchmark | 0.260 | 0.051 | 5.06× |
+| operations_with_data_structures_benchmarks | 0.366 | 0.049 | 7.43× |
+| pedersen | 0.152 | 0.015 | 9.94× |
+| poseidon_integration_benchmark | 0.213 | 0.076 | 2.79× |
+| secp_integration_benchmark | 0.462 | 0.091 | 5.10× |
+| set_integration_benchmark | 0.203 | 0.022 | 9.09× |
+| uint256_integration_benchmark | 0.478 | 0.080 | 5.96× |
+| **Total** | **6.049** | **1.000** | **6.05×** |
+
+**Execution, printed output, trace and memory files**
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 0.715 | 0.130 | 5.50× |
+| big_fibonacci | 0.631 | 0.112 | 5.66× |
+| blake2s_integration_benchmark | 0.583 | 0.117 | 4.97× |
+| compare_arrays_200000 | 0.693 | 0.112 | 6.16× |
+| dict_integration_benchmark | 0.512 | 0.115 | 4.47× |
+| integration_builtins | 0.783 | 0.114 | 6.85× |
+| keccak_integration_benchmark | 0.717 | 0.145 | 4.93× |
+| linear_search | 0.723 | 0.109 | 6.63× |
+| math_cmp_and_pow_integration_benchmark | 0.640 | 0.109 | 5.90× |
+| math_integration_benchmark | 0.574 | 0.100 | 5.74× |
+| memory_integration_benchmark | 0.458 | 0.094 | 4.88× |
+| operations_with_data_structures_benchmarks | 0.555 | 0.091 | 6.11× |
+| pedersen | 0.194 | 0.024 | 8.11× |
+| poseidon_integration_benchmark | 0.270 | 0.092 | 2.94× |
+| secp_integration_benchmark | 0.612 | 0.119 | 5.12× |
+| set_integration_benchmark | 0.250 | 0.035 | 7.11× |
+| uint256_integration_benchmark | 0.790 | 0.142 | 5.56× |
+| **Total** | **9.702** | **1.761** | **5.51×** |
+
+Proof mode now uses the native kernel too: large proof-mode programs run 1.2–1.9× faster than
+before (up to 2.3× faster than Rust, including AIR inputs).
+
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at de4c6ca)
 
 After the secp field kernel, lazy-reduction Poseidon, the shape-dispatched native kernel and
