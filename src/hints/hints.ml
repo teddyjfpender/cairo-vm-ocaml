@@ -361,6 +361,11 @@ let dict_set t key value =
   | None -> Felt_tbl.replace t.data key value
   | Some m -> t.changes <- Some (Dict_changes.add key value m)
 
+let dict_entries t =
+  let h = Felt_tbl.copy t.data in
+  Option.iter (Dict_changes.iter (Felt_tbl.replace h)) t.changes;
+  Felt_tbl.fold (fun k v acc -> (k, v) :: acc) h []
+
 let snapshot t =
   let changes = match t.changes with
     | Some m -> m
