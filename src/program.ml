@@ -278,4 +278,67 @@ let load_json (j : J.t) : t =
     prime;
   }
 
-let load_file path = load_json (J.from_file path)
+(* debug_info is typically >95% of a compiled program and is never needed to
+   execute it.  Blank it out with a byte scanner (string/escape aware) before
+   handing the remainder to Yojson. *)
+let strip_top_level_key (src : string) (key : string) : string =
+  let n = String.length src in
+  let pat = "\"" ^ key ^ "\"" in
+  let pl = String.length pat in
+  (* index just past the string whose opening quote is at i - 1 *)
+  let rec skip_string i =
+    let q = String.index_from src i '"' in
+    (* count preceding backslashes: odd means the quote is escaped *)
+    let k = ref (q - 1) in
+    while src.[!k] = '\\' do decr k done;
+    if (q - 1 - !k) land 1 = 1 then skip_string (q + 1) else q + 1
+  in
+  (* index just past the JSON value starting at i *)
+  let skip_value i =
+    match src.[i] with
+    | '{' | '[' ->
+        let depth = ref 0 and j = ref i and fin = ref false in
+        while not !fin do
+          (match src.[!j] with
+          | '"' -> j := skip_string (!j + 1) - 1
+          | '{' | '[' -> incr depth
+          | '}' | ']' -> decr depth; if !depth = 0 then fin := true
+          | _ -> ());
+          incr j
+        done;
+        !j
+    | '"' -> skip_string (i + 1)
+    | _ ->
+        let j = ref i in
+        while !j < n && not (String.contains ",}]" src.[!j]) do incr j done;
+        !j
+  in
+  (* walk the top-level object *)
+  let rec find i depth =
+    if i >= n then None
+    else
+      match src.[i] with
+      | '"' ->
+          if depth = 1 && i + pl <= n && String.sub src i pl = pat then Some (i + pl)
+          else find (skip_string (i + 1)) depth
+      | '{' | '[' -> find (i + 1) (depth + 1)
+      | '}' | ']' -> find (i + 1) (depth - 1)
+      | _ -> find (i + 1) depth
+  in
+  match find 0 0 with
+  | None -> src
+  | Some after_key ->
+      let colon = String.index_from src after_key ':' in
+      let vstart = ref (colon + 1) in
+      while src.[!vstart] = ' ' || src.[!vstart] = '\n' || src.[!vstart] = '\t' || src.[!vstart] = '\r' do
+        incr vstart
+      done;
+      let vend = skip_value !vstart in
+      String.sub src 0 !vstart ^ "null" ^ String.sub src vend (n - vend)
+
+let load_file path =
+  let ic = open_in_bin path in
+  let src = really_input_string ic (in_channel_length ic) in
+  close_in ic;
+  let src = try strip_top_level_key src "debug_info" with _ -> src in
+  load_json (J.from_string src)
