@@ -10,9 +10,17 @@ let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
 external string_end : string -> int -> int = "cvm_json_string_end" [@@noalloc]
 external skip_value : string -> int -> int = "cvm_json_skip" [@@noalloc]
 
-type projection = Json | Program | Identifiers | Identifier
+type projection =
+  | Json
+  | Program
+  | Identifier
+  | Fields of (string * projection) list
+  | Only of (string * projection) list
+  | Elements of projection
+  | Encoded
 
-let from_string ?(projection=Json) src : J.t =
+let from_string ?identifiers ?(projection=Json) src : J.t =
+  let seen_identifiers = ref false in
   let n = String.length src and pos = ref 0 in
   let peek () =
     while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
@@ -35,38 +43,58 @@ let from_string ?(projection=Json) src : J.t =
     let finish = skip_value src i in
     if finish < 0 then json_error "Invalid JSON at byte %d" (-1-finish);
     finish in
-  let items close item =
+  let fold_items close initial item =
     incr pos;
-    if peek () = close then (incr pos; [])
+    if peek () = close then (incr pos; initial)
     else
       let rec go acc =
-        let acc = item () :: acc in
+        let acc = item acc in
         match peek () with
         | ',' -> incr pos; go acc
-        | c when c = close -> incr pos; List.rev acc
+        | c when c = close -> incr pos; acc
         | _ -> json_error "Expected ',' or '%c' at byte %d" close !pos
       in
-      go []
+      go initial
   in
+  let items close item = List.rev (fold_items close [] (fun xs -> item () :: xs)) in
   let rec value projection =
-    match peek () with
-    | '{' ->
+    let token = peek () in
+    match projection, token with
+    | Encoded, _ ->
+        let start = !pos in pos := skip start;
+        `String (String.sub src start (!pos-start))
+    | Only fields, '{' ->
+        `Assoc (List.rev (fold_items '}' [] (fun acc ->
+            let key = string () in expect ':';
+            match List.assoc_opt key fields with
+            | None -> pos := skip !pos; acc
+            | Some child -> (key, value child) :: acc)))
+    | _, '{' ->
         `Assoc
           (items '}' (fun () ->
                let k = string () in
                expect ':';
-               let child = match projection, k with
-                 | Program, "identifiers" -> Identifiers
-                 | Identifiers, _ -> Identifier
-                 | _ -> Json in
-               let unused = match projection, k with
-                 | Program, ("debug_info" | "attributes") | Identifier, "references" -> true
-                 | _ -> false in
-               if unused && (peek () = '{' || peek () = '[') then
-                 (pos := skip !pos; (k, `Null))
-               else (k, value child)))
-    | '[' -> `List (items ']' (fun () -> value Json))
-    | '"' -> `String (string ())
+               let v = match projection, k with
+                 | Program, "identifiers" when not !seen_identifiers ->
+                     seen_identifiers := true;
+                     if peek () = '{' then begin
+                       let add = Option.get identifiers in
+                       fold_items '}' () (fun () ->
+                           let name = string () in
+                           expect ':';
+                           add name (value Identifier));
+                       `Null
+                     end else (pos := skip !pos; `Null)
+                 | Program, ("attributes" | "debug_info" | "identifiers")
+                 | Identifier, ("references" | "full_name" | "cairo_type" | "decorators" | "size") ->
+                     pos := skip !pos; `Null
+                 | Fields fields, key -> value (Option.value (List.assoc_opt key fields) ~default:Json)
+                 | _ -> value Json in
+               k, v))
+    | _, '[' ->
+        let element = match projection with Elements p -> p | _ -> Json in
+        `List (items ']' (fun () -> value element))
+    | _, '"' -> `String (string ())
     | _ ->
         let st = !pos in
         pos := skip st;
@@ -77,9 +105,9 @@ let from_string ?(projection=Json) src : J.t =
           (try J.from_string tok
            with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
   in
-  let v = value projection in
+  let v = value (if Option.is_some identifiers then Program else projection) in
   match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v
 
-let from_file ?projection path =
+let from_file ?identifiers ?projection path =
   let contents = In_channel.with_open_bin path In_channel.input_all in
-  from_string ?projection contents
+  from_string ?identifiers ?projection contents

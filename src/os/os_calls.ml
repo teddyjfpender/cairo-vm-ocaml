@@ -2,6 +2,19 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
+(* Rust's call tracker consumes these parts of each execution witness.
+   The reader validates the other JSON values without retaining them. *)
+let execution_projection =
+  let open Json_reader in
+  let fields names = Only (List.map (fun name -> name, Json) names) in
+  let entry = fields ["class_hash"; "entry_point_type"; "storage_address"; "caller_address"; "initial_gas"] in
+  let execution = fields ["retdata"; "failed"; "gas_consumed"] in
+  let reads = fields ["storage_read_values"; "read_class_hash_values"; "read_block_hash_values"] in
+  let rec call = Only ["call", entry; "execution", execution; "storage_access_tracker", reads;
+                       "inner_calls", Elements call; "tracked_resource", Json] in
+  Only ["validate_call_info", call; "execute_call_info", call; "fee_transfer_call_info", call;
+        "actual_fee", Json; "revert_error", Json]
+
 type call = {
   witness : Yojson.Safe.t;
   execution_info : Felt.t;

@@ -8,7 +8,12 @@ let felt j =
   Felt.of_z z
 
 let from_file ~watch ~accessed ~set_pages path =
-  let hints = Json_reader.from_file path in
+  (* Keep each transaction and its witnesses as validated JSON until the OS
+     selects them. Only the active transaction's object graph stays live. *)
+  let open Json_reader in
+  let block_fields = Fields ["transactions", Elements Encoded; "tx_execution_infos", Elements Encoded] in
+  let projection = Fields ["os_input", Fields ["os_block_inputs", Elements block_fields]] in
+  let hints = Json_reader.from_file ~projection path in
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let classes = U.to_assoc (U.member "compiled_classes" input)

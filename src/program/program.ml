@@ -181,7 +181,27 @@ let z_of_json = function
   | `String s -> Z.of_string s
   | _ -> raise (Parse_error "expected number")
 
-let load_json (j : J.t) : t =
+let add_identifier identifiers name v =
+  let ty = match U.member "type" v with `String s -> s | _ -> "" in
+  let value = match U.member "value" v with `Null -> None | x -> (try Some (z_of_json x) with _ -> None) in
+  let pc = to_int_opt (U.member "pc" v) in
+  let dest = match U.member "destination" v with `String s -> Some s | _ -> None in
+  let members =
+    match U.member "members" v with
+    | `Assoc ms ->
+        List.filter_map (fun (m, mv) -> Option.map (fun o -> (m, o)) (to_int_opt (U.member "offset" mv))) ms
+    | _ -> []
+  in
+  let member_types =
+    match U.member "members" v with
+    | `Assoc ms ->
+        List.filter_map (fun (m, mv) -> match U.member "cairo_type" mv with `String t -> Some (m, t) | _ -> None) ms
+    | _ -> []
+  in
+  Hashtbl.replace identifiers name
+    { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types }
+
+let load_with_identifiers identifiers (j : J.t) : t =
   let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
   let data =
@@ -190,31 +210,6 @@ let load_json (j : J.t) : t =
     |> Array.of_list
   in
   let builtins = U.member "builtins" j |> U.to_list |> List.map U.to_string in
-  let identifiers = Hashtbl.create 1024 in
-  (match U.member "identifiers" j with
-  | `Assoc l ->
-      List.iter
-        (fun (name, v) ->
-          let ty = match U.member "type" v with `String s -> s | _ -> "" in
-          let value = match U.member "value" v with `Null -> None | x -> (try Some (z_of_json x) with _ -> None) in
-          let pc = to_int_opt (U.member "pc" v) in
-          let dest = match U.member "destination" v with `String s -> Some s | _ -> None in
-          let members =
-            match U.member "members" v with
-            | `Assoc ms ->
-                List.filter_map (fun (m, mv) -> Option.map (fun o -> (m, o)) (to_int_opt (U.member "offset" mv))) ms
-            | _ -> []
-          in
-          let member_types =
-            match U.member "members" v with
-            | `Assoc ms ->
-                List.filter_map (fun (m, mv) -> match U.member "cairo_type" mv with `String t -> Some (m, t) | _ -> None) ms
-            | _ -> []
-          in
-          Hashtbl.replace identifiers name
-            { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types })
-        l
-  | _ -> ());
   let rec resolve name depth =
     if depth > 32 then None
     else
@@ -280,4 +275,14 @@ let load_json (j : J.t) : t =
     identifiers;
   }
 
-let load_file path = load_json (Json_reader.from_file ~projection:Program path)
+let load_json j =
+  let identifiers = Hashtbl.create 1024 in
+  (match U.member "identifiers" j with
+   | `Assoc entries -> List.iter (fun (name, v) -> add_identifier identifiers name v) entries
+   | _ -> ());
+  load_with_identifiers identifiers j
+
+let load_file path =
+  let identifiers = Hashtbl.create 1024 in
+  let j = Json_reader.from_file ~identifiers:(add_identifier identifiers) path in
+  load_with_identifiers identifiers j

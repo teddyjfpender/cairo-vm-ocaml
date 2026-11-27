@@ -26,6 +26,7 @@ let pop item queue =
 let register ~calls:call_state ~block ~felt reg =
   let txs = ref [] and infos = ref [] and active = ref None and info = ref None in
   let calls = ref [] in
+  let next_json ?projection name queue = Json_reader.from_string ?projection (U.to_string (pop name queue)) in
   let tx () = match !active with Some t -> t | None -> fail "Missing active OS transaction" in
   let tx_info () = match !info with Some i -> i | None -> fail "Missing active execution info" in
   let member key = U.member key (tx ()).body in
@@ -42,7 +43,7 @@ let register ~calls:call_state ~block ~felt reg =
   reg "IsRemainingGasLtInitialBudget" (fun c vm ->
       set_val vm c "is_remaining_gas_lt_initial_budget" (of_bool (Z.lt (get_z vm c "remaining_gas") (const_z c "ENTRY_POINT_INITIAL_BUDGET"))));
   reg "LoadNextTx" (fun c vm ->
-      let t = decode felt (pop "transaction" txs) in
+      let t = decode felt (next_json "transaction" txs) in
       active := Some t;
       let name = match t.kind with "Invoke" -> "INVOKE_FUNCTION" | "Declare" -> "DECLARE"
         | "DeployAccount" -> "DEPLOY_ACCOUNT" | "L1Handler" -> "L1_HANDLER" | _ -> fail "Unknown transaction type" in
@@ -50,7 +51,7 @@ let register ~calls:call_state ~block ~felt reg =
   Os_calls.register call_state ~felt ~next:(fun () -> pop "call info" calls) reg;
   let start () =
     if !info <> None then fail "Execution info already active";
-    let i = pop "transaction execution info" infos in
+    let i = next_json ~projection:Os_calls.execution_projection "transaction execution info" infos in
     info := Some i;
     let rec flatten call =
       call :: List.concat_map flatten (U.to_list (U.member "inner_calls" call)) in
