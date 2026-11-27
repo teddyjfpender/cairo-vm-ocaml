@@ -39,7 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14, target: macos-arm64 }
+          - { os: macos-latest, target: macos-arm64 }
           - { os: ubuntu-24.04, target: linux-x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
@@ -62,6 +62,9 @@ jobs:
 
       - name: OxCaml switch
         run: |
+          # git's background maintenance can delete files while opam copies the repo
+          git config --global maintenance.auto false
+          git config --global gc.auto 0
           [ -d ~/.opam ] || opam init --bare -y --disable-sandboxing
           opam switch list --short | grep -qx "$OXCAML_SWITCH" || opam switch create "$OXCAML_SWITCH" \
             --repos ox=git+https://github.com/oxcaml/opam-repository.git,default -y
