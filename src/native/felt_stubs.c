@@ -248,17 +248,8 @@ value cvm_big_eq_byte(value pool, value a, value b) {
   return Val_bool(cvm_big_eq(pool, Long_val(a), Long_val(b)));
 }
 
-/* bitwise on slots: inputs must be < 2^251, returns 0 on violation, else code */
 intnat cvm_bitwise(value pool, intnat op, intnat a, intnat b, intnat dst) {
-  u64 x[4], y[4], r[4];
-  load(pool, a, x);
-  load(pool, b, y);
-  if ((x[3] >> 59) || (y[3] >> 59)) return 0;
-  for (int i = 0; i < 4; i++)
-    r[i] = op == 0 ? (x[i] & y[i]) : op == 1 ? (x[i] ^ y[i]) : (x[i] | y[i]);
-  if (eq4(r, x)) return a;
-  if (eq4(r, y)) return b;
-  return store(pool, r, dst);
+  return bitwise(pool, op, a, b, dst);
 }
 /* Compare assigned bitwise outputs directly in canonical limbs. Missing
    outputs stay holes. Return false to request the detailed OCaml checks. */
@@ -278,11 +269,8 @@ value cvm_verify_bitwise(value pool, value segment, value size) {
       if (!out) continue;
       if (!(out & 1)) return Val_false;
       load(pool, out, actual);
-      for (int limb = 0; limb < 4; ++limb) {
-        u64 expected = k == 0 ? x[limb] & y[limb] :
-                       k == 1 ? x[limb] ^ y[limb] : x[limb] | y[limb];
-        if (actual[limb] != expected) return Val_false;
-      }
+      for (int limb = 0; limb < 4; ++limb)
+        if (actual[limb] != bit_op(k, x[limb], y[limb])) return Val_false;
     }
   }
   return Val_true;
