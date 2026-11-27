@@ -76,7 +76,24 @@ static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
 #define ALWAYS_INLINE static inline __attribute__((always_inline))
+/* Add with carry: the builtin where available (clang, GCC >= 14), otherwise a
+   portable 128-bit sum that compilers lower to adds/adcs or add/adc. */
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_addcll)
+#define HAVE_ADDCLL 1
+#endif
+#endif
+#ifdef HAVE_ADDCLL
 #define ADC(r, a, b, cin, cout) r = __builtin_addcll(a, b, cin, &cout)
+#else
+static inline unsigned long long adc64(unsigned long long a, unsigned long long b,
+                                       unsigned long long cin, unsigned long long *cout) {
+  u128 s = (u128)a + b + cin;
+  *cout = (unsigned long long)(s >> 64);
+  return (unsigned long long)s;
+}
+#define ADC(r, a, b, cin, cout) r = adc64(a, b, cin, &cout)
+#endif
 
 /* REDC(T) for T = high * R + low, without the final subtraction: the result
    is congruent to T/R and below high + p + 1. Since p^-1 = 1 - P3*2^192
