@@ -185,6 +185,7 @@ let z_of_json = function
 
 let load_json (j : J.t) : t =
   let prime = Z.of_string (U.to_string (U.member "prime" j)) in
+  if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
   let data =
     U.member "data" j |> U.to_list
     |> List.map (fun x ->
