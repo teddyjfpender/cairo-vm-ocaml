@@ -16,6 +16,7 @@ open Errors
 open Vm
 open Hintrt
 module C = Hint_codes
+module F = Secp_field
 
 let reg = Hints.reg
 let z = Z.of_int
@@ -59,10 +60,17 @@ let igcdex a b =
     (Z.mul x (z (Z.sign a)), Z.mul y (z (Z.sign b)), g)
   end
 
+(* For p > 1 the igcdex coefficient is m's inverse, so GMP's gcdext gives
+   the same result without a Zarith allocation per Euclid step. *)
 let div_mod n m p =
-  let a, _, c = igcdex m p in
-  if not (Z.equal c Z.one) then fail "div_mod: %s is not invertible modulo %s" (Z.to_string m) (Z.to_string p);
-  mod_floor (Z.mul n a) p
+  let not_invertible () = fail "div_mod: %s is not invertible modulo %s" (Z.to_string m) (Z.to_string p) in
+  if Z.gt p Z.one then
+    match Z.invert m p with inv -> Z.erem (Z.mul n inv) p | exception Division_by_zero -> not_invertible ()
+  else begin
+    let a, _, c = igcdex m p in
+    if not (Z.equal c Z.one) then not_invertible ();
+    mod_floor (Z.mul n a) p
+  end
 
 let mul_inv num_a p =
   if Z.sign num_a = 0 then Z.zero
@@ -236,9 +244,15 @@ let signed_at vm a i = Felt.to_signed_z (int_at vm a i)
 
 let signed_for_prime prime v = if Z.gt v (Z.shift_right prime 1) then Z.sub v prime else v
 
-(* BigInt3::pack86 of the limbs at a + off *)
-let pack86_at vm a off =
-  Z.add (signed_at vm a off) (Z.add (Z.shift_left (signed_at vm a (off + 1)) 86) (Z.shift_left (signed_at vm a (off + 2)) 172))
+let felts vm a off n = Array.init n (fun i -> int_at vm a (off + i))
+
+(* BigInt3::pack86 of the limbs l.(o), l.(o + 1), l.(o + 2) *)
+let pack86_l l o =
+  let s i = Felt.to_signed_z l.(o + i) in
+  Z.add (s 0) (Z.add (Z.shift_left (s 1) 86) (Z.shift_left (s 2) 172))
+
+let pack86_at vm a off = pack86_l (felts vm a off 3) 0
+let fpack m l o = F.pack m l.(o) l.(o + 1) l.(o + 2)
 
 let pack86_for_prime_at prime vm a off =
   let l i = signed_for_prime prime (z_at vm a (off + i)) in
@@ -285,6 +299,37 @@ let felt_z vm c name = Felt.to_z (get_felt vm c name)
 let setz c n v = set c.scopes n (Int v)
 let getz c n = var_z c.scopes n
 
+(* ---- arithmetic modulo p ----
+   A ring computes floor residues modulo p: on the C field kernel for p in
+   (1, 2^256), otherwise on Zarith with cairo-vm's errors. *)
+
+type 'a ring = {
+  pack : Felt.t array -> int -> 'a; (* reduced BigInt3 at an offset *)
+  of_num : dyn -> 'a; (* a [var_num] *)
+  add : 'a -> 'a -> 'a;
+  sub : 'a -> 'a -> 'a;
+  mul : 'a -> 'a -> 'a;
+  dyn : 'a -> dyn;
+}
+
+type ring_user = { run : 'a. 'a ring -> unit } [@@boxed]
+
+let with_ring p u =
+  match F.modulus p with
+  | Some m ->
+      u.run { pack = fpack m; of_num = (function Field v -> v | d -> F.of_z (Z.erem (num_z d) p));
+              add = F.add m; sub = F.sub m; mul = F.mul m; dyn = (fun v -> Field v) }
+  | None ->
+      let md f a b = mod_floor (f a b) p in
+      u.run { pack = (fun l o -> mod_floor (pack86_l l o) p); of_num = num_z;
+              add = md Z.add; sub = md Z.sub; mul = md Z.mul; dyn = (fun v -> Int v) }
+
+let set_all c r = List.iter (fun (n, v) -> set c.scopes n (r.dyn v))
+
+(* [fast] on the field kernel, or the Zarith reference [slow] for other
+   moduli and to raise cairo-vm's error when [fast] finds no inverse. *)
+let field_or p fast slow = match Option.bind (F.modulus p) fast with Some v -> Field v | None -> Int (slow ())
+
 (* ---- Stark curve helpers (ec_utils.rs) ---- *)
 
 let stark_beta = Z.of_string "3141592653589793238462643383279502884197169399375105820974944592307816406665"
@@ -325,10 +370,14 @@ let write_point vm c name (x, y) =
 let register () =
   (* field_utils.rs *)
   let verify_zero c vm p =
-    let v = pack86 vm c "val" in
-    let q, r = div_mod_floor v p in
-    if Z.sign r <> 0 then fail "verify_zero: Invalid input %s" (Z.to_string v);
-    set_int vm c "q" q
+    let l = felts vm (addr vm c "val") 0 3 in
+    match Option.bind (F.modulus p) (fun m -> F.exact_quotient m l.(0) l.(1) l.(2)) with
+    | Some q -> set_val vm c "q" q
+    | None ->
+        let v = pack86_l l 0 in
+        let q, r = div_mod_floor v p in
+        if Z.sign r <> 0 then fail "verify_zero: Invalid input %s" (Z.to_string v);
+        set_int vm c "q" q
   in
   let verify_zero_fixed p c vm = setz c "SECP_P" p; verify_zero c vm p in
   reg C.verify_zero_v1 (verify_zero_fixed secp_p);
@@ -381,10 +430,13 @@ let register () =
   (* bigint_utils.rs *)
   let nondet_bigint3 c vm =
     let res = addr vm c "res" in
-    let v = getz c "value" in
-    if Z.sign v < 0 then fail "Couldn't convert BigInt to BigUint";
-    if Z.numbits v > 258 then fail "Value %s is out of range for split" (Z.to_string v);
-    write_arg vm res (List.map zf [ Z.extract v 0 86; Z.extract v 86 86; Z.extract v 172 86 ])
+    match var c.scopes "value" with
+    | Field v -> write_arg vm res (List.init 3 (F.limb86 v))
+    | _ ->
+        let v = getz c "value" in
+        if Z.sign v < 0 then fail "Couldn't convert BigInt to BigUint";
+        if Z.numbits v > 258 then fail "Value %s is out of range for split" (Z.to_string v);
+        write_arg vm res (List.map zf [ Z.extract v 0 86; Z.extract v 86 86; Z.extract v 172 86 ])
   in
   reg C.nondet_bigint3_v1 nondet_bigint3;
   reg C.nondet_bigint3_v2 nondet_bigint3;
@@ -402,12 +454,21 @@ let register () =
   in
   reg C.ec_negate (ec_negate secp_p);
   reg C.ec_negate_embedded_secp (ec_negate secp_p_v2);
-  let doubling_slope name pack_prime p alpha c vm =
-    setz c "SECP_P" p;
-    let pt = point_for_prime pack_prime vm c name in
-    let v = ec_double_slope pt alpha p in
-    setz c "value" v;
-    setz c "slope" v
+  let doubling_slope name pack_prime p alpha =
+    let alpha_f = F.of_z alpha in
+    fun c vm ->
+      setz c "SECP_P" p;
+      let fast m =
+        if pack_prime != stark_p then None
+        else
+          let l = felts vm (addr vm c name) 0 6 in
+          let x = fpack m l 0 and y = fpack m l 3 in
+          let x2 = F.mul m x x in
+          F.div m (F.add m (F.add m x2 (F.add m x2 x2)) alpha_f) (F.add m y y)
+      in
+      let v = field_or p fast (fun () -> ec_double_slope (point_for_prime pack_prime vm c name) alpha p) in
+      set c.scopes "value" v;
+      set c.scopes "slope" v
   in
   reg C.ec_double_slope_v1 (doubling_slope "point" stark_p secp_p Z.zero);
   reg C.ec_double_slope_v2 (doubling_slope "point" stark_p secp_p_v2 alpha_v2);
@@ -421,12 +482,13 @@ let register () =
       setz c "value" v;
       setz c "slope" v);
   let compute_slope n0 n1 pname c vm =
-    let p0 = point vm c n0 in
-    let p1 = point vm c n1 in
+    let l0 = felts vm (addr vm c n0) 0 6 in
+    let l1 = felts vm (addr vm c n1) 0 6 in
     let p = getz c pname in
-    let v = line_slope p0 p1 p in
-    setz c "value" v;
-    setz c "slope" v
+    let fast m = F.div m (F.sub m (fpack m l0 3) (fpack m l1 3)) (F.sub m (fpack m l0 0) (fpack m l1 0)) in
+    let v = field_or p fast (fun () -> line_slope (point vm c n0) (point vm c n1) p) in
+    set c.scopes "value" v;
+    set c.scopes "slope" v
   in
   let compute_slope_assign n0 n1 p c vm =
     setz c "SECP_P" p;
@@ -454,49 +516,41 @@ let register () =
       setz c "new_x" v);
   let double_assign_new_x p name c vm =
     setz c "SECP_P" p;
-    let slope = pack86 vm c "slope" in
-    let x, y = point vm c name in
-    let slope = mod_floor slope p and x = mod_floor x p and y = mod_floor y p in
-    let v = mod_floor (Z.sub (Z.mul slope slope) (Z.shift_left x 1)) p in
-    setz c "slope" slope;
-    setz c "x" x;
-    setz c "y" y;
-    setz c "value" v;
-    setz c "new_x" v
+    let s = felts vm (addr vm c "slope") 0 3 in
+    let pt = felts vm (addr vm c name) 0 6 in
+    with_ring p { run = fun r ->
+      let slope = r.pack s 0 and x = r.pack pt 0 and y = r.pack pt 3 in
+      let v = r.sub (r.mul slope slope) (r.add x x) in
+      set_all c r [ ("slope", slope); ("x", x); ("y", y); ("value", v); ("new_x", v) ] }
   in
   reg C.ec_double_assign_new_x_v1 (double_assign_new_x secp_p "point");
   reg C.ec_double_assign_new_x_v2 (fun c vm -> double_assign_new_x (getz c "SECP_P") "point" c vm);
   reg C.ec_double_assign_new_x_v3 (double_assign_new_x secp_p_v2 "point");
   reg C.ec_double_assign_new_x_v4 (double_assign_new_x secp_p "pt");
-  reg C.ec_double_assign_new_y (fun c _ ->
-      let slope = getz c "slope" and x = getz c "x" and new_x = getz c "new_x" and y = getz c "y" in
-      let p = getz c "SECP_P" in
-      let v = mod_floor (Z.sub (Z.mul slope (Z.sub x new_x)) y) p in
-      setz c "value" v;
-      setz c "new_y" v);
+  let new_y x_name y_name c _ =
+    let slope = var_num c.scopes "slope" in
+    let x = var_num c.scopes x_name in
+    let new_x = var_num c.scopes "new_x" in
+    let y = var_num c.scopes y_name in
+    with_ring (getz c "SECP_P") { run = fun r ->
+      let v = r.sub (r.mul (r.of_num slope) (r.sub (r.of_num x) (r.of_num new_x))) (r.of_num y) in
+      set_all c r [ ("value", v); ("new_y", v) ] }
+  in
+  reg C.ec_double_assign_new_y (new_y "x" "y");
   let fast_add_new_x p n0 n1 c vm =
     setz c "SECP_P" p;
-    let slope = pack86 vm c "slope" in
-    let x0, y0 = point vm c n0 in
-    let x1, _ = point vm c n1 in
-    let slope = mod_floor slope p and x0 = mod_floor x0 p and x1 = mod_floor x1 p and y0 = mod_floor y0 p in
-    let v = mod_floor (Z.sub (Z.sub (Z.mul slope slope) x0) x1) p in
-    setz c "slope" slope;
-    setz c "x0" x0;
-    setz c "x1" x1;
-    setz c "y0" y0;
-    setz c "value" v;
-    setz c "new_x" v
+    let s = felts vm (addr vm c "slope") 0 3 in
+    let l0 = felts vm (addr vm c n0) 0 6 in
+    let l1 = felts vm (addr vm c n1) 0 6 in
+    with_ring p { run = fun r ->
+      let slope = r.pack s 0 and x0 = r.pack l0 0 and x1 = r.pack l1 0 and y0 = r.pack l0 3 in
+      let v = r.sub (r.sub (r.mul slope slope) x0) x1 in
+      set_all c r [ ("slope", slope); ("x0", x0); ("x1", x1); ("y0", y0); ("value", v); ("new_x", v) ] }
   in
   reg C.fast_ec_add_assign_new_x (fast_add_new_x secp_p "point0" "point1");
   reg C.fast_ec_add_assign_new_x_v2 (fast_add_new_x secp_p_v2 "point0" "point1");
   reg C.fast_ec_add_assign_new_x_v3 (fast_add_new_x secp_p "pt0" "pt1");
-  reg C.fast_ec_add_assign_new_y (fun c _ ->
-      let slope = getz c "slope" and x0 = getz c "x0" and new_x = getz c "new_x" and y0 = getz c "y0" in
-      let p = getz c "SECP_P" in
-      let v = mod_floor (Z.sub (Z.mul slope (Z.sub x0 new_x)) y0) p in
-      setz c "value" v;
-      setz c "new_y" v);
+  reg C.fast_ec_add_assign_new_y (new_y "x0" "y0");
   let n_pair_bits result pairs c vm =
     let sv = felt_z vm c "scalar_v" and su = felt_z vm c "scalar_u" in
     let mz = felt_z vm c "m" in
