@@ -7,14 +7,34 @@ open Errors
 open Vm
 module P = Program
 
+(* Monomorphic tables: generic Hashtbl hashing and comparison dominated
+   hint-heavy programs. *)
+module Felt_tbl = Hashtbl.Make (struct
+  type t = Felt.t
+  let equal = Felt.equal
+  let hash = Felt.hash
+end)
+
+module Int_tbl = Hashtbl.Make (struct
+  type t = int
+  let equal = Int.equal
+  let hash = Felt.mix
+end)
+
+module Str_tbl = Hashtbl.Make (struct
+  type t = string
+  let equal = String.equal
+  let hash (s : string) = Hashtbl.hash s
+end)
+
 module Dict_changes = Map.Make (struct
   type t = Felt.t
   let compare (a : t) (b : t) = Int.compare (a :> int) (b :> int)
 end)
-type snapshot = (Felt.t, Felt.t) Hashtbl.t * Felt.t Dict_changes.t
+type snapshot = Felt.t Felt_tbl.t * Felt.t Dict_changes.t
 
 type dict_tracker = {
-  data : (Felt.t, Felt.t) Hashtbl.t; (* canonical key -> value *)
+  data : Felt.t Felt_tbl.t; (* canonical key -> value *)
   mutable changes : Felt.t Dict_changes.t option; (* Some freezes data for snapshots *)
   default : Felt.t option;
   mutable current_ptr : Felt.t; (* relocatable *)
@@ -25,22 +45,22 @@ type dyn =
   | Value of Felt.t
   | Ints of int list
   | Values of Felt.t list
-  | Dict_manager of (int, dict_tracker) Hashtbl.t (* by segment index *)
-  | Access_indices of (Felt.t, int list) Hashtbl.t
-  | Positions of (Felt.t, int list) Hashtbl.t
+  | Dict_manager of dict_tracker Int_tbl.t (* by segment index *)
+  | Access_indices of int list Felt_tbl.t
+  | Positions of int list Felt_tbl.t
   | Dict_snapshot of snapshot
-  | Initial_dict of (Felt.t, Felt.t) Hashtbl.t
+  | Initial_dict of Felt.t Felt_tbl.t
   | Nothing
 
-type scopes = { mutable stack : (string, dyn) Hashtbl.t list }
+type scopes = { mutable stack : dyn Str_tbl.t list }
 
-let new_scopes () = { stack = [ Hashtbl.create 8 ] }
+let new_scopes () = { stack = [ Str_tbl.create 8 ] }
 let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
 let enter s vars =
-  let h = Hashtbl.create 8 in
-  List.iter (fun (k, v) -> Hashtbl.replace h k v) vars;
+  let h = Str_tbl.create 8 in
+  List.iter (fun (k, v) -> Str_tbl.replace h k v) vars;
   s.stack <- h :: s.stack
 
 let exit_scope s =
@@ -49,10 +69,10 @@ let exit_scope s =
   | _ :: rest -> s.stack <- rest
   | [] -> assert false
 
-let var s name = match Hashtbl.find_opt (top s) name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
-let var_opt s name = Hashtbl.find_opt (top s) name
-let set s name v = Hashtbl.replace (top s) name v
-let del s name = Hashtbl.remove (top s) name
+let var s name = match Str_tbl.find_opt (top s) name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
+let var_opt s name = Str_tbl.find_opt (top s) name
+let set s name v = Str_tbl.replace (top s) name v
+let del s name = Str_tbl.remove (top s) name
 
 let var_z s name = match var s name with Int z -> z | Value v when Felt.is_felt v -> Felt.to_z v | _ -> fail "Variable %s is not an integer" name
 
@@ -91,8 +111,9 @@ type ctx = {
   scopes : scopes;
   refs : (string, P.reference) Hashtbl.t; (* short name -> reference *)
   mutable constants : (string * Z.t option) list;
-  bindings : (string, access) Hashtbl.t;
-  plans : (string * string list, bool * step list) Hashtbl.t; (* memoized member paths *)
+  (* Per-hint memos with a handful of entries: assoc lists beat hashing. *)
+  mutable bindings : (string * access) list;
+  mutable plans : (string * string list * (bool * step list)) list; (* member paths *)
 }
 
 (* A resolved member path: add an offset, or follow a pointer. *)
@@ -110,7 +131,7 @@ let make_ctx prog scopes (hint : P.hint) =
       in
       if id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
     hint.ref_ids;
-  { prog; hint; scopes; refs; constants = []; bindings = Hashtbl.create 4; plans = Hashtbl.create 4 }
+  { prog; hint; scopes; refs; constants = []; bindings = []; plans = [] }
 
 let read_reference vm a =
   if not (Felt.is_reloc a) then fail "Dereference of a non-pointer in reference";
@@ -165,8 +186,8 @@ let rec compile_expr ctx (r : P.reference) expr =
   | _ -> (fun vm -> eval vm ctx r expr)
 
 let binding ctx name =
-  match Hashtbl.find_opt ctx.bindings name with
-  | Some plan -> plan
+  match List.find_opt (fun (n, _) -> String.equal n name) ctx.bindings with
+  | Some (_, plan) -> plan
   | None ->
       let r = find_ref ctx name in
       let plan = match r.r_expr with
@@ -177,7 +198,7 @@ let binding ctx name =
             let read = compile_expr ctx r e in
             {address = read; value = read}
       in
-      Hashtbl.add ctx.bindings name plan;
+      ctx.bindings <- (name, plan) :: ctx.bindings;
       plan
 
 (* The compiler can resolve a simple FP address in one operation. Keep the
@@ -283,13 +304,13 @@ let member_plan ctx name path =
 
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
 let member_addr vm ctx name path =
-  let key = (name, path) in
+  let same (n, p, _) = String.equal n name && (p == path || p = path) in
   let is_ptr, plan =
-    match Hashtbl.find_opt ctx.plans key with
-    | Some p -> p
+    match List.find_opt same ctx.plans with
+    | Some (_, _, p) -> p
     | None ->
         let p = member_plan ctx name path in
-        Hashtbl.replace ctx.plans key p;
+        ctx.plans <- (name, path, p) :: ctx.plans;
         p
   in
   let base = if is_ptr then get_ptr vm ctx name else get_addr vm ctx name in

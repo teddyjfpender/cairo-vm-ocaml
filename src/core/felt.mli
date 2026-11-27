@@ -92,6 +92,9 @@ val of_int : int -> t
 val equal : t -> t -> bool
 external c_big_hash : bytes -> (int [@untagged]) -> (int [@untagged])
   = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
+val mix : int -> int
+(** Integer hash mix for immediate keys. *)
+
 val hash : t -> int
 val slow_binop : int -> t -> t -> t
 val add : t -> t -> t

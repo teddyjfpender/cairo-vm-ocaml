@@ -130,7 +130,10 @@ let[@inline] equal a b =
 external c_big_hash : bytes -> (int[@untagged]) -> (int[@untagged])
   = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
 
-let hash v = if is_big v then c_big_hash !pool v else Hashtbl.hash v
+(* Small felts and relocatables are canonical immediates: an integer mix is a
+   valid hash. Big felts hash their limbs. *)
+let[@inline] mix x = let h = x * 0x9E3779B97F4A7C1 in h lxor (h lsr 29)
+let hash v = if is_big v then c_big_hash !pool v else mix v
 
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 

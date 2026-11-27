@@ -333,14 +333,14 @@ let dict_manager scopes =
   match var_opt scopes "__dict_manager" with
   | Some (Dict_manager m) -> m
   | _ ->
-      let m = Hashtbl.create 8 in
+      let m = Int_tbl.create 8 in
       set scopes "__dict_manager" (Dict_manager m);
       m
 
 let get_tracker scopes ptr =
   let m = match var_opt scopes "__dict_manager" with Some (Dict_manager m) -> m | _ -> fail "No dict manager" in
   if not (Felt.is_reloc ptr) then fail "dict_ptr is not a pointer";
-  match Hashtbl.find_opt m (Felt.rseg ptr) with
+  match Int_tbl.find_opt m (Felt.rseg ptr) with
   | None -> fail "Dict Error: No dict tracker found for segment %d" (Felt.rseg ptr)
   | Some t ->
       if t.current_ptr <> ptr then
@@ -352,13 +352,13 @@ let dict_lookup t key =
   match change with
   | Some v -> v
   | None ->
-      (match Hashtbl.find_opt t.data key with
+      (match Felt_tbl.find_opt t.data key with
        | Some v -> v
        | None -> match t.default with Some d -> d | None -> fail "Dict Error: no value found for key %s" (value_to_string key))
 
 let dict_set t key value =
   match t.changes with
-  | None -> Hashtbl.replace t.data key value
+  | None -> Felt_tbl.replace t.data key value
   | Some m -> t.changes <- Some (Dict_changes.add key value m)
 
 let snapshot t =
@@ -372,12 +372,12 @@ let add_tracker vm scopes data changes default =
   let m = dict_manager scopes in
   let s = add_segment vm in
   let ptr = Felt.reloc s 0 in
-  Hashtbl.replace m s { data; changes; default; current_ptr = ptr };
+  Int_tbl.replace m s { data; changes; default; current_ptr = ptr };
   ptr
 
 let new_dict vm scopes initial default =
-  let data = Hashtbl.create 16 in
-  (match initial with Some h -> Hashtbl.iter (fun k v -> Hashtbl.replace data k v) h | None -> ());
+  let data = Felt_tbl.create 16 in
+  (match initial with Some h -> Felt_tbl.iter (fun k v -> Felt_tbl.replace data k v) h | None -> ());
   add_tracker vm scopes data None default
 
 let from_snapshot vm scopes (data, changes) = add_tracker vm scopes data (Some changes) None
@@ -391,17 +391,17 @@ let () =
       let ptr_diff = felt_z vm c "ptr_diff" in
       check (Z.equal (Z.erem ptr_diff (z 3)) Z.zero) "Accesses array size must be divisible by DictAccess.SIZE";
       let n = Z.to_int (felt_z vm c "n_accesses") in
-      let idx = Hashtbl.create 64 in
+      let idx = Felt_tbl.create 64 in
       let order = ref [] in
       for i = 0 to n - 1 do
         let key = canon (mem_at vm address (3 * i)) in
-        (match Hashtbl.find_opt idx key with
-        | Some l -> Hashtbl.replace idx key (i :: l)
+        (match Felt_tbl.find_opt idx key with
+        | Some l -> Felt_tbl.replace idx key (i :: l)
         | None ->
             order := key :: !order;
-            Hashtbl.replace idx key [ i ])
+            Felt_tbl.replace idx key [ i ])
       done;
-      Hashtbl.filter_map_inplace (fun _ l -> Some (List.rev l)) idx;
+      Felt_tbl.filter_map_inplace (fun _ l -> Some (List.rev l)) idx;
       let keys = List.sort (fun a b -> compare_values b a) !order in
       (match keys with
       | k :: _ -> set_val vm c "big_keys" (of_bool (Felt.is_felt k && Z.geq (Felt.to_z k) rc_bound))
@@ -427,7 +427,7 @@ let () =
   in
   let access_list scopes =
     match (var scopes "access_indices", var scopes "key") with
-    | Access_indices h, Value k -> (match Hashtbl.find_opt h k with Some l -> l | None -> fail "key not in access_indices")
+    | Access_indices h, Value k -> (match Felt_tbl.find_opt h k with Some l -> l | None -> fail "key not in access_indices")
     | _ -> fail "squash_dict scope corrupted"
   in
   reg H.squash_dict_inner_first_iteration (fun c vm ->
@@ -670,26 +670,26 @@ let () =
   reg H.usort_body (fun c vm ->
       let inp = get_ptr vm c "input" in
       let n = Felt.to_nat (get_felt vm c "input_len") in
-      let pos = Hashtbl.create 64 in
+      let pos = Felt_tbl.create 64 in
       let keys = ref [] in
       for i = 0 to n - 1 do
         let v = canon (mem_at vm inp i) in
-        match Hashtbl.find_opt pos v with
-        | Some l -> Hashtbl.replace pos v (i :: l)
+        match Felt_tbl.find_opt pos v with
+        | Some l -> Felt_tbl.replace pos v (i :: l)
         | None ->
             keys := v :: !keys;
-            Hashtbl.replace pos v [ i ]
+            Felt_tbl.replace pos v [ i ]
       done;
-      Hashtbl.filter_map_inplace (fun _ l -> Some (List.rev l)) pos;
+      Felt_tbl.filter_map_inplace (fun _ l -> Some (List.rev l)) pos;
       let out = List.sort compare_values !keys in
       set c.scopes "positions_dict" (Positions pos);
       set_val vm c "output_len" (Felt.small (List.length out));
       set_val vm c "output" (gen_arg vm out);
-      set_val vm c "multiplicities" (gen_arg vm (List.map (fun k -> Felt.small (List.length (Hashtbl.find pos k))) out)));
+      set_val vm c "multiplicities" (gen_arg vm (List.map (fun k -> Felt.small (List.length (Felt_tbl.find pos k))) out)));
   reg H.usort_verify (fun c vm ->
       set c.scopes "last_pos" (Int Z.zero);
       let pos = match var c.scopes "positions_dict" with Positions p -> p | _ -> fail "positions_dict missing" in
-      let l = match Hashtbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
+      let l = match Felt_tbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
       (* h57 stores positions in increasing order. Consume that immutable list
          from the head, preserving positions_dict for subsequent lookups. *)
       set c.scopes "positions" (Ints l));
@@ -718,7 +718,7 @@ let () =
    be ruled out for any different first word, even if its suffix has holes.
    Cache the earliest row for each first word and check matching rows with
    the ordinary element comparison. Keep just one range per compiled hint. *)
-let set_word_hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
+let set_word_hash = Felt.hash
 
 module Set_words = Hashtbl.Make (struct
   type t = Felt.t
