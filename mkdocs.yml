@@ -1,5 +1,5 @@
 site_name: cairo-vm-ocaml
-site_description: A blazingly fast Cairo VM written in OCaml
+site_description: A fast Cairo VM written in OCaml
 repo_url: https://github.com/teddyjfpender/cairo-vm-ocaml
 theme:
   name: material
@@ -10,12 +10,29 @@ theme:
     - scheme: slate
       primary: deep orange
       toggle: { icon: material/weather-sunny, name: Light mode }
-  features: [navigation.instant, content.code.copy]
-markdown_extensions: [admonition, tables, toc]
+  features: [navigation.instant, navigation.sections, navigation.footer, content.code.copy]
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc: { permalink: true }
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Benchmarks: benchmarks.md
-  - Parity: parity.md
+  - Learn:
+      - Overview: learn/index.md
+      - 1. The Cairo machine: learn/cairo-machine.md
+      - 2. Values and Felt.t: learn/values.md
+      - 3. Memory and segments: learn/memory.md
+      - 4. Instructions and the CPU: learn/instructions.md
+      - 5. Builtins and hints: learn/builtins-and-hints.md
+      - 6. Runs, relocation and proofs: learn/runs-and-proofs.md
   - Architecture: architecture.md
+  - Reference:
+      - Parity: parity.md
+      - Benchmarks: benchmarks.md
   - Contributing: contributing.md

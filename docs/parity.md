@@ -1,4 +1,4 @@
-# ✅ Parity
+# Parity
 
 The target is [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm) **v4.0.0**.
 
@@ -17,7 +17,7 @@ python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [-j N]
 
 Upstream `cairo_programs`, compiled with cairo-lang 0.13.5:
 
-| Mode | ✅ Pass | 🤝 Fail in both | ❌ OCaml-only failures |
+| Mode | Pass | Fail in both | OCaml-only failures |
 | --- | ---: | ---: | ---: |
 | Execution, 165 programs | 155 | 10 | **0** |
 | Proof mode (`starknet_with_keccak`), 155 programs | 155 | 0 | **0** |

@@ -1,4 +1,4 @@
-# 🤝 Contributing
+# Contributing
 
 ## Before opening a PR
 
