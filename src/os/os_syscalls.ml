@@ -2,21 +2,27 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
-let execution_info vm ctx (call : Os_calls.call) =
-  let src = call.execution_info in
+let execution_info ctx =
   let prefix = "starkware.starknet.common.new_syscalls." in
   let offset ty field = member_offset ctx (prefix ^ ty) field in
-  let tx_slot = offset "ExecutionInfo" "tx_info" in
+  let tx_slot = offset "ExecutionInfo" "tx_info" and version_slot = offset "TxInfo" "version" in
+  let class_set list =
+    let n = Z.to_int (const_z ctx (list ^ "_LEN")) in
+    let set = Felt_tbl.create n in
+    for i = 0 to n-1 do
+      Felt_tbl.add set (Felt.of_z (const_z ctx (list ^ "_" ^ string_of_int i))) ()
+    done;
+    set in
+  let exclusions = lazy (class_set "DATA_GAS_ACCOUNTS", class_set "V1_BOUND_ACCOUNTS_CAIRO1") in
+  fun vm (call : Os_calls.call) ->
+  let src = call.execution_info in
   let tx = mem_at vm src tx_slot in
   let get field = mem_at vm tx (offset "TxInfo" field) in
-  if not (Felt.equal (get "version") (Felt.small 3)) then src else
-  let class_hash = Pie_file.z_of_json (U.member "class_hash" (U.member "call" call.witness)) in
-  let member list =
-    let rec find i = i >= 0 && (Felt.equal (Felt.of_z class_hash)
-        (Felt.of_z (const_z ctx (list ^ "_" ^ string_of_int i))) || find (i-1)) in
-    find (Z.to_int (const_z ctx (list ^ "_LEN")) - 1) in
-  let exclude = member "DATA_GAS_ACCOUNTS" in
-  let v1 = member "V1_BOUND_ACCOUNTS_CAIRO1" &&
+  if not (Felt.equal (mem_at vm tx version_slot) (Felt.small 3)) then src else
+  let class_hash = Felt.of_z (Pie_file.z_of_json (U.member "class_hash" (U.member "call" call.witness))) in
+  let data_gas, v1_bound = Lazy.force exclusions in
+  let exclude = Felt_tbl.mem data_gas class_hash in
+  let v1 = Felt_tbl.mem v1_bound class_hash &&
     Felt.compare (get "tip") (Felt.of_z (const_z ctx "V1_BOUND_ACCOUNTS_MAX_TIP")) <= 0 in
   if not (exclude || v1) then src else begin
     let fresh = Felt.reloc (Vm.add_segment vm) 0 in
@@ -35,17 +41,28 @@ let execution_info vm ctx (call : Os_calls.call) =
     write_arg vm fresh (Array.to_list out); fresh
   end
 
-let run state ctx vm ptr =
+let bind state ctx =
+  let info = lazy (execution_info ctx) in
+  let costs = Hashtbl.create 16 in
+  let required_cost name =
+    match Hashtbl.find_opt costs name with
+    | Some cost -> cost
+    | None ->
+        let cost = Z.sub (const_z ctx (name ^ "_GAS_COST")) (const_z ctx "SYSCALL_BASE_GAS_COST") in
+        if Z.sign cost < 0 then fail "Invalid syscall gas cost";
+        Hashtbl.add costs name cost; cost in
+  let names = Felt_tbl.create 16 in
+  List.iter (fun name -> Felt_tbl.add names (Os_block_hash.ascii name) name)
+    ["GetExecutionInfo"; "EmitEvent"; "StorageRead"; "StorageWrite"; "SendMessageToL1";
+     "ReplaceClass"; "Deploy"; "CallContract"; "LibraryCall"];
+  fun vm ptr ->
   let open Os_calls in
   if state.syscall_ptr <> Some ptr then fail "Unexpected CASM syscall pointer";
   let at n = mem_at vm ptr n in
   let integer n = let v = at n in if not (Felt.is_felt v) then fail "Expected syscall felt"; v in
-  let name_of x =
-    let le = Z.to_bits (Felt.to_z x) in
-    let len = ref (String.length le) in
-    while !len > 0 && le.[!len-1] = '\000' do decr len done;
-    String.init !len (fun i -> le.[!len-1-i]) in
-  let name = name_of (integer 0) and gas = integer 1 in
+  let selector = integer 0 and gas = integer 1 in
+  let name = match Felt_tbl.find_opt names selector with
+    | Some name -> name | None -> fail "Unsupported OS syscall selector %s" (Felt.to_string selector) in
   if Felt.bits gas > 64 then fail "Syscall gas exceeds u64";
   let span n =
     let start = at n and stop = at (n+1) in
@@ -71,7 +88,7 @@ let run state ctx vm ptr =
   let success values gas = gas,Felt.zero,values in
   let units, cost, response =
     match name with
-    | "GetExecutionInfo" -> 2,"GET_EXECUTION_INFO", (fun gas -> success [execution_info vm ctx call] gas)
+    | "GetExecutionInfo" -> 2,"GET_EXECUTION_INFO", (fun gas -> success [(Lazy.force info) vm call] gas)
     | "EmitEvent" ->
         span 2; span 4; 6,"EMIT_EVENT",(fun gas -> success [] gas)
     | "StorageRead" | "StorageWrite" ->
@@ -105,7 +122,7 @@ let run state ctx vm ptr =
             let values = if failed then values @ [Os_block_hash.ascii "ENTRYPOINT_FAILED"] else values in
             gas,of_bool failed,array true values)
     | _ -> fail "Unsupported OS syscall %s" name in
-  let required = Z.add !variable_cost (Z.sub (const_z ctx (cost ^ "_GAS_COST")) (const_z ctx "SYSCALL_BASE_GAS_COST")) in
+  let required = Z.add !variable_cost (required_cost cost) in
   let gas,failed,values =
     if Z.lt (Felt.to_z gas) required then gas,Felt.one,array false [Os_block_hash.ascii "Out of gas"]
     else response (Felt.sub gas (Felt.of_z required)) in

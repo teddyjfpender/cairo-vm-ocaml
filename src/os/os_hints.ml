@@ -20,6 +20,8 @@ let from_file ~watch ~accessed ~set_pages path =
       |> List.map (fun (hash, cls) -> Z.of_string hash, cls)
       |> List.sort (fun (a, _) (b, _) -> Z.compare a b) in
   let deprecated = U.to_assoc (U.member "deprecated_compiled_classes" input) in
+  let deprecated_hashes = Felt_tbl.create (List.length deprecated) in
+  List.iter (fun (key, _) -> Felt_tbl.add deprecated_hashes (felt (`String key)) ()) deprecated;
   let public_keys = match U.member "public_keys" config with
     | `Null -> [] | a -> List.map felt (U.to_list a) in
   let table = Hashtbl.create 32 in
@@ -51,7 +53,7 @@ let from_file ~watch ~accessed ~set_pages path =
   Os_block_hash.register ~block ~felt reg;
   reg "CheckIsDeprecated" (fun c vm ->
       let hash = get_member vm c "execution_context" ["class_hash"] in
-      set_val vm c "is_deprecated" (of_bool (List.exists (fun (k,_) -> Felt.equal hash (felt (`String k))) deprecated)));
+      set_val vm c "is_deprecated" (of_bool (Felt_tbl.mem deprecated_hashes hash)));
   reg "StarknetOsInput" (fun _ _ -> ());
   reg "memory[ap] = to_felt_or_relocatable(segments.add())" (fun _ vm -> write_ap vm (segment vm));
   reg "GetPublicKeys" (fun c vm ->
@@ -62,9 +64,10 @@ let from_file ~watch ~accessed ~set_pages path =
       let facts = segment vm in
       set_val vm c "compiled_class_facts" facts;
       set_val vm c "n_compiled_class_facts" (Felt.small (List.length classes));
+      let syscall = Os_syscalls.bind calls c in
       List.iteri (fun i (hash, cls) ->
           let class_hash = Felt.of_z hash in
-          let tree = Casm_class.load ~watch ~syscall:(Os_syscalls.run calls c) vm c ~felt ~class_hash
+          let tree = Casm_class.load ~watch ~syscall vm c ~felt ~class_hash
             ~fact:(Casm_class.at facts (2*i)) ~builtin_costs:(get_ptr vm c "builtin_costs") cls in
           Felt_tbl.replace structures class_hash tree) classes);
   reg "ChainIdAndFeeTokenAddress" (fun c vm ->
