@@ -1,5 +1,6 @@
 """Compare the native aggregator with pinned sequencer PIE and blob digests."""
 import argparse
+import gzip
 import hashlib
 import json
 import subprocess
@@ -9,7 +10,9 @@ from pathlib import Path
 
 
 def compare(binary, program, input_path):
-    witness = json.loads(input_path.read_text())
+    contents = input_path.read_bytes() if input_path.exists() else gzip.decompress(
+        input_path.with_suffix(".json.gz").read_bytes())
+    witness = json.loads(contents)
     cases = json.loads(input_path.with_suffix(".sha256.json").read_text())
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -29,7 +32,10 @@ def compare(binary, program, input_path):
                 actual = {}
                 for member in z.namelist():
                     with z.open(member) as contents:
-                        actual[member] = hashlib.file_digest(contents, "sha256").hexdigest()
+                        digest = hashlib.sha256()
+                        for chunk in iter(lambda: contents.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                        actual[member] = digest.hexdigest()
             if actual != expected["pie"]:
                 raise ValueError(f"{input_path.stem} {mode} PIE mismatch")
             if expected["da"] and hashlib.sha256(blob.read_bytes()).hexdigest() != expected["da"]:
@@ -42,5 +48,5 @@ if __name__ == "__main__":
     parser.add_argument("binary", type=Path)
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
-    for name in ("storage4", "syscalls5"):
+    for name in ("storage4", "syscalls5", "storage-2048-blocks"):
         compare(args.binary.resolve(), args.program.resolve(), Path(__file__).with_name(name + ".json"))

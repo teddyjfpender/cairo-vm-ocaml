@@ -11,6 +11,24 @@ On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revisi
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Native aggregator and virtual OS on Apple M4 Max
+
+The aggregator consumed consecutive block outputs produced by the pinned Rust OS. The virtual OS ran one account transaction with repeated Keccak, elliptic-curve and SHA-512 calls. Both used the pinned sequencer's Rust 3.2.0 VM. Each output-only result is the median of seven alternating Rust/OCaml wall-time ratios. Each PIE result uses three pairs and checks all five decompressed members. The PIE timings include archive compression.
+
+| Workload | Output only | Output and PIE |
+| --- | ---: | ---: |
+| Aggregator, 32 blocks | 1.31× | 2.93× |
+| Aggregator, 128 blocks | 2.19× | 6.16× |
+| Aggregator, 512 blocks | 3.87× | 10.52× |
+| Aggregator, 1,024 blocks | 4.46× | 12.38× |
+| Aggregator, 2,048 blocks | 5.11× | 13.64× |
+| Virtual OS, 3 inner calls | 1.81× | 4.83× |
+| Virtual OS, 12 inner calls | 2.01× | 6.00× |
+| Virtual OS, 48 inner calls | 2.65× | 9.93× |
+| Virtual OS, 192 inner calls | 4.11× | 17.27× |
+
+[Aggregator pairs and input digests](../bench/results/aggregator-scale-m4-max.csv) · [Virtual OS pairs and input digests](../bench/results/virtual-os-scale-m4-max.csv).
+
 ## Native Starknet OS on Apple M4 Max
 
 The mixed five-block witness contains 282 transactions and executes 10,954,713

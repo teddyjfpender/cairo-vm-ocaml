@@ -1,0 +1,12 @@
+{
+  "partial": {
+    "pie": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "c4c1aa146f9dd3d350d060f6103f35cb21759d40885ce502f7eb2d25ef4de08f",
+      "memory.bin": "e1d8b5f36fd885f54ee2b392fb14bf7dc39cf2089c1eee396b52ca0fd005a567",
+      "additional_data.json": "ac2cc475f4da6d2bdef3bf795f2d46b094e6d542dcaf8d256e3023b2eaefe579",
+      "execution_resources.json": "9d88306f95952946daec2a8e7c07a8682605ddb00734230ae1d1f3a28f70d733"
+    },
+    "da": null
+  }
+}
