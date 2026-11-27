@@ -33,8 +33,7 @@ let register ~block ~felt reg =
     | Patricia_descents m -> m | _ -> fail "Missing Patricia descent map" in
   let enter_node c n =
     enter c.scopes ["node", Patricia_node n; "descent_map", Patricia_descents (map c)] in
-  let children c = match node c "node" with
-    | Branch (l,r) -> l,r | _ -> fail "Expected Patricia branch" in
+  let children c = update_children (node c "node") in
   let bit vm c =
     match get_z vm c "bit" |> Z.to_int with 0 -> false | 1 -> true | _ -> fail "Invalid Patricia bit" in
   reg C.build (fun c vm ->
@@ -65,12 +64,8 @@ let register ~block ~felt reg =
       let fetch key = match var c.scopes key with Int z -> z | _ -> fail "Invalid Patricia descent" in
       set_int vm c "length" (fetch "descend_length"); set_int vm c "word" (fetch "descend_word"));
   reg C.descend (fun c vm ->
-      let tree = ref (node c "node") and word = get_z vm c "word" in
-      for i = height (get_z vm c "length") - 1 downto 0 do
-        match !tree with Branch (l,r) -> tree := (if Z.testbit word i then r else l)
-        | _ -> fail "Missing node on Patricia descent"
-      done;
-      enter_node c !tree);
+      let tree = follow (node c "node") (height (get_z vm c "length")) (get_z vm c "word") in
+      enter_node c tree);
   let decode c vm = let l,r = children c in write_ap vm (of_bool (l = Empty || r = Empty)) in
   List.iter (fun suffix -> reg ("from starkware.python.merkle_tree import decode_node\nleft_child, right_child, case = decode_node(node)\nmemory[ap] = " ^ suffix) decode)
     ["1 if case != 'both' else 0"; "int(case != 'both')"];
