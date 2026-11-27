@@ -96,6 +96,23 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
    104 signed bits. Normalize carries, fold the carry above limb 3,
    and finish with the top-limb quotient estimate for p. */
 static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
+  /* Cairo's multi-limb integers frequently multiply two 86- or 128-bit
+     limbs. Their product already fits in four words. */
+  if (!(a[2] | a[3] | b[2] | b[3])) {
+    u128 low = (u128)a[0]*b[0];
+    u128 left = (u128)a[0]*b[1] + (u64)(low >> 64);
+    u128 right = (u128)a[1]*b[0] + (u64)left;
+    u128 top = (u128)a[1]*b[1] + (left >> 64) + (right >> 64);
+    r[0] = (u64)low; r[1] = (u64)right; r[2] = (u64)top; r[3] = (u64)(top >> 64);
+    u64 q = r[3] >> 59;
+    if (q) {
+      /* q=floor(product/2^251) overestimates floor(product/p) by at
+         most one since product < 2^256 and p=2^251+17*2^192+1. */
+      u64 multiple[4] = {q,0,0,q*P[3]};
+      if (sub4(r,r,multiple)) add4(r,r,P);
+    }
+    return;
+  }
   u64 t[8] = {0};
   for (int i = 0; i < 4; i++) {
     u128 carry = 0;
