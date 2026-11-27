@@ -21,12 +21,6 @@ module Int_tbl = Hashtbl.Make (struct
   let hash = Felt.mix
 end)
 
-module Str_tbl = Hashtbl.Make (struct
-  type t = string
-  let equal = String.equal
-  let hash (s : string) = Hashtbl.hash s
-end)
-
 module Dict_changes = Map.Make (struct
   type t = Felt.t
   let compare (a : t) (b : t) = Int.compare (a :> int) (b :> int)
@@ -52,16 +46,26 @@ type dyn =
   | Initial_dict of Felt.t Felt_tbl.t
   | Nothing
 
-type scopes = { mutable stack : dyn Str_tbl.t list }
+(* Hint bodies pass literal names, so a physical match almost always settles
+   a lookup in these short association lists before any string comparison. *)
+let memo phys structural l = match List.find_opt phys l with Some _ as hit -> hit | None -> List.find_opt structural l
+let named name l = memo (fun (n, _) -> n == name) (fun (n, _) -> String.equal n name) l
 
-let new_scopes () = { stack = [ Str_tbl.create 8 ] }
+(* A scope holds a handful of variables. *)
+type frame = { mutable vars : (string * dyn ref) list }
+type scopes = { mutable stack : frame list }
+
+let new_scopes () = { stack = [ { vars = [] } ] }
 let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
+let assign f name v =
+  match named name f.vars with Some (_, r) -> r := v | None -> f.vars <- (name, ref v) :: f.vars
+
 let enter s vars =
-  let h = Str_tbl.create 8 in
-  List.iter (fun (k, v) -> Str_tbl.replace h k v) vars;
-  s.stack <- h :: s.stack
+  let f = { vars = [] } in
+  List.iter (fun (k, v) -> assign f k v) vars;
+  s.stack <- f :: s.stack
 
 let exit_scope s =
   match s.stack with
@@ -69,10 +73,10 @@ let exit_scope s =
   | _ :: rest -> s.stack <- rest
   | [] -> assert false
 
-let var s name = match Str_tbl.find_opt (top s) name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
-let var_opt s name = Str_tbl.find_opt (top s) name
-let set s name v = Str_tbl.replace (top s) name v
-let del s name = Str_tbl.remove (top s) name
+let var_opt s name = Option.map (fun (_, r) -> !r) (named name (top s).vars)
+let var s name = match var_opt s name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
+let set s name v = assign (top s) name v
+let del s name = let f = top s in f.vars <- List.filter (fun (n, _) -> not (String.equal n name)) f.vars
 
 let var_z s name = match var s name with Int z -> z | Value v when Felt.is_felt v -> Felt.to_z v | _ -> fail "Variable %s is not an integer" name
 
@@ -186,7 +190,7 @@ let rec compile_expr ctx (r : P.reference) expr =
   | _ -> (fun vm -> eval vm ctx r expr)
 
 let binding ctx name =
-  match List.find_opt (fun (n, _) -> String.equal n name) ctx.bindings with
+  match named name ctx.bindings with
   | Some (_, plan) -> plan
   | None ->
       let r = find_ref ctx name in
@@ -304,9 +308,8 @@ let member_plan ctx name path =
 
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
 let member_addr vm ctx name path =
-  let same (n, p, _) = String.equal n name && (p == path || p = path) in
   let is_ptr, plan =
-    match List.find_opt same ctx.plans with
+    match memo (fun (n, p, _) -> n == name && p == path) (fun (n, p, _) -> String.equal n name && p = path) ctx.plans with
     | Some (_, _, p) -> p
     | None ->
         let p = member_plan ctx name path in
@@ -367,8 +370,8 @@ let resolve_constant ctx name =
    Cache misses too: optional constants can otherwise scan every identifier
    on every iteration. Keep lookup lazy for hints that never execute. *)
 let const_opt ctx name =
-  match List.assoc_opt name ctx.constants with
-  | Some cached -> cached
+  match named name ctx.constants with
+  | Some (_, cached) -> cached
   | None ->
       let value = resolve_constant ctx name in
       ctx.constants <- (name, value) :: ctx.constants;
