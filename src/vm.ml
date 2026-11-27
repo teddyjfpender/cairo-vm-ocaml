@@ -118,6 +118,17 @@ type vm = {
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable builtins : builtin list;
+  (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
+     rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
+     relocation_rules. [relocating] is set once a rule exists: memory reads
+     then translate temporary relocatables, so the interpreter leaves its
+     fast path (see [Relocating]). *)
+  mutable tsegs : seg array;
+  mutable thi : int array;
+  mutable ntsegs : int;
+  mutable rules : (int * int) list; (* temp index -> destination relocatable *)
+  mutable relocating : bool;
+  mutable had_temp : bool;
 }
 
 let create ~trace =
@@ -137,6 +148,12 @@ let create ~trace =
     trace = (if trace then seg_make (1 lsl 26) else empty_seg);
     tlen = 0;
     builtins = [];
+    tsegs = [||];
+    thi = [||];
+    ntsegs = 0;
+    rules = [];
+    relocating = false;
+    had_temp = false;
   }
 
 let add_segment vm =
@@ -160,9 +177,51 @@ let[@inline] read vm seg off =
   let a = Array.unsafe_get vm.segs seg in
   if off < slen a then sget a off else 0
 
+(* ---- temporary segments (cairo-vm MemorySegmentManager.add_temp_segment) ---- *)
+
+let add_temp_segment vm =
+  let n = vm.ntsegs in
+  if n >= Array.length vm.tsegs then begin
+    let cap = max 4 (2 * n) in
+    let grow a d = Array.append a (Array.make (cap - Array.length a) d) in
+    vm.tsegs <- grow vm.tsegs empty_seg;
+    vm.thi <- grow vm.thi 0
+  end;
+  vm.tsegs.(n) <- seg_make 16;
+  vm.thi.(n) <- 0;
+  vm.ntsegs <- n + 1;
+  vm.had_temp <- true;
+  -(n + 1)
+
+let[@inline] temp_index seg = -(seg + 1)
+
+let temp_ok vm seg = seg < 0 && temp_index seg < vm.ntsegs
+
+let[@inline never] temp_read vm seg off =
+  if not (temp_ok vm seg) then fail "Unknown memory segment %d" seg;
+  let a = vm.tsegs.(temp_index seg) in
+  if off >= 0 && off < slen a then sget a off else 0
+
+(* Memory.relocate_value: one application of the current rules *)
+let[@inline never] relocate_temp_value vm v =
+  if is_reloc v && rseg v < 0 then
+    match List.assoc_opt (temp_index (rseg v)) vm.rules with
+    | Some dst ->
+        let o = roff dst + roff v in
+        if o > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
+        reloc (rseg dst) o
+    | None -> v
+  else v
+
 let get vm seg off =
-  if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
-  if off < 0 then 0 else read vm seg off
+  let v =
+    if seg < 0 then temp_read vm seg off
+    else begin
+      if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
+      if off < 0 then 0 else read vm seg off
+    end
+  in
+  if vm.relocating then relocate_temp_value vm v else v
 
 let[@inline never] grow_seg vm seg off =
   let a = vm.segs.(seg) in
@@ -202,9 +261,111 @@ let[@inline] write vm seg off v =
     fail "Inconsistent memory assignment at address %d:%d. %s != %s" seg off (value_to_string cur)
       (value_to_string v)
 
+let[@inline never] temp_write vm seg off v =
+  if not (temp_ok vm seg) then fail "Unknown memory segment %d" seg;
+  if off < 0 then fail "Negative memory offset %d:%d" seg off;
+  let k = temp_index seg in
+  let a = vm.tsegs.(k) in
+  if off >= slen a then begin
+    let n = ref (max 16 (slen a)) in
+    while !n <= off do n := 2 * !n done;
+    vm.tsegs.(k) <- seg_grow a !n
+  end;
+  let a = vm.tsegs.(k) in
+  let cur = sget a off in
+  if cur = 0 then begin
+    sset a off v;
+    if off >= vm.thi.(k) then vm.thi.(k) <- off + 1
+  end
+  else if not (Felt.equal cur v) then
+    fail "Inconsistent memory assignment at address %d:%d. %s != %s" seg off (value_to_string cur)
+      (value_to_string v)
+
 let write_checked vm seg off v =
-  if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
-  write vm seg off v
+  if seg < 0 then temp_write vm seg off v
+  else begin
+    if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
+    write vm seg off v
+  end
+
+(* Memory.add_relocation_rule (without extensive_hints) *)
+let add_relocation_rule vm src dst =
+  if not (is_reloc src) then fail "add_relocation_rule: src_ptr is not a relocatable";
+  if not (is_reloc dst) then fail "add_relocation_rule: dest_ptr is not a relocatable";
+  if rseg src >= 0 then fail "Address %d is not in a temporary segment" (rseg src);
+  if roff src <> 0 then fail "Non-zero offset %d in relocation source" (roff src);
+  let k = temp_index (rseg src) in
+  if List.mem_assoc k vm.rules then fail "Duplicated relocation rule for segment %d" (rseg src);
+  vm.rules <- (k, dst) :: vm.rules;
+  vm.relocating <- true
+
+(* Memory.relocate_memory, run at the start of end_run: flatten rule chains,
+   rewrite temporary relocatables in all memory, then move each relocated
+   temporary segment into real memory (descending index order, holes skip
+   addresses), with ordinary write-once and builtin validation. *)
+let relocate_temp_memory vm =
+  if vm.rules <> [] && vm.ntsegs > 0 then begin
+    let max_hops = List.length vm.rules + 1 in
+    let flat =
+      List.map
+        (fun (k, dst) ->
+          let rec go dst hops =
+            if rseg dst >= 0 then dst
+            else begin
+              let next =
+                match List.assoc_opt (temp_index (rseg dst)) vm.rules with
+                | Some n -> n
+                | None -> fail "Unmapped temporary segment %d" (rseg dst)
+              in
+              let o = roff next + roff dst in
+              if o > off_mask then fail "Offset exceeds range in relocation rule";
+              if hops + 1 > max_hops then fail "Relocation rule cycle";
+              go (reloc (rseg next) o) (hops + 1)
+            end
+          in
+          (k, go dst 0))
+        vm.rules
+    in
+    let relocate v =
+      if is_reloc v && rseg v < 0 then
+        match List.assoc_opt (temp_index (rseg v)) flat with
+        | Some dst ->
+            let o = roff dst + roff v in
+            if o > off_mask then fail "Offset exceeds range when relocating memory";
+            reloc (rseg dst) o
+        | None -> v
+      else v
+    in
+    let rewrite a n =
+      for i = 0 to n - 1 do
+        let v = sget a i in
+        if v land 3 = 2 && rseg v < 0 then sset a i (relocate v)
+      done
+    in
+    for s = 0 to vm.nsegs - 1 do rewrite vm.segs.(s) (min vm.hi.(s) (slen vm.segs.(s))) done;
+    for k = 0 to vm.ntsegs - 1 do rewrite vm.tsegs.(k) vm.thi.(k) done;
+    let keep = ref [] in
+    for k = vm.ntsegs - 1 downto 0 do
+      match List.assoc_opt k flat with
+      | Some dst ->
+          let a = vm.tsegs.(k) in
+          for i = 0 to vm.thi.(k) - 1 do
+            let v = sget a i in
+            if v <> 0 then begin
+              let o = roff dst + i in
+              if o > off_mask then fail "Offset exceeds range when relocating memory";
+              write_checked vm (rseg dst) o v
+            end
+          done
+      | None -> keep := (vm.tsegs.(k), vm.thi.(k)) :: !keep
+    done;
+    let kept = Array.of_list !keep in
+    vm.tsegs <- Array.map fst kept;
+    vm.thi <- Array.map snd kept;
+    vm.ntsegs <- Array.length kept;
+    vm.rules <- [];
+    vm.relocating <- false
+  end
 
 (* last assigned offset + 1 *)
 let used_size vm seg = vm.hi.(seg)
@@ -480,7 +641,10 @@ let[@inline] record_trace vm pc_seg pc ap fp =
 
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off
 
-let[@inline never] slow_operand_read vm seg off = if seg_ok vm seg then read vm seg off else fail "Unknown segment %d" seg
+let[@inline never] slow_operand_read vm seg off =
+  if seg_ok vm seg then read vm seg off
+  else if seg < 0 then temp_read vm seg off
+  else fail "Unknown segment %d" seg
 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
@@ -495,6 +659,9 @@ let rec step_instr vm d =
   let elen = slen exec in
   let dst = if dst_addr < elen then sget exec dst_addr else 0 in
   let op0 = if op0_addr < elen then sget exec op0_addr else 0 in
+  (* with relocation rules, operands are read through Memory.get *)
+  let dst = if vm.relocating then relocate_temp_value vm dst else dst in
+  let op0 = if vm.relocating then relocate_temp_value vm op0 else op0 in
   (* op1 address *)
   let op1_src = (d lsr 50) land 3 in
   let op1_seg, op1_off =
@@ -509,6 +676,7 @@ let rec step_instr vm d =
   in
   if op1_off < 0 then fail "Negative op1 address";
   let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else 0) else slow_operand_read vm op1_seg op1_off in
+  let op1 = if vm.relocating then relocate_temp_value vm op1 else op1 in
   let size = if op1_src = 1 then 2 else 1 in
   let res_kind = (d lsr 52) land 3 in
   let opcode = (d lsr 58) land 3 in
@@ -692,6 +860,11 @@ let[@inline] step vm =
    fast path pays one load per step for hint detection. *)
 
 let hint_bit = 1 lsl 61
+
+(* Raised by [run_fast] after the hints of the current pc have run and a
+   relocation rule exists. Registers are synchronized in [vm]; the caller
+   continues with [run_relocating], which reads memory through the rules. *)
+exception Relocating
 let generic_steps = ref 0
 let hint_steps = ref 0
 
@@ -731,6 +904,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         for i = 0 to Array.length hs - 1 do
           (Array.unsafe_get hs i) vm
         done;
+        if vm.relocating then raise Relocating;
         hi1 := vm.hi.(1);
         d land lnot hint_bit
       end
@@ -886,7 +1060,8 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         let hs = Array.unsafe_get hints !pc in
         for i = 0 to Array.length hs - 1 do
           (Array.unsafe_get hs i) vm
-        done
+        done;
+        if vm.relocating then raise Relocating
       end;
       step vm;
       (* flag hint pcs in the decoded cache *)
@@ -908,3 +1083,23 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
   vm.fp <- !fp;
   vm.pc_seg <- !pc_seg;
   vm.steps <- !steps
+
+(* Generic loop used once relocation rules exist (rare: temporary segments).
+   [skip_hints] is true when the hints of the current pc already ran. *)
+let run_relocating vm (hints : (vm -> unit) array array) end_seg ~skip_hints =
+  let nh = Array.length hints in
+  let skip = ref skip_hints in
+  while not (vm.pc_seg = end_seg && vm.pc = 0) do
+    if (not !skip) && vm.pc_seg = 0 && vm.pc < nh then begin
+      let hs = Array.unsafe_get hints vm.pc in
+      for i = 0 to Array.length hs - 1 do
+        (Array.unsafe_get hs i) vm
+      done
+    end;
+    skip := false;
+    step vm
+  done
+
+let run vm hints end_seg =
+  try run_fast vm hints end_seg
+  with Relocating -> run_relocating vm hints end_seg ~skip_hints:true

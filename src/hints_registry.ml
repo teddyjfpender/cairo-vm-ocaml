@@ -7,5 +7,6 @@ let init () =
   if not !initialized then begin
     initialized := true;
     Hints_secp.register ();
+    Hints_misc.register ();
     ()
   end
