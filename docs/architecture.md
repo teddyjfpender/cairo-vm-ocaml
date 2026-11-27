@@ -41,8 +41,9 @@ Artifacts / Air / Pie            relocation, trace and memory files, AIR inputs,
 
 ### Hint families
 
-Every module in `src/hints/` besides the runtime exposes `register`, and `Hints` builds the one
-table from them (a code registered twice is an error). Each family follows the matching
+Each hint family in `src/hints/` exposes `register`, and `Hints` builds the one table from them
+(the runtime `Hintrt`, the generated `Hint_codes` and the helpers `Find_element` and `Secp_field`
+register nothing) (a code registered twice is an error). Each family follows the matching
 cairo-vm v4.0.0 source files.
 
 | Module | Hints |
