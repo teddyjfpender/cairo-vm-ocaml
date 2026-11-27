@@ -871,6 +871,13 @@ value cvm_zalloc(value vn) {
 static inline intnat rel_seg(intnat c) { return c >> 42; }
 static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
 
+static void write_chunk(FILE *f, const char *buf, size_t len) {
+  if (fwrite(buf, 1, len, f) != len) {
+    fclose(f);
+    caml_failwith("cannot write Cairo artifact");
+  }
+}
+
 /* Decode Vm.record_trace entries to ordinary relocated (ap, fp, pc) triples. */
 value cvm_write_trace(value path, value trace, value vlen, value table) {
   FILE *f = fopen(String_val(path), "wb");
@@ -899,10 +906,10 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
     }
     memcpy(buf + pos, e, 24);
     pos += 24;
-    if (pos + 24 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }
+    if (pos + 24 > sizeof buf) { write_chunk(f, buf, pos); pos = 0; }
   }
-  fwrite(buf, 1, pos, f);
-  fclose(f);
+  write_chunk(f, buf, pos);
+  if (fclose(f) != 0) caml_failwith("cannot close Cairo artifact");
   return Val_unit;
 }
 
@@ -931,11 +938,11 @@ value cvm_write_memory(value path, value segs, value sizes, value table, value v
       }
       memcpy(buf + pos, w, 40);
       pos += 40;
-      if (pos + 40 > sizeof buf) { fwrite(buf, 1, pos, f); pos = 0; }
+      if (pos + 40 > sizeof buf) { write_chunk(f, buf, pos); pos = 0; }
     }
   }
-  fwrite(buf, 1, pos, f);
-  fclose(f);
+  write_chunk(f, buf, pos);
+  if (fclose(f) != 0) caml_failwith("cannot close Cairo artifact");
   return Val_unit;
 }
 value cvm_write_memory_byte(value *argv, int argc) {

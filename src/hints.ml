@@ -30,6 +30,15 @@ let split3 num =
   check (Z.sign num >= 0 && Z.numbits num <= 258) "split: value too large";
   [Z.extract num 0 86; Z.extract num 86 86; Z.extract num 172 86]
 
+let read_uint256 vm c name =
+  let low = get_member_z vm c name [ "low" ] in
+  let high = get_member_z vm c name [ "high" ] in
+  Z.add (Z.shift_left high 128) low
+
+let write_uint256 vm c name value =
+  set_member vm c name [ "low" ] (zf (Z.extract value 0 128));
+  set_member vm c name [ "high" ] (zf (Z.shift_right value 128))
+
 let isqrt n = Z.sqrt n
 
 (* ---- blake2s ---- *)
@@ -138,7 +147,7 @@ external absorb_keccak : bytes -> int -> bytes -> int = "cvm_keccak_absorb"
 external snapshot_keccak : bytes -> int -> bytes -> unit = "cvm_keccak_snapshot"
 
 type keccak_prefix = {
-  start : int; state : bytes;
+  start : int; checked : bool; state : bytes;
   mutable words : int; mutable used : int;
 }
 
@@ -152,21 +161,21 @@ type keccak_cursors = {
 
 let keccak_cursors () = { owner = None; slots = Array.make 4 None; next = 0 }
 
-let fresh_prefix cache i start =
-  let p = { start; state = Bytes.make 200 '\000'; words = 0; used = 0 } in
+let fresh_prefix cache i start checked =
+  let p = { start; checked; state = Bytes.make 200 '\000'; words = 0; used = 0 } in
   cache.slots.(i) <- Some p;
   p
 
-let rec find_prefix cache start n i =
+let rec find_prefix cache start checked n i =
   if i = Array.length cache.slots then begin
     let slot = cache.next in
     cache.next <- (slot + 1) mod Array.length cache.slots;
-    fresh_prefix cache slot start
+    fresh_prefix cache slot start checked
   end else match cache.slots.(i) with
-    | Some p when p.start = start -> if p.words <= n then p else fresh_prefix cache i start
-    | _ -> find_prefix cache start n (i + 1)
+    | Some p when p.start = start -> if p.words <= n && (p.checked || not checked) then p else fresh_prefix cache i start checked
+    | _ -> find_prefix cache start checked n (i + 1)
 
-let finalize_keccak cache vm start n =
+let absorb_prefix ~checked cache vm start n =
   if n < 0 || n > Sys.max_string_length / 16 then fail "Invalid Keccak input length";
   (match cache.owner with
    | Some previous when previous == vm -> ()
@@ -174,16 +183,37 @@ let finalize_keccak cache vm start n =
        Array.fill cache.slots 0 (Array.length cache.slots) None;
        cache.owner <- Some vm;
        cache.next <- 0);
-  let prefix = find_prefix cache start n 0 in
+  let prefix = find_prefix cache start checked n 0 in
   while prefix.words < n do
     let count = min 4096 (n - prefix.words) in
-    let bytes = keccak_input vm start ~first:prefix.words (16 * count) ~check_width:false in
+    let bytes = keccak_input vm start ~first:prefix.words (16 * count) ~check_width:checked in
     prefix.used <- absorb_keccak prefix.state prefix.used bytes;
     prefix.words <- prefix.words + count
   done;
+  prefix
+
+let digest_state state used =
   let digest = Bytes.create 32 in
-  snapshot_keccak prefix.state prefix.used digest;
+  snapshot_keccak state used digest;
   digest
+
+let finalize_keccak cache vm start n =
+  let prefix = absorb_prefix ~checked:false cache vm start n in
+  digest_state prefix.state prefix.used
+
+let hash_byte_prefix cache vm data length =
+  if length < 0 then fail "Invalid Keccak input length";
+  let words = length / 16 and tail = length mod 16 in
+  let prefix = absorb_prefix ~checked:true cache vm data words in
+  if tail = 0 then digest_state prefix.state prefix.used
+  else begin
+    (* A partial word uses its shortest requested big-endian width. Never
+       commit those bytes to a checkpoint for complete 16-byte words. *)
+    let bytes = keccak_input vm data ~first:words tail ~check_width:true in
+    let state = Bytes.copy prefix.state in
+    let used = absorb_keccak state prefix.used bytes in
+    digest_state state used
+  end
 
 let felt_z vm ctx n = get_z vm ctx n
 
@@ -538,10 +568,12 @@ let search_lower cursor vm arr width length key =
 
 let () =
   (* unsafe_keccak *)
-  reg H.h40 (fun c vm ->
+  reg H.h40 (fun c ->
+      let prefix = keccak_cursors () in
+      fun vm ->
       let data = get_ptr vm c "data" in
       let length = Z.to_int (felt_z vm c "length") in
-      let h = keccak256 (keccak_input vm data ~first:0 length ~check_width:true) in
+      let h = hash_byte_prefix prefix vm data length in
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
   reg H.h41 (fun c ->
@@ -894,14 +926,20 @@ let () =
       set_member vm c "root" [ "high" ] Felt.zero);
   reg H.h84 (fun c vm -> write_ap vm (of_bool (Z.lt (get_member_z vm c "a" [ "high" ]) (two_pow 127))));
   reg H.h85 (fun c vm ->
-      let u n = Z.add (Z.shift_left (get_member_z vm c n [ "high" ]) 128) (get_member_z vm c n [ "low" ]) in
-      let a = u "a" and d = u "div" in
+      let a = read_uint256 vm c "a" and d = read_uint256 vm c "div" in
       if Z.equal d Z.zero then fail "uint256_unsigned_div_rem: division by zero";
       let q, r = Z.ediv_rem a d in
-      set_member vm c "quotient" [ "low" ] (zf (Z.logand q (mask 128)));
-      set_member vm c "quotient" [ "high" ] (zf (Z.shift_right q 128));
-      set_member vm c "remainder" [ "low" ] (zf (Z.logand r (mask 128)));
-      set_member vm c "remainder" [ "high" ] (zf (Z.shift_right r 128)))
+      write_uint256 vm c "quotient" q;
+      write_uint256 vm c "remainder" r);
+  reg H.uint256_mul_div_mod (fun c vm ->
+      let a = read_uint256 vm c "a" and b = read_uint256 vm c "b" in
+      let d = read_uint256 vm c "div" in
+      if Z.equal d Z.zero then fail "uint256_mul_div_mod: division by zero";
+      let q, r = Z.ediv_rem (Z.mul a b) d in
+      (* Rust's Uint512::split writes exactly four 128-bit quotient limbs. *)
+      write_uint256 vm c "quotient_low" (Z.extract q 0 256);
+      write_uint256 vm c "quotient_high" (Z.extract q 256 256);
+      write_uint256 vm c "remainder" r)
 
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in

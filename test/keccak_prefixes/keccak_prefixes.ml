@@ -51,3 +51,18 @@ let () =
     match Hints.keccak_input single ptr ~first:1 n ~check_width:true with
     | exception Vm.Vm_error _ -> () | _ -> assert false
   done
+
+let () =
+  let vm, ptr = make_memory () and cache = Hints.keccak_cursors () in
+  for i = 0 to 100 do Vm.write vm 0 i (Felt.small (i + 1)) done;
+  let check n =
+    let expected = Hints.keccak_input vm ptr ~first:0 n ~check_width:true in
+    assert (Hints.hash_byte_prefix cache vm ptr n = Hints.keccak256 expected)
+  in
+  for n = 0 to 1600 do check n done;
+  List.iter check [1024; 3; 134; 135; 136; 137; 512];
+  let bad, p = make_memory () in
+  Vm.write bad 0 0 (Felt.of_z (Z.shift_left Z.one 128));
+  ignore (Hints.finalize_keccak cache bad p 1);
+  match Hints.hash_byte_prefix cache bad p 16 with
+  | exception Vm.Vm_error _ -> () | _ -> assert false

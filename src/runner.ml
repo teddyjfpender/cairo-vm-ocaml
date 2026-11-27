@@ -120,19 +120,29 @@ let run_until_end r = run_fast r.vm r.hints r.end_seg
 
 (* ---- end of run ---- *)
 
-let verify_auto_deductions vm =
+let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
     (fun b ->
       if vm.seg_flag.(b.base) = k_deduce then begin
         let n = used_size vm b.base in
-        for off = 0 to n - 1 do
-          let v = read vm b.base off in
-          if v <> 0 then begin
-            let d = deduce_builtin vm b b.base off in
-            if d <> 0 && not (Felt.equal d v) then
-              fail "Inconsistent auto-deduction for %s builtin at %d:%d: expected %s, got %s" (bname b.kind) b.base off
-                (value_to_string d) (value_to_string v)
-          end
+        let width = cells_per_instance b.kind and inputs = n_input_cells b.kind in
+        let limit = if fill_holes then ((n + width - 1) / width) * width else n in
+        if fill_holes && limit > n then begin
+          if limit > slen vm.segs.(b.base) then grow_seg vm b.base (limit - 1);
+          vm.hi.(b.base) <- limit
+        end;
+        for instance = 0 to (limit + width - 1) / width - 1 do
+          for off = instance * width + inputs to min limit ((instance + 1) * width) - 1 do
+            let v = read vm b.base off in
+            let cached = cache_get b off in
+            let d = if cached <> 0 then cached else deduce_builtin vm b b.base off in
+            if d <> 0 then begin
+              if v = 0 then (if fill_holes then write vm b.base off d)
+              else if not (Felt.equal d v) then
+                fail "Inconsistent auto-deduction for %s builtin at %d:%d: expected %s, got %s" (bname b.kind) b.base off
+                  (value_to_string d) (value_to_string v)
+            end
+          done
         done
       end)
     vm.builtins
@@ -199,9 +209,9 @@ let verify_secure_runner r =
           end)
     vm.builtins
 
-let end_run r ~secure ~allow_missing =
+let end_run ?(fill_holes=false) r ~secure ~allow_missing =
   if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";
-  verify_auto_deductions r.vm;
+  verify_auto_deductions ~fill_holes r.vm;
   read_return_values r ~allow_missing;
   if secure then verify_secure_runner r
 
