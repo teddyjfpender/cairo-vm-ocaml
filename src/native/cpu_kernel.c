@@ -102,6 +102,8 @@ value batch(value state, value cache, value segs, value flags, value highs,
     intnat next_pc = pc + 1, next_ap = ap, next_fp = fp;
     /* decode_word admits only the Stwo shapes, so flags alone identify the
        canonical RET and CALL rel, whose offsets are fixed. */
+    /* Unbias all three offsets together for signed 16-bit address arithmetic. */
+    uint64_t offsets = d ^ UINT64_C(0x800080008000);
     const unsigned shape = (d >> 48) & 0xfff;
     /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
        for the otherwise unused op0, which must still be assigned. */
@@ -112,7 +114,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
         if (!fits(pc+1, program_length)) break;
         v = program[pc+1]; next_pc = pc+2;
       } else {
-        intnat from = (shape == 0xe0a ? fp : ap) + (int)((d>>32)&65535) - 32768;
+        intnat from = (shape == 0xe0a ? fp : ap) + (int16_t)(offsets >> 32);
         if (!fits(from, length) || !stack[from]) goto general;
         v = stack[from];
       }
@@ -125,7 +127,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
        writes a fresh cell at ap. Keep the common small immediate entirely in
        registers; preassigned destinations and wider felts need deduction. */
     if ((shape == 0xe14 || shape == 0xe16) && (uint16_t)d == 0x8000) {
-      intnat from = (shape == 0xe14 ? ap : fp) + (int)((d >> 16) & 65535) - 32768;
+      intnat from = (shape == 0xe14 ? ap : fp) + (int16_t)(offsets >> 16);
       if (!fits(ap, length) || !fits(from, length) || !fits(pc+1, program_length)) break;
       intnat a = stack[from], imm = program[pc+1], out;
       if (stack[ap] || (imm & 3) != 1) goto general;
@@ -166,12 +168,12 @@ general:;
     const unsigned op = (d >> 58) & 3, src = (d >> 50) & 3;
     const unsigned ap_update = (d >> 56) & 3, pc_update = (d >> 54) & 3;
     const unsigned result = (d >> 52) & 3;
-    intnat dst_at = ((d & (UINT64_C(1) << 48)) ? fp : ap) + (int)(d & 65535) - 32768;
-    intnat op0_at = ((d & (UINT64_C(1) << 49)) ? fp : ap) + (int)((d >> 16) & 65535) - 32768;
+    intnat dst_at = ((d & (UINT64_C(1) << 48)) ? fp : ap) + (int16_t)offsets;
+    intnat op0_at = ((d & (UINT64_C(1) << 49)) ? fp : ap) + (int16_t)(offsets >> 16);
     if (!fits(dst_at, length) || !fits(op0_at, length)) break;
     intnat dst = stack[dst_at], a = stack[op0_at];
     if (temporary(dst) || temporary(a)) break;
-    int delta = (int)((d >> 32) & 65535) - 32768;
+    int delta = (int16_t)(offsets >> 32);
     if (op == 0) {
       /* Relative conditional jump, unconditional jump and ap += immediate. */
       if (src != 1 || !dst || !a || !fits(pc+1, program_length)) break;
@@ -291,8 +293,13 @@ general:;
         }
       }
       if (dst && !same_value(pool, dst, value_code)) break;
-      if ((value_code & 3) == 3 && (value_code >> 2) == slot) ++slot;
-      if (!dst) { stack[dst_at] = value_code; if (dst_at >= high) high = dst_at+1; }
+      /* A preassigned destination already owns the value. The temporary
+         limbs used to verify it can be overwritten by the next operation. */
+      if (!dst) {
+        if ((value_code & 3) == 3 && (value_code >> 2) == slot) ++slot;
+        stack[dst_at] = value_code;
+        if (dst_at >= high) high = dst_at+1;
+      }
       next_ap = ap + (ap_update == 2);
     }
 complete:
