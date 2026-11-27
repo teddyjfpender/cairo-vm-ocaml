@@ -298,7 +298,7 @@ external load_nested_run :
 let load_subtask ?source vm pie ~code ~stack ~ret_fp ~ret_pc =
   let sizes = metadata_sizes pie in
   let occupied = Array.make (Array.length sizes) 0 in
-  let chunks f = match source with None -> f pie.memory | Some src -> iter_memory src f in
+  let chunks ?parallel f = match source with None -> f pie.memory | Some src -> iter_memory ?parallel src f in
   let bases = Array.make (Array.length occupied) Felt.empty in
   let map index target =
     if index < 0 || index >= Array.length bases || bases.(index) <> Felt.empty then
@@ -312,7 +312,7 @@ let load_subtask ?source vm pie ~code ~stack ~ret_fp ~ret_pc =
   let mapped = ref 0 in
   let exception Mapped in
   if nb <> 0 then begin
-    try chunks (fun bytes ->
+    try chunks ~parallel:false (fun bytes ->
         for i = 0 to Bytes.length bytes / cell_bytes - 1 do
           let pos = i*cell_bytes in
           let seg,off = addr_of_word (Int64.to_int (Bytes.get_int64_le bytes pos)) in

@@ -143,10 +143,10 @@ let builtin_name k =
 type memory_source = { archive : archive; member : member }
 external iter_member : archive -> int array -> (bytes -> unit) -> int = "cvm_pie_iter_member"
 
-let iter_memory source consume =
+let iter_memory ?(parallel=true) source consume =
   let s = source.archive and m = source.member in
   let offset = member_start s m in
-  let crc = iter_member s [|offset;m.csize;m.usize;m.meth|] consume in
+  let crc = iter_member s [|offset;m.csize;m.usize;m.meth;Bool.to_int parallel|] consume in
   if crc <> m.crc then bad "%s: CRC mismatch" m.name
 
 let read_deferred path =
