@@ -122,6 +122,11 @@ let of_int v =
 let[@inline] equal a b =
   a = b || (a land 3 = 3 && b land 3 = 3 && c_big_eq !pool a b = 1)
 
+external c_big_hash : bytes -> (int[@untagged]) -> (int[@untagged])
+  = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
+
+let hash v = if is_big v then c_big_hash !pool v else Hashtbl.hash v
+
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 
 let[@inline never] slow_binop op a b =

@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <caml/mlvalues.h>
+#include <caml/hash.h>
 
 typedef uint64_t u64;
 typedef unsigned __int128 u128;
@@ -306,6 +307,16 @@ intnat cvm_code_of_slot(value pool, intnat src, intnat dst) {
 }
 value cvm_code_of_slot_byte(value pool, value s, value d) {
   return Val_long(cvm_code_of_slot(pool, Long_val(s), Long_val(d)));
+}
+
+intnat cvm_big_hash(value pool, intnat code) {
+  const u64 *x = SLOT(pool, code >> 2);
+  uint32_t h = 0;
+  for (int i = 0; i < 4; i++) h = caml_hash_mix_int64(h, (int64_t)x[i]);
+  return h & 0x3fffffff;
+}
+value cvm_big_hash_byte(value pool, value code) {
+  return Val_long(cvm_big_hash(pool, Long_val(code)));
 }
 
 intnat cvm_big_eq(value pool, intnat a, intnat b) {
