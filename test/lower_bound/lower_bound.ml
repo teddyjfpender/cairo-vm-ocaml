@@ -27,6 +27,6 @@ let () =
   assert (Hints.search_lower cursor vm (Felt.reloc seg 1) 1 4 (small 5) = 0);
   let other = Vm.create ~trace:false in
   ignore (Vm.add_segment other);
-  Vm.write other seg 0 (small 7);
+  Vm.write other seg 0 (small 10);
   assert (query 5 (small 9) = 4);
-  assert (Hints.search_lower cursor other base 1 1 (small 7) = 0)
+  assert (Hints.search_lower cursor other base 1 1 (small 10) = 0)
