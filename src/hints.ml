@@ -573,7 +573,9 @@ let find_set_element cache vm base total elm =
       | _ ->
           let t = { owner = vm; base; width = es; first = Set_words.create 32; scanned = 0 } in
           cache := Some t;
-          !cache
+          (* A single lookup pays only for the scan. Start indexing if this
+             hint sees the same range again. *)
+          None
   in
   let from = match index with
     | None -> 0

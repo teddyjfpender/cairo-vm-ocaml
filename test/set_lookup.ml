@@ -15,6 +15,9 @@ let () =
     write (2 * i) (small (i mod 4));
     if i <> 40 then write (2 * i + 1) (small i)
   done;
+  (* A one-off range does not populate the index. *)
+  assert (find vm base 96 [small 5; small 0] = -1);
+  assert ((Option.get !cache).scanned = 0);
   (* An unrelated lookup indexes the first word of a row with a hole. *)
   assert (find vm base 96 [small 5; small 0] = -1);
   assert (find vm base 96 [small 0; small 4] = 4);
