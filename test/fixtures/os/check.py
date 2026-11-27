@@ -15,7 +15,7 @@ def main():
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
-    for name in ("genesis", "storage", "account", "storage-512"):
+    for name in ("genesis", "storage", "account", "storage-512", "storage-2048"):
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"
@@ -23,8 +23,11 @@ def main():
                 source = Path(directory) / source.name
                 source.write_bytes(gzip.decompress((fixture / f"{name}.json.gz").read_bytes()))
             pie = Path(directory) / f"{name}.zip"
-            subprocess.run([args.binary.resolve(), args.program, "--os_hints", source,
-                            "--layout", "all_cairo", "--cairo_pie_output", pie], check=True)
+            command = [args.binary.resolve(), args.program, "--os_hints", source,
+                            "--layout", "all_cairo", "--cairo_pie_output", pie]
+            if name == "storage-2048":
+                command.append("--merge_extra_segments")
+            subprocess.run(command, check=True)
             with zipfile.ZipFile(pie) as z:
                 hashes = {}
                 for member in z.namelist():
