@@ -109,7 +109,7 @@ type vm = {
   mutable icache : int array;
   (* trace *)
   trace_on : bool;
-  mutable trace : seg; (* packed entries or an escape followed by pc, ap, fp *)
+  mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable builtins : builtin list;
 }
@@ -445,22 +445,21 @@ let[@inline never] fetch_slow vm =
 let[@inline never] trace_grow vm =
   vm.trace <- seg_grow vm.trace (2 * slen vm.trace)
 
-(* Normal program PCs and stack offsets fit in one nonnegative OCaml int.
-   The escape retains the original representation for every other entry.
+(* Pack common register triples with low bit 1. A full triple starts
+   with a relocatable PC code, whose low bit is always 0.
    Keep this layout in sync with cvm_write_trace. *)
 let[@inline] record_trace vm pc_seg pc ap fp =
   let i = vm.tlen in
-  if i + 4 > slen vm.trace then trace_grow vm;
+  if i + 3 > slen vm.trace then trace_grow vm;
   let t = vm.trace in
   if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
-    sset t i ((pc lsl 46) lor (ap lsl 23) lor fp);
+    sset t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
     vm.tlen <- i + 1
   end else begin
-    sset t i (-1);
-    sset t (i + 1) (reloc pc_seg pc);
-    sset t (i + 2) ap;
-    sset t (i + 3) fp;
-    vm.tlen <- i + 4
+    sset t i (reloc pc_seg pc);
+    sset t (i + 1) ap;
+    sset t (i + 2) fp;
+    vm.tlen <- i + 3
   end
 
 let[@inline never] missing what seg off = fail "Failed to compute operand %s at %d:%d" what seg off

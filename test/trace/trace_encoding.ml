@@ -10,7 +10,7 @@ let () =
     (0, 0, 1, max_reg + 1); (2, 19, 61, 58); (0, 7, 11, 5);
   ] in
   List.iter (fun (seg, pc, ap, fp) -> Vm.record_trace vm seg pc ap fp) rows;
-  assert (vm.tlen = 3 + 4 * 4);
+  assert (vm.tlen = 3 + 4 * 3);
   let bases = [| 1; 70200; 9000000 |] in
   let path = Filename.temp_file "cairo-trace" ".bin" in
   Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->

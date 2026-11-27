@@ -774,13 +774,13 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   for (intnat i = 0; i < n;) {
     intnat word = t[i++];
     u64 e[3];
-    if (word >= 0) {
+    if (word & 1) {
       u64 packed = (u64)word;
-      e[0] = base1 + ((packed >> 23) & offset_mask);
-      e[1] = base1 + (packed & offset_mask);
-      e[2] = base0 + (packed >> 46);
+      e[0] = base1 + ((packed >> 24) & offset_mask);
+      e[1] = base1 + ((packed >> 1) & offset_mask);
+      e[2] = base0 + ((packed >> 47) & 0xffff);
     } else {
-      intnat pc = t[i++];
+      intnat pc = word;
       e[0] = (u64)(base1 + t[i++]);
       e[1] = (u64)(base1 + t[i++]);
       e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
