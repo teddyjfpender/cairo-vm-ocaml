@@ -246,11 +246,14 @@ static inline void load(value pool, intnat code, u64 out[4]) {
 static inline intnat store(value pool, const u64 x[4], intnat dst) {
   if (x[1] == 0 && x[2] == 0 && x[3] == 0 && x[0] < (u64)SMALL_BOUND)
     return (intnat)(((i64)x[0] << 2) | 1);
-  if (x[3] == P[3] && x[2] == 0 && x[1] == 0) {
-    /* p - x = 1 - x0 (mod 2^64) when x0 >= 1 */
-    u64 neg = 1 - x[0];
-    if (x[0] >= 1 && neg < (u64)SMALL_BOUND && neg != 0)
-      return (intnat)((-(i64)neg) * 4 + 1);
+  /* p = P3 * 2^192 + 1. For p-1 the low limbs are zero. For
+     p-n, 2 <= n < SMALL_BOUND, the borrow propagates to limb 3. */
+  if (x[3] == P[3] && (x[2] | x[1] | x[0]) == 0)
+    return -3; /* small(-1) */
+  if (x[3] == P[3] - 1 && x[2] == UINT64_MAX && x[1] == UINT64_MAX &&
+      x[0] > (u64)1 - (u64)SMALL_BOUND) {
+    u64 magnitude = 1 - x[0];
+    return -(intnat)magnitude * 4 + 1;
   }
   memcpy(SLOT(pool, dst), x, 32);
   return (intnat)((dst << 2) | 3);
