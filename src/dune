@@ -1,7 +1,7 @@
 (library
  (name cairovm)
  (public_name cairo-vm-ocaml)
- (libraries zarith yojson)
+ (libraries zarith yojson unix)
  (ocamlopt_flags (:standard -O3 -unboxed-types -inline 200 -unsafe))
  (flags (:standard -w -32-26-27-35-37-69))
  (foreign_stubs

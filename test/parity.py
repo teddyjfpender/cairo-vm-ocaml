@@ -53,6 +53,21 @@ def norm_priv(b):
     except Exception:
         return b
 
+def norm_pub(b):
+    # cairo-vm serializes memory_segments from a HashMap, so its key order is
+    # random per process. Compare that object as a map and everything else
+    # byte-for-byte.
+    if b is None:
+        return None
+    try:
+        t = b.decode()
+        i = t.index('  "memory_segments": {')
+        j = t.index('\n  },\n', i) + len('\n  },\n')
+        segs = json.loads('{' + t[i:j].rstrip().rstrip(',') + '}')
+        return (t[:i] + t[j:]).encode() + json.dumps(segs, sort_keys=True).encode()
+    except Exception:
+        return b
+
 def check(prog):
     rc_r, out_r, err_r, files_r = run(rust, prog, 'r')
     rc_o, out_o, err_o, files_o = run(ocaml, prog, 'o', env_o)
@@ -69,6 +84,8 @@ def check(prog):
         a, b = read(fr), read(fo)
         if fr.endswith('.priv'):
             a, b = norm_priv(a), norm_priv(b)
+        if fr.endswith('.pub'):
+            a, b = norm_pub(a), norm_pub(b)
         if a != b:
             return name, 'MISMATCH', os.path.splitext(fr)[1]
     for f in files_r + files_o:
