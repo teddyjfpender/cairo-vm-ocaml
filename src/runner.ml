@@ -108,6 +108,7 @@ let initialize (cfg : config) (prog : Program.t) : t =
   vm.ap <- n;
   vm.fp <- n;
   let scopes = Hintrt.new_scopes () in
+  Hints_registry.init ();
   let hints = Array.make (Array.length prog.data) [||] in
   List.iter
     (fun (pc, hs) ->
