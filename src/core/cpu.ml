@@ -383,6 +383,17 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         let size = if src = 1 then 2 else 1 in
         let opcode = (d lsr 58) land 3 in
         let dst = sget mem dst_addr in
+        (* Deduce op0 of [dst = op0 + op1] as the kernel does; hint pcs reach this path. *)
+        let op0 =
+          if op0 <> Felt.empty || opcode <> 3 || (d lsr 52) land 3 <> 1 || op0_addr >= len
+             || dst = Felt.empty || op1 = Felt.empty then op0
+          else match value_sub dst op1 with
+            | v ->
+                sset mem op0_addr v;
+                if op0_addr >= !hi1 then hi1 := op0_addr + 1;
+                v
+            | exception Vm_error _ -> Felt.empty
+        in
         if op1 <> Felt.empty then begin
           (* ---- result ---- *)
           let res_kind = (d lsr 52) land 3 in
@@ -395,12 +406,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                   let s = small_val op0 + small_val op1 in
                   if fits_small s then small s else Felt.add op0 op1
                 end
-                else if is_reloc op0 && is_small op1 then begin
-                  let o = roff op0 + small_val op1 in
-                  if o >= 0 && o <= max_off then reloc (rseg op0) o else Felt.empty
-                end
-                else if is_felt op0 && is_felt op1 then Felt.add op0 op1
-                else Felt.empty
+                else (try value_add op0 op1 with Vm_error _ -> Felt.empty)
             | 2 -> if op0 <> Felt.empty && is_felt op0 && is_felt op1 then Felt.mul op0 op1 else Felt.empty
             | _ -> unconstrained
           in

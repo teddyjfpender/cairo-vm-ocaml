@@ -15,6 +15,7 @@ let z = Z.of_int
 let two_pow n = Z.shift_left Z.one n
 let mask n = Z.pred (two_pow n)
 let pz = Felt.p
+let p_over_3 = Z.div pz (z 3) and p_over_2 = Z.div pz (z 2) and max_div = Z.div pz (Hintrt.rc_bound)
 let check b msg = if not b then fail "%s" msg
 
 let read_uint256 vm c name =
@@ -220,7 +221,7 @@ let () =
       let l = [ (a, 0); (Z.sub b a, 1); (Z.sub (Z.pred pz) b, 2) ] in
       let l = List.sort compare l in
       let l0, _ = List.nth l 0 and l1, _ = List.nth l 1 and _, excluded = List.nth l 2 in
-      check (Z.leq l0 (Z.div pz (z 3)) && Z.leq l1 (Z.div pz (z 2))) "assert_le_felt: arc check failed";
+      check (Z.leq l0 p_over_3 && Z.leq l1 p_over_2) "assert_le_felt: arc check failed";
       set c.scopes "excluded" (Int (z excluded));
       let rc = get_ptr vm c "range_check_ptr" in
       let p3 = const_z c "PRIME_OVER_3_HIGH" and p2 = const_z c "PRIME_OVER_2_HIGH" in
@@ -237,7 +238,7 @@ let () =
   (* unsigned_div_rem *)
   reg H.unsigned_div_rem (fun c vm ->
       let div = felt_z vm c "div" and value = felt_z vm c "value" in
-      if Z.leq div Z.zero || Z.gt div (Z.div pz rc_bound) then fail "div=%s is out of the valid range." (Z.format "%x" div);
+      if Z.leq div Z.zero || Z.gt div max_div then fail "div=%s is out of the valid range." (Z.format "%x" div);
       let q, r = Z.ediv_rem value div in
       set_val vm c "q" (zf q);
       set_val vm c "r" (zf r));
@@ -254,9 +255,9 @@ let () =
       let read = bound_felt c "a" in fun vm ->
       let a = read vm in
       write_ap vm (of_bool (if Felt.is_small a then a < Felt.empty else Felt.bits a > 128)));
-  reg H.is_nn_out_of_range (fun c vm ->
-      let a = felt_z vm c "a" in
-      write_ap vm (if Z.lt (Z.erem (Z.sub (Z.neg a) Z.one) pz) rc_bound then Felt.zero else Felt.one));
+  reg H.is_nn_out_of_range (fun c ->
+      let read = bound_felt c "a" in fun vm ->
+      write_ap vm (of_bool (Felt.bits (Felt.sub (Felt.neg (read vm)) Felt.one) > 128)));
   reg H.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "n")) ]);
   reg H.memset_continue_loop (fun c vm ->
       let n = Z.pred (var_z c.scopes "n") in
@@ -602,7 +603,7 @@ let () =
       let inp = Array.make 25 Z.zero in
       let one = Array.to_list (Array.map zf inp) @ Array.to_list (Array.map zf (keccak_lanes inp)) in
       write_arg vm (get_ptr vm c "keccak_ptr_end") (List.concat (List.init bs (fun _ -> one))));
-  reg H.is_le_felt (fun c vm -> write_ap vm (if Z.leq (felt_z vm c "a") (felt_z vm c "b") then Felt.zero else Felt.one));
+  reg H.is_le_felt (fun c vm -> write_ap vm (of_bool (Felt.compare (get_felt vm c "a") (get_felt vm c "b") > 0)));
   (* assert_not_equal *)
   reg H.assert_not_equal (fun c vm ->
       let a = get_val vm c "a" and b = get_val vm c "b" in
@@ -634,7 +635,7 @@ let () =
   (* signed_div_rem *)
   reg H.signed_div_rem (fun c vm ->
       let div = felt_z vm c "div" in
-      if Z.leq div Z.zero || Z.gt div (Z.div pz rc_bound) then fail "div=%s is out of the valid range." (Z.format "%x" div);
+      if Z.leq div Z.zero || Z.gt div max_div then fail "div=%s is out of the valid range." (Z.format "%x" div);
       let bound = felt_z vm c "bound" in
       if Z.gt bound (Z.div rc_bound (z 2)) then fail "bound is out of the valid range.";
       let v = as_int (felt_z vm c "value") in

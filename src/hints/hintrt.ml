@@ -48,8 +48,7 @@ type dyn =
 
 (* Hint bodies pass literal names, so a physical match almost always settles
    a lookup in these short association lists before any string comparison. *)
-let memo phys structural l = match List.find_opt phys l with Some _ as hit -> hit | None -> List.find_opt structural l
-let named name l = memo (fun (n, _) -> n == name) (fun (n, _) -> String.equal n name) l
+let named name l = match List.assq_opt name l with None -> List.assoc_opt name l | hit -> hit
 
 (* A scope holds a handful of variables. *)
 type frame = { mutable vars : (string * dyn ref) list }
@@ -60,7 +59,7 @@ let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
 let assign f name v =
-  match named name f.vars with Some (_, r) -> r := v | None -> f.vars <- (name, ref v) :: f.vars
+  match named name f.vars with Some r -> r := v | None -> f.vars <- (name, ref v) :: f.vars
 
 let enter s vars =
   let f = { vars = [] } in
@@ -73,7 +72,7 @@ let exit_scope s =
   | _ :: rest -> s.stack <- rest
   | [] -> assert false
 
-let var_opt s name = Option.map (fun (_, r) -> !r) (named name (top s).vars)
+let var_opt s name = match named name (top s).vars with Some r -> Some !r | None -> None
 let var s name = match var_opt s name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
 let set s name v = assign (top s) name v
 let del s name = let f = top s in f.vars <- List.filter (fun (n, _) -> not (String.equal n name)) f.vars
@@ -191,7 +190,7 @@ let rec compile_expr ctx (r : P.reference) expr =
 
 let binding ctx name =
   match named name ctx.bindings with
-  | Some (_, plan) -> plan
+  | Some plan -> plan
   | None ->
       let r = find_ref ctx name in
       let plan = match r.r_expr with
@@ -306,10 +305,17 @@ let member_plan ctx name path =
   in
   (is_ptr, go st path)
 
+let rec find_plan name path = function
+  | [] -> None
+  | (n, p, plan) :: rest -> if n == name && p == path then Some plan else find_plan name path rest
+
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
 let member_addr vm ctx name path =
   let is_ptr, plan =
-    match memo (fun (n, p, _) -> n == name && p == path) (fun (n, p, _) -> String.equal n name && p = path) ctx.plans with
+    match find_plan name path ctx.plans with
+    | Some p -> p
+    | None ->
+    match List.find_opt (fun (n, p, _) -> String.equal n name && p = path) ctx.plans with
     | Some (_, _, p) -> p
     | None ->
         let p = member_plan ctx name path in
@@ -371,7 +377,7 @@ let resolve_constant ctx name =
    on every iteration. Keep lookup lazy for hints that never execute. *)
 let const_opt ctx name =
   match named name ctx.constants with
-  | Some (_, cached) -> cached
+  | Some cached -> cached
   | None ->
       let value = resolve_constant ctx name in
       ctx.constants <- (name, value) :: ctx.constants;
