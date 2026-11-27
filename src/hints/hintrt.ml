@@ -277,18 +277,16 @@ let member_plan ctx name path =
   in
   (is_ptr, go st path)
 
-let rec find_plan name path = function
-  | [] -> None
-  | (n, p, plan) :: rest -> if n == name && p == path then Some plan else find_plan name path rest
+(* Physical match first, as in [named]; [all] is the whole memo. *)
+let rec find_plan name path all = function
+  | [] -> List.find_map (fun (n, p, plan) -> if String.equal n name && p = path then Some plan else None) all
+  | (n, p, plan) :: rest -> if n == name && p == path then Some plan else find_plan name path all rest
 
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
 let member_addr vm ctx name path =
   let is_ptr, plan =
-    match find_plan name path ctx.plans with
+    match find_plan name path ctx.plans ctx.plans with
     | Some p -> p
-    | None ->
-    match List.find_opt (fun (n, p, _) -> String.equal n name && p = path) ctx.plans with
-    | Some (_, _, p) -> p
     | None ->
         let p = member_plan ctx name path in
         ctx.plans <- (name, path, p) :: ctx.plans;

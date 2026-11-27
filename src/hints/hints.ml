@@ -15,7 +15,7 @@ let z = Z.of_int
 let two_pow n = Z.shift_left Z.one n
 let mask n = Z.pred (two_pow n)
 let pz = Felt.p
-let p_over_3 = Z.div pz (z 3) and p_over_2 = Z.div pz (z 2) and max_div = Z.div pz (Hintrt.rc_bound)
+let p_over_3 = Z.div pz (z 3) and p_over_2 = Z.div pz (z 2) and max_div = Z.div pz rc_bound
 let check b msg = if not b then fail "%s" msg
 
 let read_uint256 vm c name =
