@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <caml/mlvalues.h>
+#include <caml/fail.h>
 
 typedef uint64_t u64;
 typedef unsigned __int128 u128;
@@ -653,6 +654,44 @@ value cvm_keccak_f_bytes(value st) { /* 200-byte state in place */
   return Val_unit;
 }
 
+/* Incremental Keccak-256 for snapshots of append-only Cairo word ranges.
+   The state includes the XORed partial rate block. Finalization only
+   permutes a copy, so a caller can continue absorbing after a snapshot. */
+value cvm_keccak_absorb(value state, value vpos, value input) {
+  const size_t rate = 136;
+  if (caml_string_length(state) != 200 || (uintnat)Long_val(vpos) >= rate)
+    caml_invalid_argument("keccak_absorb state");
+  u64 lanes[25];
+  memcpy(lanes, Bytes_val(state), sizeof lanes);
+  uint8_t *bytes = (uint8_t *)lanes;
+  const uint8_t *data = (const uint8_t *)Bytes_val(input);
+  size_t length = caml_string_length(input), pos = Long_val(vpos);
+  while (length) {
+    size_t n = rate - pos;
+    if (n > length) n = length;
+    for (size_t i = 0; i < n; i++) bytes[pos+i] ^= data[i];
+    length -= n;
+    data += n;
+    pos += n;
+    if (pos == rate) { keccak_f(lanes); pos = 0; }
+  }
+  memcpy(Bytes_val(state), lanes, sizeof lanes);
+  return Val_long(pos);
+}
+
+value cvm_keccak_snapshot(value state, value vpos, value output) {
+  if (caml_string_length(state) != 200 || (uintnat)Long_val(vpos) >= 136 || caml_string_length(output) != 32)
+    caml_invalid_argument("keccak_snapshot state");
+  u64 lanes[25];
+  memcpy(lanes, Bytes_val(state), sizeof lanes);
+  uint8_t *bytes = (uint8_t *)lanes;
+  bytes[Long_val(vpos)] ^= 0x01;
+  bytes[135] ^= 0x80;
+  keccak_f(lanes);
+  memcpy(Bytes_val(output), lanes, 32);
+  return Val_unit;
+}
+
 /* ---------- EC op builtin: R = P + m*Q (canonical affine, alpha = 1) ----------
    Slots: px py qx qy m at i0..i0+4; result rx ry to o0, o0+1.
    Returns 0 on success, 1 when P,Q x-coordinates collide during the ladder,
@@ -744,7 +783,6 @@ value cvm_put_code_byte(value pool, value c, value b, value p) {
 #include <caml/bigarray.h>
 #include <caml/alloc.h>
 #include <caml/memory.h>
-#include <caml/fail.h>
 value cvm_zalloc(value vn) {
   intnat n = Long_val(vn);
   if (n < 1) n = 1;

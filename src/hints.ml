@@ -115,14 +115,57 @@ let z_of_be (b : Bytes.t) off n =
   done;
   !r
 
-let be_bytes zv n =
-  let b = Bytes.make n '\000' in
-  let v = ref zv in
-  for i = n - 1 downto 0 do
-    Bytes.set b i (Char.chr (Z.to_int (Z.logand !v (z 255))));
-    v := Z.shift_right !v 8
+(* Pack Cairo words into the big-endian byte stream consumed by keccak256.
+   H40 validates the final partial word as well. H41 historically serializes
+   the low 128 bits of each full word. *)
+let keccak_input vm data ~first length ~check_width =
+  let bytes = Bytes.create length and scratch = Bytes.create 32 in
+  let rec fill offset i =
+    if offset < length then begin
+      let word = mem_at vm data i in
+      if not (Felt.is_felt word) then fail "unsafe_keccak: expected an integer";
+      let count = min 16 (length - offset) in
+      if check_width && Felt.bits word > 8 * count then fail "unsafe_keccak: word out of range";
+      Felt.c_put_code !Felt.pool word scratch 0;
+      if count = 16 then begin
+        Bytes.set_int64_be bytes offset (Bytes.get_int64_le scratch 8);
+        Bytes.set_int64_be bytes (offset + 8) (Bytes.get_int64_le scratch 0)
+      end else
+        for j = 0 to count - 1 do
+          Bytes.set bytes (offset + j) (Bytes.get scratch (count - 1 - j))
+        done;
+      fill (offset + count) (i + 1)
+    end
+  in
+  fill 0 first;
+  bytes
+
+external absorb_keccak : bytes -> int -> bytes -> int = "cvm_keccak_absorb"
+external snapshot_keccak : bytes -> int -> bytes -> unit = "cvm_keccak_snapshot"
+
+type keccak_prefix = {
+  owner : vm; start : int; state : bytes;
+  mutable words : int; mutable used : int;
+}
+
+let finalize_keccak cache vm start n =
+  if n < 0 || n > Sys.max_string_length / 16 then fail "Invalid Keccak input length";
+  let prefix = match !cache with
+    | Some p when p.owner == vm && p.start = start && p.words <= n -> p
+    | _ ->
+        let p = { owner = vm; start; state = Bytes.make 200 '\000'; words = 0; used = 0 } in
+        cache := Some p;
+        p
+  in
+  while prefix.words < n do
+    let count = min 4096 (n - prefix.words) in
+    let bytes = keccak_input vm start ~first:prefix.words (16 * count) ~check_width:false in
+    prefix.used <- absorb_keccak prefix.state prefix.used bytes;
+    prefix.words <- prefix.words + count
   done;
-  b
+  let digest = Bytes.create 32 in
+  snapshot_keccak prefix.state prefix.used digest;
+  digest
 
 let felt_z vm ctx n = get_z vm ctx n
 
@@ -389,25 +432,15 @@ let () =
   reg H.h40 (fun c vm ->
       let data = get_ptr vm c "data" in
       let length = Z.to_int (felt_z vm c "length") in
-      let buf = Buffer.create length in
-      let i = ref 0 and byte_i = ref 0 in
-      while !byte_i < length do
-        let word = Felt.to_z (mem_at vm data !i) in
-        let nb = min 16 (length - !byte_i) in
-        check (Z.lt word (two_pow (8 * nb))) "unsafe_keccak: word out of range";
-        Buffer.add_bytes buf (be_bytes word nb);
-        incr i;
-        byte_i := !byte_i + 16
-      done;
-      let h = keccak256 (Buffer.to_bytes buf) in
+      let h = keccak256 (keccak_input vm data ~first:0 length ~check_width:true) in
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
-  reg H.h41 (fun c vm ->
+  reg H.h41 (fun c ->
+      let prefix = ref None in
+      fun vm ->
       let st = get_member vm c "keccak_state" [ "start_ptr" ] and en = get_member vm c "keccak_state" [ "end_ptr" ] in
       let n = Felt.to_nat (value_sub en st) in
-      let buf = Buffer.create (16 * n) in
-      List.iter (fun w -> Buffer.add_bytes buf (be_bytes (Felt.to_z w) 16)) (read_range vm st n);
-      let h = keccak256 (Buffer.to_bytes buf) in
+      let h = finalize_keccak prefix vm st n in
       set_val vm c "high" (zf (z_of_be h 0 16));
       set_val vm c "low" (zf (z_of_be h 16 16)));
   reg H.h42 (fun c vm ->
@@ -681,7 +714,7 @@ let () =
 let compile prog scopes (h : Program.hint) : vm -> unit =
   let ctx = make_ctx prog scopes h in
   match Hashtbl.find_opt table h.code with
-  | Some f -> fun vm -> f ctx vm
+  | Some f -> f ctx
   | None ->
       fun _ ->
         fail "Unknown hint: %s" (if String.length h.code > 80 then String.sub h.code 0 80 ^ "..." else h.code)
