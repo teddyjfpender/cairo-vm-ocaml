@@ -1,0 +1,85 @@
+# Build, test and publish OxCairo binaries for a version tag (vX.Y.Z).
+# Cut a release with scripts/release.sh X.Y.Z, which checks versions and pushes the tag.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  OXCAML_SWITCH: 5.2.0+ox
+
+jobs:
+  notes:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.TAG }}" }
+      - name: Create the release from the CHANGELOG section
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          v="${TAG#v}"
+          awk -v v="$v" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $v"; exit 1; }
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --title "OxCairo $v" --notes-file notes.md
+
+  build:
+    needs: notes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, target: macos-arm64 }
+          - { os: ubuntu-24.04, target: linux-x86_64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.TAG }}" }
+
+      - name: System dependencies
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install opam gmp autoconf automake
+          else
+            sudo apt-get update && sudo apt-get install -y opam libgmp-dev autoconf automake rsync
+          fi
+
+      - name: Cache the OxCaml switch
+        uses: actions/cache@v4
+        with:
+          path: ~/.opam
+          key: oxcaml-${{ matrix.target }}-${{ env.OXCAML_SWITCH }}-v1
+
+      - name: OxCaml switch
+        run: |
+          [ -d ~/.opam ] || opam init --bare -y --disable-sandboxing
+          opam switch list --short | grep -qx "$OXCAML_SWITCH" || opam switch create "$OXCAML_SWITCH" \
+            --repos ox=git+https://github.com/oxcaml/opam-repository.git,default -y
+          opam install --switch "$OXCAML_SWITCH" -y dune zarith yojson
+
+      - name: Build and test
+        run: |
+          eval $(opam env --switch "$OXCAML_SWITCH")
+          dune build --profile release
+          dune test --profile release
+
+      - name: Package and upload
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          name="oxcairo-${TAG}-${{ matrix.target }}"
+          mkdir -p "$name"
+          cp _build/default/bin/main.exe "$name/cairo-vm-cli"
+          cp README.md LICENSE CHANGELOG.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber

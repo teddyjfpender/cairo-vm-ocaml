@@ -29,7 +29,7 @@ let () =
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
-  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OCaml)"; exit 0 in
+  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.1.0)"; exit 0 in
   let bool_of s = match s with "true" -> true | "false" -> false | _ -> raise (Arg.Bad ("expected true|false: " ^ s)) in
   let spec =
     [

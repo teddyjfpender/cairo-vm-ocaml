@@ -32,3 +32,13 @@ such as `sample` or `perf` enough data on short programs.
 
 `scripts/docs.sh` serves this site at http://127.0.0.1:8000 with live reload, and
 `scripts/docs.sh build` writes it to `site/`. Both use `uvx`, so nothing is installed globally.
+
+## Releases
+
+1. Bump the version in `cairo-vm-ocaml.opam` and in `bin/main.ml`'s `--version` string, and add a
+   `## X.Y.Z (date)` section to `CHANGELOG.md`.
+2. Run `scripts/release.sh X.Y.Z`. It checks that the three agree, builds, runs the tests, then
+   tags `vX.Y.Z` and pushes the tag.
+3. `.github/workflows/release.yml` creates the GitHub release from the changelog section, builds
+   and tests on macOS arm64 and Linux x86-64, and uploads `oxcairo-vX.Y.Z-<target>.tar.gz`
+   with checksums.

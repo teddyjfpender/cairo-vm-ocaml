@@ -1,6 +1,6 @@
-# cairo-vm-ocaml
+# OxCairo
 
-A Cairo virtual machine written in OCaml with [OxCaml](https://oxcaml.org/). It is a drop-in
+OxCairo is a Cairo virtual machine written in OCaml with [OxCaml](https://oxcaml.org/). It is a drop-in
 replacement for the `cairo-vm-cli` of [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm)
 v4.0.0: same flags, byte-identical outputs, more than five times faster.
 

@@ -11,7 +11,7 @@ opam install dune zarith yojson
 dune build --profile release
 ```
 
-`opam install .` installs the binary as both `cairo-vm-ocaml` and `cairo-vm-cli`, so scripts that
+`opam install .` installs OxCairo's binary as both `cairo-vm-ocaml` and `cairo-vm-cli`, so scripts that
 call `cairo-vm-cli` pick up this VM through `PATH`. Keep a Rust `cairo-vm-cli` in a separate
 directory if you want both.
 

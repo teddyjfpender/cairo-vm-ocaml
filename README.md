@@ -1,11 +1,11 @@
 <div align="center">
 
-<!-- Logo: drop assets/logo.svg and uncomment the next line. -->
-<!-- <img src="assets/logo.svg" alt="cairo-vm-ocaml" width="220"> -->
+<!-- Logo slot: drop an original design at assets/logo.svg and uncomment the next line. -->
+<!-- <img src="assets/logo.svg" alt="OxCairo" width="220"> -->
 
-# cairo-vm-ocaml
+# OxCairo
 
-**A fast Cairo VM written in OCaml.**
+**A fast Cairo VM written in OCaml with OxCaml.**
 
 [![OxCaml](https://img.shields.io/badge/built%20with-OxCaml%205.2-ee6a1a?logo=ocaml&logoColor=white)](https://oxcaml.org/)
 [![cairo-vm](https://img.shields.io/badge/parity-cairo--vm%20v4.0.0-6b46c1)](docs/parity.md)

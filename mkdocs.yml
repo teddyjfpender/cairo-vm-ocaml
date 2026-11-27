@@ -1,4 +1,4 @@
-site_name: cairo-vm-ocaml
+site_name: OxCairo
 site_description: A fast Cairo VM written in OCaml
 repo_url: https://github.com/teddyjfpender/cairo-vm-ocaml
 theme:
