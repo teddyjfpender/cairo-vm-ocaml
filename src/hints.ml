@@ -491,19 +491,17 @@ let () =
       set_val vm c "r" (zf r);
       set_val vm c "biased_q" (zf (Z.add q bound)));
   (* find_element *)
-  reg H.h54 (fun c vm ->
-      let arr = get_ptr vm c "array_ptr" in
-      let es = Felt.to_nat (get_felt vm c "elm_size") in
-      if es <= 0 then fail "Invalid value for elm_size.";
-      let key = get_val vm c "key" in
-      let n = Felt.to_nat (get_felt vm c "n_elms") in
-      if n < 0 then fail "Invalid value for n_elms.";
-      let rec go i =
-        if i >= n then fail "Key %s was not found." (value_to_string key)
-        else if Felt.equal (mem_at vm arr (es * i)) key then set_val vm c "index" (Felt.small i)
-        else go (i + 1)
-      in
-      go 0);
+  reg H.h54 (fun c ->
+      let cache = ref None in
+      fun vm ->
+        let arr = get_ptr vm c "array_ptr" in
+        let es = Felt.to_nat (get_felt vm c "elm_size") in
+        if es <= 0 then fail "Invalid value for elm_size.";
+        let key = get_val vm c "key" in
+        let n = Felt.to_nat (get_felt vm c "n_elms") in
+        if n < 0 then fail "Invalid value for n_elms.";
+        let index = Find_element.lookup cache vm arr es n key in
+        set_val vm c "index" (Felt.small index));
   reg H.h55 (fun c ->
       let cursor = ref None in
       fun vm ->
