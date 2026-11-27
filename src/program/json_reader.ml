@@ -14,6 +14,7 @@ type projection =
   | Json
   | Program
   | Identifier
+  | Debug_info
   | Fields of (string * projection) list
   | Only of (string * projection) list
   | Elements of projection
@@ -23,7 +24,7 @@ external project_key : string -> int ref -> (string * projection) list -> (strin
   = "cvm_json_project_key" [@@noalloc]
 
 let from_string ?identifiers ?(projection=Json) src : J.t =
-  let seen_identifiers = ref false in
+  let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
   let n = String.length src and pos = ref 0 in
   let peek () =
     while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
@@ -95,7 +96,22 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
                            add name (value Identifier));
                        `Null
                      end else (pos := skip !pos; `Null)
-                 | Program, ("attributes" | "debug_info" | "identifiers")
+                 | Program, "attributes" ->
+                     if !seen_attributes then Program_metadata.fail k;
+                     seen_attributes := true;
+                     Program_metadata.validate k Program_metadata.attributes (value Json); `Null
+                 | Program, "debug_info" ->
+                     if !seen_debug then Program_metadata.fail k;
+                     seen_debug := true;
+                     Program_metadata.validate k Program_metadata.debug (value Debug_info); `Null
+                 | Debug_info, "instruction_locations" when peek () = '{' ->
+                     fold_items '}' () (fun () ->
+                         let key = string () in expect ':';
+                         if not (Program_metadata.within 64 key) then Program_metadata.fail key;
+                         Program_metadata.validate key Program_metadata.instruction
+                           (value (Only ["inst", Json; "hints", Json])));
+                     `Assoc []
+                 | Debug_info, _ | Program, "identifiers"
                  | Identifier, ("references" | "full_name" | "cairo_type" | "decorators" | "size") ->
                      pos := skip !pos; `Null
                  | Fields fields, key -> value (Option.value (List.assoc_opt key fields) ~default:Json)

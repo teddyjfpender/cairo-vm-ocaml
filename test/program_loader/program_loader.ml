@@ -53,3 +53,20 @@ let () =
   match from_string ~projection {|{"unused":[0,],"used":0}|} with
   | exception Yojson.Json_error _ -> ()
   | _ -> failwith "malformed unselected value accepted"
+
+let () =
+  let invalid member =
+    let data = Printf.sprintf {|{"prime":"%s","data":[],"builtins":[],%s}|}
+        (Z.to_string Felt.p) member in
+    let rejects f = match f () with exception Yojson.Json_error _ -> true | _ -> false in
+    with_json data (fun path -> assert (rejects (fun () -> Program.load_file path)));
+    assert (rejects (fun () -> Program.load_json (Yojson.Safe.from_string data)))
+  in
+  List.iter invalid [
+    {|"debug_info":{"instruction_locations":{"00":{"inst":{},"hints":[]}}}|};
+    {|"debug_info":{"instruction_locations":null}|};
+    {|"debug_info":null,"debug_info":null|};
+    {|"attributes":[{"name":"x","start_pc":0,"end_pc":0,"value":7}]|};
+    {|"attributes":[["x",0,1,"test"]]|};
+    {|"attributes":null|};
+  ]

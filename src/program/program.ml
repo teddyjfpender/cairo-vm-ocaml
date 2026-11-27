@@ -281,6 +281,7 @@ let load_with_identifiers identifiers (j : J.t) : t =
   }
 
 let load_json j =
+  Program_metadata.validate_program j;
   let identifiers = Hashtbl.create 1024 in
   (match U.member "identifiers" j with
    | `Assoc entries -> List.iter (fun (name, v) -> add_identifier identifiers name v) entries
