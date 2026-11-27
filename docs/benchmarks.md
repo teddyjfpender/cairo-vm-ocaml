@@ -1,5 +1,9 @@
 # Benchmarks
 
+Across 70 deterministic upstream sequencer flow inputs at `ffd9582`, the median cold output-only speedup was **2.43×**. The ratio of summed case medians was **9.05×**, and 19 of 70 cases reached 10×. Each case ran five alternating-order pairs against the pinned Rust sequencer on the M4 Max. Every pair matched on public output. These flows exercise distinct transaction paths and include small blocks. The larger multi-block cases below measure sustained work. [Per-case timings](../bench/results/native-os-upstream-cold-m4-max.csv).
+
+On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revision, five alternating-order pairs produced a median **4.82×** speedup with output, fact topology, trace and memory files checked byte-for-byte. The median elapsed times were 0.497 s for OCaml and 2.466 s for Rust. OS-sampled maximum RSS was 657 MiB for OCaml and 2,263 MiB for Rust.
+
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
