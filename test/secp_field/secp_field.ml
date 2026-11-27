@@ -2,7 +2,7 @@
    exact quotients, inverses and limb splits. *)
 open Cairovm
 module F = Secp_field
-module S = Hints_secp
+module S = Secp
 
 let () =
   let st = Random.State.make [| 256 |] in

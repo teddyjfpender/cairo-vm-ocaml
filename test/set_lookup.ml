@@ -9,7 +9,7 @@ let () =
   let vm = make_vm () in
   let small = Felt.small and base = Felt.reloc 0 0 in
   let cache = ref None in
-  let find vm base total words = Hints.find_set_element cache vm base total (Array.of_list words) in
+  let find vm base total words = Collections.find_set_element cache vm base total (Array.of_list words) in
   let write i v = Vm.write vm 0 i v in
   for i = 0 to 47 do
     write (2 * i) (small (i mod 4));
@@ -52,7 +52,7 @@ let () =
     Vm.write vm seg (3*i+1) a;
     Vm.write vm seg (3*i+2) b in
   for i = 0 to 63 do row i (Felt.small i) base done;
-  let query n a b = Hints.find_set_element cache vm base (3*n) [|tag;a;b|] in
+  let query n a b = Collections.find_set_element cache vm base (3*n) [|tag;a;b|] in
   for _ = 1 to 3 do assert (query 64 (Felt.small 99) base = -1) done;
   assert ((Option.get !cache).composite <> None);
   assert (query 64 (Felt.small 63) base = 63);

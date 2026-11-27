@@ -68,7 +68,6 @@ let rec is_subsequence xs ys =
 
 let compile_hints prog =
   let scopes = Hintrt.new_scopes () in
-  Hints_registry.init ();
   let hints = Array.make (Array.length prog.Program.data) [||] in
   List.iter
     (fun (pc, hs) ->

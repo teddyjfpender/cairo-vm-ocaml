@@ -161,7 +161,7 @@ let step vm d =
       let message = u32_range vm msg_ptr 16 in
       let out = read_ptr vm 1 ap "output pointer" in
       let f0 = if ext = 2 then 0xFFFFFFFF else 0 in
-      let h = Hints.blake2s_compress state message counter 0 f0 0 in
+      let h = Blake2s.compress state message counter 0 f0 0 in
       Array.iteri (fun i w -> write_checked vm (Felt.rseg out) (Felt.roff out + i) (Felt.small w)) h;
       finish vm d pc ap size
   | 3 ->

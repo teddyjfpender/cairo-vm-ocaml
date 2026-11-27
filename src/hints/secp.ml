@@ -1,28 +1,19 @@
-(* secp256k1 / secp256r1 / ed25519 / Stark-curve EC, bigint, uint384, uint512,
-   vrf, garaga and field-arithmetic hints.
+(* secp256k1 / secp256r1 / ed25519 field and curve hints, BigInt3 packing,
+   signature recovery and the number theory they share (cairo-vm secp/,
+   bigint.rs, ec_recover.rs).
 
    Each hint mirrors the cairo-vm v4.0.0 Rust implementation (the parity
    reference), including where it deviates from the Python hint text:
    - BigInt3/EcPoint/Uint384/... operands are read as consecutive limbs from
      the variable's address (get_relocatable_from_var_name), not by member name.
    - pack86 uses cairo-vm's signed_felt: values > (P-1)/2 are negative.
-   - Floor division/modulo follow num-bigint's div_mod_floor/mod_floor.
-   Several codes already implemented in Hints are re-registered here so that
-   the shared scope variables (SECP_P, N, ...) are set and read exactly as in
-   Rust; Hints_registry runs [register] after Hints is initialized, so these
-   definitions take precedence. *)
+   - Floor division/modulo follow num-bigint's div_mod_floor/mod_floor. *)
 
 open Errors
 open Vm
 open Hintrt
 module C = Hint_codes
 module F = Secp_field
-
-let reg = Hints.reg
-let z = Z.of_int
-let two_pow n = Z.shift_left Z.one n
-let mask n = Z.pred (two_pow n)
-let check b msg = if not b then fail "%s" msg
 
 (* ---- constants ---- *)
 
@@ -89,8 +80,6 @@ let safe_div x y =
   let q, r = div_mod_floor x y in
   if Z.sign r <> 0 then fail "safe_div: %s is not divisible by %s" (Z.to_string x) (Z.to_string y);
   q
-
-let powm b e m = if Z.sign m = 0 then fail "Attempted to divide by zero" else Z.powm b e m
 
 let ec_double_slope (x, y) alpha p = div_mod (Z.add (Z.mul (z 3) (Z.mul x x)) alpha) (Z.mul (z 2) y) p
 let line_slope (x0, y0) (x1, y1) p = div_mod (Z.sub y0 y1) (Z.sub x0 x1) p
@@ -159,87 +148,17 @@ let sqrt_prime_power a p =
     end
   end
 
+let felt_max_halved = Z.shift_right (Z.pred stark_p) 1
+
 (* Felt252::sqrt: the smaller root, or None for a non-residue *)
 let felt_sqrt a =
   let a = Z.erem a stark_p in
   if Z.sign a = 0 then Some Z.zero
-  else if not (Z.equal (Z.powm a (Z.shift_right (Z.pred stark_p) 1) stark_p) Z.one) then None
+  else if not (Z.equal (Z.powm a felt_max_halved stark_p) Z.one) then None
   else Some (tonelli_shanks a stark_p)
-
-(* ---- SHA-256 (for random_ec_point) ---- *)
-
-let sha256 (msg : string) : string =
-  let k =
-    [| 0x428a2f98; 0x71374491; 0xb5c0fbcf; 0xe9b5dba5; 0x3956c25b; 0x59f111f1; 0x923f82a4; 0xab1c5ed5;
-       0xd807aa98; 0x12835b01; 0x243185be; 0x550c7dc3; 0x72be5d74; 0x80deb1fe; 0x9bdc06a7; 0xc19bf174;
-       0xe49b69c1; 0xefbe4786; 0x0fc19dc6; 0x240ca1cc; 0x2de92c6f; 0x4a7484aa; 0x5cb0a9dc; 0x76f988da;
-       0x983e5152; 0xa831c66d; 0xb00327c8; 0xbf597fc7; 0xc6e00bf3; 0xd5a79147; 0x06ca6351; 0x14292967;
-       0x27b70a85; 0x2e1b2138; 0x4d2c6dfc; 0x53380d13; 0x650a7354; 0x766a0abb; 0x81c2c92e; 0x92722c85;
-       0xa2bfe8a1; 0xa81a664b; 0xc24b8b70; 0xc76c51a3; 0xd192e819; 0xd6990624; 0xf40e3585; 0x106aa070;
-       0x19a4c116; 0x1e376c08; 0x2748774c; 0x34b0bcb5; 0x391c0cb3; 0x4ed8aa4a; 0x5b9cca4f; 0x682e6ff3;
-       0x748f82ee; 0x78a5636f; 0x84c87814; 0x8cc70208; 0x90befffa; 0xa4506ceb; 0xbef9a3f7; 0xc67178f2 |]
-  in
-  let m32 = 0xFFFFFFFF in
-  let rotr x n = ((x lsr n) lor (x lsl (32 - n))) land m32 in
-  let h = [| 0x6a09e667; 0xbb67ae85; 0x3c6ef372; 0xa54ff53a; 0x510e527f; 0x9b05688c; 0x1f83d9ab; 0x5be0cd19 |] in
-  let len = String.length msg in
-  let padded_len = ((len + 9 + 63) / 64) * 64 in
-  let b = Bytes.make padded_len '\000' in
-  Bytes.blit_string msg 0 b 0 len;
-  Bytes.set b len '\x80';
-  Bytes.set_int64_be b (padded_len - 8) (Int64.of_int (len * 8));
-  let w = Array.make 64 0 in
-  for blk = 0 to (padded_len / 64) - 1 do
-    for i = 0 to 15 do
-      w.(i) <- Int32.to_int (Bytes.get_int32_be b ((blk * 64) + (4 * i))) land m32
-    done;
-    for i = 16 to 63 do
-      let s0 = rotr w.(i - 15) 7 lxor rotr w.(i - 15) 18 lxor (w.(i - 15) lsr 3) in
-      let s1 = rotr w.(i - 2) 17 lxor rotr w.(i - 2) 19 lxor (w.(i - 2) lsr 10) in
-      w.(i) <- (w.(i - 16) + s0 + w.(i - 7) + s1) land m32
-    done;
-    let a = ref h.(0) and bb = ref h.(1) and c = ref h.(2) and d = ref h.(3) in
-    let e = ref h.(4) and f = ref h.(5) and g = ref h.(6) and hh = ref h.(7) in
-    for i = 0 to 63 do
-      let s1 = rotr !e 6 lxor rotr !e 11 lxor rotr !e 25 in
-      let ch = (!e land !f) lxor (lnot !e land m32 land !g) in
-      let t1 = (!hh + s1 + ch + k.(i) + w.(i)) land m32 in
-      let s0 = rotr !a 2 lxor rotr !a 13 lxor rotr !a 22 in
-      let maj = (!a land !bb) lxor (!a land !c) lxor (!bb land !c) in
-      let t2 = (s0 + maj) land m32 in
-      hh := !g; g := !f; f := !e;
-      e := (!d + t1) land m32;
-      d := !c; c := !bb; bb := !a;
-      a := (t1 + t2) land m32
-    done;
-    List.iteri (fun i v -> h.(i) <- (h.(i) + v) land m32) [ !a; !bb; !c; !d; !e; !f; !g; !hh ]
-  done;
-  let out = Bytes.create 32 in
-  Array.iteri (fun i v -> Bytes.set_int32_be out (4 * i) (Int32.of_int v)) h;
-  Bytes.to_string out
-
-let z_of_be (s : string) =
-  let r = ref Z.zero in
-  String.iter (fun ch -> r := Z.add (Z.shift_left !r 8) (z (Char.code ch))) s;
-  !r
-
-(* 32-byte big-endian encoding of a field element (Felt252::to_bytes_be) *)
-let be32 v =
-  let b = Bytes.make 32 '\000' in
-  let rec fill i v = if i >= 0 && Z.sign v > 0 then (Bytes.set b i (Char.chr (Z.to_int (Z.extract v 0 8))); fill (i - 1) (Z.shift_right v 8)) in
-  fill 31 v;
-  Bytes.to_string b
 
 (* ---- memory access in cairo-vm's style ---- *)
 
-let addr vm c name = get_addr vm c name
-
-let int_at vm a i =
-  let v = mem_at vm a i in
-  if not (Felt.is_felt v) then fail "Expected integer at %d:%d" (Felt.rseg a) (Felt.roff a + i);
-  v
-
-let z_at vm a i = Felt.to_z (int_at vm a i)
 let signed_at vm a i = Felt.to_signed_z (int_at vm a i)
 
 let signed_for_prime prime v = if Z.gt v (Z.shift_right prime 1) then Z.sub v prime else v
@@ -258,41 +177,16 @@ let pack86_for_prime_at prime vm a off =
   let l i = signed_for_prime prime (z_at vm a (off + i)) in
   Z.add (l 0) (Z.add (Z.shift_left (l 1) 86) (Z.shift_left (l 2) 172))
 
-let pack86 vm c name = pack86_at vm (addr vm c name) 0
+let pack86 vm c name = pack86_at vm (get_addr vm c name) 0
 
 (* EcPoint {x: BigInt3, y: BigInt3} *)
 let point vm c name =
-  let a = addr vm c name in
+  let a = get_addr vm c name in
   (pack86_at vm a 0, pack86_at vm a 3)
 
 let point_for_prime prime vm c name =
-  let a = addr vm c name in
+  let a = get_addr vm c name in
   (pack86_for_prime_at prime vm a 0, pack86_for_prime_at prime vm a 3)
-
-(* BigIntN::pack: unsigned 128-bit limbs *)
-let pack128 vm c name n =
-  let a = addr vm c name in
-  let r = ref Z.zero in
-  for i = n - 1 downto 0 do
-    r := Z.add (Z.shift_left !r 128) (z_at vm a i)
-  done;
-  !r
-
-(* BigIntN::split: n masked 128-bit limbs (high bits dropped) *)
-let split128 n v = List.init n (fun i -> Z.extract v (128 * i) 128)
-
-let insert_limbs vm c name vals = write_arg vm (addr vm c name) (List.map zf vals)
-
-(* Uint256 {low, high} *)
-let u256 vm c name =
-  let a = addr vm c name in
-  Z.add (Z.shift_left (z_at vm a 1) 128) (z_at vm a 0)
-
-(* Uint256::split: masked low, unmasked high *)
-let insert_u256 vm c name v = insert_limbs vm c name [ Z.logand v (mask 128); Z.shift_right v 128 ]
-
-let set_int vm c name v = set_val vm c name (zf v)
-let felt_z vm c name = Felt.to_z (get_felt vm c name)
 
 (* ---- scope variables ---- *)
 
@@ -330,47 +224,10 @@ let set_all c r = List.iter (fun (n, v) -> set c.scopes n (r.dyn v))
    moduli and to raise cairo-vm's error when [fast] finds no inverse. *)
 let field_or p fast slow = match Option.bind (F.modulus p) fast with Some v -> Field v | None -> Int (slow ())
 
-(* ---- Stark curve helpers (ec_utils.rs) ---- *)
-
-let stark_beta = Z.of_string "3141592653589793238462643383279502884197169399375105820974944592307816406665"
-let felt_max_halved = Z.shift_right (Z.pred stark_p) 1
-
-let recover_y x =
-  let y2 = Z.add (Z.add (Z.powm x (z 3) stark_p) x) stark_beta in
-  let residue = Z.sign y2 = 0 || Z.equal y2 Z.one || Z.equal (Z.powm y2 felt_max_halved stark_p) Z.one in
-  if residue then felt_sqrt y2 else None
-
-let random_ec_point_seeded seed_bytes =
-  let seed = sha256 seed_bytes in
-  let rest = String.sub seed 1 31 in
-  let y_neg = Char.code seed.[0] land 1 = 1 in
-  let rec go i =
-    if i >= 100 then fail "Random ec point not on curve"
-    else begin
-      let input = rest ^ String.make 1 (Char.chr i) ^ String.make 9 '\000' in
-      let x = z_of_be (sha256 input) in
-      match recover_y x with
-      | Some y -> (zf x, zf (if y_neg then Z.neg y else y))
-      | None -> go (i + 1)
-    end
-  in
-  go 0
-
-let stark_point vm c name =
-  let a = addr vm c name in
-  (int_at vm a 0, int_at vm a 1)
-
-let write_point vm c name (x, y) =
-  let a = addr vm c name in
-  write_checked vm (Felt.rseg a) (Felt.roff a) x;
-  write_checked vm (Felt.rseg a) (Felt.roff a + 1) y
-
-(* ---- hints ---- *)
-
-let register () =
+let register reg =
   (* field_utils.rs *)
   let verify_zero c vm p =
-    let l = felts vm (addr vm c "val") 0 3 in
+    let l = felts vm (get_addr vm c "val") 0 3 in
     match Option.bind (F.modulus p) (fun m -> F.exact_quotient m l.(0) l.(1) l.(2)) with
     | Some q -> set_val vm c "q" q
     | None ->
@@ -429,7 +286,7 @@ let register () =
 
   (* bigint_utils.rs *)
   let nondet_bigint3 c vm =
-    let res = addr vm c "res" in
+    let res = get_addr vm c "res" in
     match var c.scopes "value" with
     | Field v -> write_arg vm res (List.init 3 (F.limb86 v))
     | _ ->
@@ -441,14 +298,14 @@ let register () =
   reg C.nondet_bigint3_v1 nondet_bigint3;
   reg C.nondet_bigint3_v2 nondet_bigint3;
   reg C.hi_max_bitlen (fun c vm ->
-      let bu = Felt.bits (int_at vm (addr vm c "scalar_u") 2) in
-      let bv = Felt.bits (int_at vm (addr vm c "scalar_v") 2) in
+      let bu = Felt.bits (int_at vm (get_addr vm c "scalar_u") 2) in
+      let bv = Felt.bits (int_at vm (get_addr vm c "scalar_v") 2) in
       let len_hi = max bu bv in
       set_int vm c "len_hi" (if len_hi = 0 then Z.pred stark_p else z (len_hi - 1)));
 
   (* secp/ec_utils.rs *)
   let ec_negate p c vm =
-    let y = pack86_at vm (addr vm c "point") 3 in
+    let y = pack86_at vm (get_addr vm c "point") 3 in
     setz c "value" (mod_floor (Z.neg y) p);
     setz c "SECP_P" p
   in
@@ -461,7 +318,7 @@ let register () =
       let fast m =
         if pack_prime != stark_p then None
         else
-          let l = felts vm (addr vm c name) 0 6 in
+          let l = felts vm (get_addr vm c name) 0 6 in
           let x = fpack m l 0 and y = fpack m l 3 in
           let x2 = F.mul m x x in
           F.div m (F.add m (F.add m x2 (F.add m x2 x2)) alpha_f) (F.add m y y)
@@ -482,8 +339,8 @@ let register () =
       setz c "value" v;
       setz c "slope" v);
   let compute_slope n0 n1 pname c vm =
-    let l0 = felts vm (addr vm c n0) 0 6 in
-    let l1 = felts vm (addr vm c n1) 0 6 in
+    let l0 = felts vm (get_addr vm c n0) 0 6 in
+    let l1 = felts vm (get_addr vm c n1) 0 6 in
     let p = getz c pname in
     let fast m = F.div m (F.sub m (fpack m l0 3) (fpack m l1 3)) (F.sub m (fpack m l0 0) (fpack m l1 0)) in
     let v = field_or p fast (fun () -> line_slope (point vm c n0) (point vm c n1) p) in
@@ -516,8 +373,8 @@ let register () =
       setz c "new_x" v);
   let double_assign_new_x p name c vm =
     setz c "SECP_P" p;
-    let s = felts vm (addr vm c "slope") 0 3 in
-    let pt = felts vm (addr vm c name) 0 6 in
+    let s = felts vm (get_addr vm c "slope") 0 3 in
+    let pt = felts vm (get_addr vm c name) 0 6 in
     with_ring p { run = fun r ->
       let slope = r.pack s 0 and x = r.pack pt 0 and y = r.pack pt 3 in
       let v = r.sub (r.mul slope slope) (r.add x x) in
@@ -539,9 +396,9 @@ let register () =
   reg C.ec_double_assign_new_y (new_y "x" "y");
   let fast_add_new_x p n0 n1 c vm =
     setz c "SECP_P" p;
-    let s = felts vm (addr vm c "slope") 0 3 in
-    let l0 = felts vm (addr vm c n0) 0 6 in
-    let l1 = felts vm (addr vm c n1) 0 6 in
+    let s = felts vm (get_addr vm c "slope") 0 3 in
+    let l0 = felts vm (get_addr vm c n0) 0 6 in
+    let l1 = felts vm (get_addr vm c n1) 0 6 in
     with_ring p { run = fun r ->
       let slope = r.pack s 0 and x0 = r.pack l0 0 and x1 = r.pack l1 0 and y0 = r.pack l0 3 in
       let v = r.sub (r.sub (r.mul slope slope) x0) x1 in
@@ -552,8 +409,8 @@ let register () =
   reg C.fast_ec_add_assign_new_x_v3 (fast_add_new_x secp_p "pt0" "pt1");
   reg C.fast_ec_add_assign_new_y (new_y "x0" "y0");
   let n_pair_bits result pairs c vm =
-    let sv = felt_z vm c "scalar_v" and su = felt_z vm c "scalar_u" in
-    let mz = felt_z vm c "m" in
+    let sv = get_z vm c "scalar_v" and su = get_z vm c "scalar_u" in
+    let mz = get_z vm c "m" in
     let m = if Z.fits_int mz && Z.lt mz (two_pow 32) then Z.to_int mz else 253 in
     if m >= 253 then set_val vm c result Felt.zero
     else begin
@@ -598,7 +455,7 @@ let register () =
       setz c "y_square_int" y_square;
       let y = Z.powm y_square (Z.shift_right (Z.succ secp_p) 2) secp_p in
       setz c "y" y;
-      let v = felt_z vm c "v" in
+      let v = get_z vm c "v" in
       let y = if Z.is_even v <> Z.is_even y then Z.sub secp_p y else y in
       setz c "value" y);
   reg C.pack_modn_div_modn (fun c vm ->
@@ -614,7 +471,7 @@ let register () =
   (* bigint.rs *)
   reg C.bigint_pack_div_mod (fun c vm ->
       let p = pack86 vm c "P" in
-      let xa = addr vm c "x" in
+      let xa = get_addr vm c "x" in
       let x =
         Z.add (pack86_at vm xa 0)
           (Z.add (Z.mul (signed_at vm xa 3) (Z.pow base86 3)) (Z.mul (signed_at vm xa 4) (Z.pow base86 4)))
@@ -662,146 +519,14 @@ let register () =
       let v = div_floor product m in
       setz c "k" v;
       setz c "value" v);
-
-  (* ec_utils.rs (Stark curve) *)
-  reg C.random_ec_point (fun c vm ->
-      let px, py = stark_point vm c "p" in
-      let qx, qy = stark_point vm c "q" in
-      let m = get_felt vm c "m" in
-      let seed = String.concat "" (List.map (fun v -> be32 (Felt.to_z v)) [ px; py; m; qx; qy ]) in
-      write_point vm c "s" (random_ec_point_seeded seed));
-  reg C.chained_ec_op_random_ec_point (fun c vm ->
-      let n = felt_z vm c "len" in
-      if Z.sign n = 0 || not (Z.fits_int n) || Z.to_int n < 0 then fail "Invalid value for len. Got: %s" (Z.to_string n);
-      let n = Z.to_int n in
-      let px, py = stark_point vm c "p" in
-      let m = get_ptr vm c "m" and q = get_ptr vm c "q" in
-      let range p k = List.init k (fun i -> int_at vm p i) in
-      let ms = range m n in
-      let qs = range q (2 * n) in
-      let seed = String.concat "" (List.map (fun v -> be32 (Felt.to_z v)) ((px :: py :: ms) @ qs)) in
-      write_point vm c "s" (random_ec_point_seeded seed));
-  reg C.recover_y (fun c vm ->
-      let x = get_felt vm c "x" in
-      let a = addr vm c "p" in
-      write_checked vm (Felt.rseg a) (Felt.roff a) x;
-      match recover_y (Felt.to_z x) with
-      | Some y -> write_checked vm (Felt.rseg a) (Felt.roff a + 1) (zf y)
-      | None -> fail "Point (%s, ?) is not on the curve" (Felt.to_string x));
-
-  (* field_arithmetic.rs *)
-  let get_square_root read insert c vm =
-    let generator = read vm c "generator" and x = read vm c "x" and p = read vm c "p" in
-    let success_x = is_quad_residue x p in
-    let root_x = if success_x then Option.value (sqrt_prime_power x p) ~default:Z.zero else Z.zero in
-    let gx = Z.mul generator x in
-    let success_gx = is_quad_residue gx p in
-    let root_gx = if success_gx then Option.value (sqrt_prime_power gx p) ~default:Z.zero else Z.zero in
-    if Z.sign x <> 0 && success_x = success_gx then fail "assert success_x + success_gx ==1";
-    set_val vm c "success_x" (of_bool success_x);
-    set_val vm c "success_gx" (of_bool success_gx);
-    insert vm c "sqrt_x" root_x;
-    insert vm c "sqrt_gx" root_gx
-  in
-  reg C.uint384_get_square_root
-    (get_square_root (fun vm c n -> pack128 vm c n 3) (fun vm c n v -> insert_limbs vm c n (split128 3 v)));
-  reg C.uint256_get_square_root (get_square_root u256 insert_u256);
-  reg C.uint384_div (fun c vm ->
-      let b = pack128 vm c "b" 3 and p = pack128 vm c "p" 3 in
-      nonzero b;
-      let inv = mod_floor (mul_inv b p) p in
-      insert_limbs vm c "b_inverse_mod_p" (split128 3 inv));
-
-  (* garaga.rs *)
-  reg C.get_felt_bit_length (fun c vm -> set_val vm c "bit_length" (Felt.small (Felt.bits (get_felt vm c "x"))));
-
-  (* uint384.rs, uint384_extension.rs *)
-  reg C.uint384_unsigned_div_rem (fun c vm ->
-      let a = pack128 vm c "a" 3 and d = pack128 vm c "div" 3 in
-      nonzero d;
-      let q, r = div_mod_floor a d in
-      insert_limbs vm c "quotient" (split128 3 q);
-      insert_limbs vm c "remainder" (split128 3 r));
-  reg C.uint384_split_128 (fun c vm ->
-      let a = felt_z vm c "a" in
-      set_int vm c "low" (Z.extract a 0 128);
-      set_int vm c "high" (Z.shift_right a 128));
-  reg C.add_no_uint384_check (fun c vm ->
-      let aa = addr vm c "a" and ba = addr vm c "b" in
-      let a i = z_at vm aa i and b i = z_at vm ba i in
-      let shift = const_z c "SHIFT" in
-      let carry s = if Z.geq s shift then Z.one else Z.zero in
-      let c0 = carry (Z.add (a 0) (b 0)) in
-      let c1 = carry (Z.add (Z.add (a 1) (b 1)) c0) in
-      let c2 = carry (Z.add (Z.add (a 2) (b 2)) c1) in
-      set_int vm c "carry_d0" c0;
-      set_int vm c "carry_d1" c1;
-      set_int vm c "carry_d2" c2);
-  reg C.uint384_sqrt (fun c vm ->
-      let a = pack128 vm c "a" 3 in
-      let root = Z.sqrt a in
-      if Z.sign root = 0 || Z.numbits root > 192 then fail "assert 0 <= root < 2 ** 192";
-      insert_limbs vm c "root" (split128 3 root));
-  reg C.sub_reduced_a_and_reduced_b (fun c vm ->
-      let a = pack128 vm c "a" 3 and b = pack128 vm c "b" 3 and p = pack128 vm c "p" 3 in
-      let res = if Z.gt a b then mod_floor (Z.sub a b) p else Z.sub p (mod_floor (Z.sub b a) p) in
-      insert_limbs vm c "res" (split128 3 res));
-  reg C.uint384_signed_nn (fun c vm ->
-      let d2 = int_at vm (addr vm c "a") 2 in
-      write_ap vm (of_bool (Felt.bits d2 <= 127)));
-  let div_rem_768 c vm =
-    let a = pack128 vm c "a" 6 and d = pack128 vm c "div" 3 in
-    nonzero d;
-    let q, r = div_mod_floor a d in
-    insert_limbs vm c "quotient" (split128 6 q);
-    insert_limbs vm c "remainder" (split128 3 r)
-  in
-  reg C.unsigned_div_rem_uint768_by_uint384 div_rem_768;
-  reg C.unsigned_div_rem_uint768_by_uint384_stripped div_rem_768;
-
-  (* vrf/ *)
-  reg C.uint512_unsigned_div_rem (fun c vm ->
-      let x = pack128 vm c "x" 4 and d = u256 vm c "div" in
-      nonzero d;
-      let q, r = div_mod_floor x d in
-      insert_limbs vm c "quotient" (split128 4 q);
-      insert_u256 vm c "remainder" r);
-  reg C.inv_mod_p_uint256 (fun c vm ->
-      let b = u256 vm c "b" and p = u256 vm c "p" in
-      insert_u256 vm c "b_inverse_mod_p" (div_mod Z.one b p));
-  reg C.inv_mod_p_uint512 (fun c vm ->
-      let x = pack128 vm c "x" 4 and p = u256 vm c "p" in
-      (* cairo-vm converts the inverse to a felt before splitting it *)
-      let inv = Z.erem (div_mod Z.one x p) stark_p in
-      insert_limbs vm c "x_inverse_mod_p" [ Z.extract inv 0 128; Z.shift_right inv 128 ]);
-
-  (* math_utils.rs *)
-  reg C.is_quad_residue (fun c vm ->
-      let x = felt_z vm c "x" in
-      let y =
-        if Z.sign x = 0 || Z.equal x Z.one then x
-        else if Z.equal (Z.powm x felt_max_halved stark_p) Z.one then Option.value (felt_sqrt x) ~default:Z.zero
-        else
-          let x3 = Z.erem (Z.mul x (Z.invert (z 3) stark_p)) stark_p in
-          Option.value (felt_sqrt x3) ~default:Z.zero
-      in
-      set_int vm c "y" y);
-  (* SPLIT_XX: square root modulo 2**255 - 19 (ed25519) *)
-  reg C.split_xx (fun c vm ->
-      let a = addr vm c "xx" in
-      let xx = Z.add (z_at vm a 0) (Z.erem (Z.shift_left (z_at vm a 1) 128) stark_p) in
-      let p = secp_p_v2 in
-      let ii = Z.of_string "19681161376707505956807079304988542015446066515923890162744021073123829784752" in
-      let x = Z.powm xx (Z.fdiv (Z.add p (z 3)) (z 8)) p in
-      (* BigUint subtraction: cairo-vm panics when x * x < xx *)
-      if Z.lt (Z.mul x x) xx then fail "split_xx: attempt to subtract with overflow";
-      let x = if Z.sign (Z.erem (Z.sub (Z.mul x x) xx) p) <> 0 then Z.erem (Z.mul x ii) p else x in
-      let x = if Z.is_odd x then Z.sub p x else x in
-      insert_limbs vm c "x" [ Z.extract x 0 128; Z.shift_right x 128 ])
+  reg C.bigint_to_uint256 (fun c vm ->
+      let d0 = get_member_z vm c "x" [ "d0" ] and d1 = get_member_z vm c "x" [ "d1" ] in
+      set_val vm c "low" (zf (Z.logand (Z.add d0 (Z.mul d1 (const_z c "BASE"))) (mask 128))));
+  reg C.ec_mul_inner (fun c vm -> write_ap vm (zf (Z.erem (get_z vm c "scalar") (z 2))))
 
 (* cairo0_hints.rs: dispatched by cairo-vm only when built with the
    `cairo-0-secp-hints` feature, so they are not part of the default table. *)
-let register_cairo0_secp () =
+let register_cairo0 reg =
   let reduce_into name c vm = setz c name (mod_floor (pack86 vm c "x") r1_p) in
   reg C.Cairo0.secp_reduce (reduce_into "value");
   reg C.Cairo0.secp_reduce_x (reduce_into "x");
@@ -813,7 +538,7 @@ let register_cairo0_secp () =
   reg C.Cairo0.compute_ids_high_low (fun c vm ->
       setz c "SECP256R1_P" r1_p;
       let upper = const_z c "UPPER_BOUND" and shift = const_z c "SHIFT" in
-      let value = felt_z vm c "value" in
+      let value = get_z vm c "value" in
       if Z.gt value (Z.erem upper stark_p) then fail "Value %s is outside of the range" (Z.to_string value);
       let shift = Z.erem shift stark_p in
       nonzero shift;
@@ -822,13 +547,13 @@ let register_cairo0_secp () =
       set_int vm c "low" low);
   let r1_get_point_from_x pack_prime c vm =
     setz c "SECP256R1_P" r1_p;
-    let a = addr vm c "x" in
+    let a = get_addr vm c "x" in
     let x = pack86_for_prime_at pack_prime vm a 0 in
     let y_square = Z.rem (Z.add (Z.add (Z.powm x (z 3) r1_p) (Z.mul r1_alpha x)) r1_b) r1_p in
     setz c "y_square_int" y_square;
     let y = Z.powm y_square (Z.fdiv (Z.succ r1_p) (z 4)) r1_p in
     setz c "y" y;
-    let v = felt_z vm c "v" in
+    let v = get_z vm c "v" in
     setz c "value" (if Z.is_even v = Z.is_even y then y else mod_floor (Z.neg y) r1_p)
   in
   reg C.Cairo0.secp_r1_get_point_from_x (r1_get_point_from_x r1_p);
@@ -838,7 +563,7 @@ let register_cairo0_secp () =
       set_val vm c "is_on_curve" (of_bool (Z.equal (Z.rem (Z.mul y y) r1_p) y2)));
   let secp_double_assign_new_x pack_prime c vm =
     setz c "SECP256R1_P" r1_p;
-    let slope = pack86_for_prime_at pack_prime vm (addr vm c "slope") 0 in
+    let slope = pack86_for_prime_at pack_prime vm (get_addr vm c "slope") 0 in
     let x, y = point_for_prime pack_prime vm c "point" in
     let v = mod_floor (Z.sub (Z.powm slope (z 2) r1_p) (Z.shift_left x 1)) r1_p in
     setz c "slope" slope;
@@ -873,9 +598,3 @@ let register_cairo0_secp () =
           | [] -> fail "Nibbles list is empty")
       | _ -> fail "Variable nibbles is not a list");
   reg C.Cairo0.compute_value_div_mod (fun c _ -> setz c "value" (div_mod Z.one (getz c "x") r1_p))
-
-(* Runtime counterpart of cairo-vm's `cairo-0-secp-hints` cargo feature
-   (off by default, as in the reference CLI build). *)
-let register () =
-  register ();
-  if Sys.getenv_opt "CAIRO_VM_CAIRO0_SECP_HINTS" = Some "1" then register_cairo0_secp ()

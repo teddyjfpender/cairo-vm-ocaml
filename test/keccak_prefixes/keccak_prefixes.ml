@@ -15,20 +15,20 @@ let () =
       Bytes.set expected (16*i + 15-j) (Char.chr (Z.to_int (Z.extract word (8*j) 8)))
     done
   done;
-  let cursor = Hints.keccak_cursors () in
+  let cursor = Keccak.keccak_cursors () in
   let check first n =
-    let digest = Hints.finalize_keccak cursor vm (Felt.reloc 0 first) n in
-    assert (digest = Hints.keccak256 (Bytes.sub expected (16*first) (16*n)))
+    let digest = Keccak.finalize_keccak cursor vm (Felt.reloc 0 first) n in
+    assert (digest = Keccak.keccak256 (Bytes.sub expected (16*first) (16*n)))
   in
   List.iter (check 0) [0;1;8;9;16;17;18;17;4000;4100;4100;4096];
   (* Reference digests from eth_hash.auto.keccak over 16-byte BE words. *)
   let hex bytes = String.concat "" (List.init (Bytes.length bytes)
     (fun i -> Printf.sprintf "%02x" (Bytes.get_uint8 bytes i))) in
-  assert (hex (Hints.finalize_keccak cursor vm base 0) =
+  assert (hex (Keccak.finalize_keccak cursor vm base 0) =
     "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470");
-  assert (hex (Hints.finalize_keccak cursor vm base 17) =
+  assert (hex (Keccak.finalize_keccak cursor vm base 17) =
     "a2ec22f2f2d5f5d30fce227c5d29939d57cc59a367f3560123720d2f92ecbe28");
-  assert (hex (Hints.finalize_keccak cursor vm base 4100) =
+  assert (hex (Keccak.finalize_keccak cursor vm base 4100) =
     "9f9f41889bcd07fc4d45e22cf1883f0eb7db54c65903fd6d455bf794020fbdb2");
   for length = 0 to 21 do
     for start = 0 to 3 do check start length done
@@ -36,33 +36,33 @@ let () =
   (* Evict entries, revisit dropped starts, then rewind an existing one. *)
   List.iter (fun start -> check start 300) [4;5;6;7;8;2;4;3;1;0];
   check 2 4001;
-  (match Hints.finalize_keccak cursor vm base 4101 with
+  (match Keccak.finalize_keccak cursor vm base 4101 with
    | exception Errors.Vm_error _ -> () | _ -> assert false);
   check 0 4100;
   let other, ptr = make_memory () in
   Vm.write other 0 0 Felt.zero;
-  assert (Hints.finalize_keccak cursor other ptr 1 = Hints.keccak256 (Bytes.make 16 '\000'));
+  assert (Keccak.finalize_keccak cursor other ptr 1 = Keccak.keccak256 (Bytes.make 16 '\000'));
   for n = 1 to 16 do
     let single, ptr = make_memory () in
     let largest = Z.pred (Z.shift_left Z.one (8*n)) in
     Vm.write single 0 0 (Felt.of_z largest);
-    assert (Hints.keccak_input single ptr ~first:0 n ~check_width:true = Bytes.make n '\255');
+    assert (Keccak.keccak_input single ptr ~first:0 n ~check_width:true = Bytes.make n '\255');
     Vm.write single 0 1 (Felt.of_z (Z.succ largest));
-    match Hints.keccak_input single ptr ~first:1 n ~check_width:true with
+    match Keccak.keccak_input single ptr ~first:1 n ~check_width:true with
     | exception Errors.Vm_error _ -> () | _ -> assert false
   done
 
 let () =
-  let vm, ptr = make_memory () and cache = Hints.keccak_cursors () in
+  let vm, ptr = make_memory () and cache = Keccak.keccak_cursors () in
   for i = 0 to 100 do Vm.write vm 0 i (Felt.small (i + 1)) done;
   let check n =
-    let expected = Hints.keccak_input vm ptr ~first:0 n ~check_width:true in
-    assert (Hints.hash_byte_prefix cache vm ptr n = Hints.keccak256 expected)
+    let expected = Keccak.keccak_input vm ptr ~first:0 n ~check_width:true in
+    assert (Keccak.hash_byte_prefix cache vm ptr n = Keccak.keccak256 expected)
   in
   for n = 0 to 1600 do check n done;
   List.iter check [1024; 3; 134; 135; 136; 137; 512];
   let bad, p = make_memory () in
   Vm.write bad 0 0 (Felt.of_z (Z.shift_left Z.one 128));
-  ignore (Hints.finalize_keccak cache bad p 1);
-  match Hints.hash_byte_prefix cache bad p 16 with
+  ignore (Keccak.finalize_keccak cache bad p 1);
+  match Keccak.hash_byte_prefix cache bad p 16 with
   | exception Errors.Vm_error _ -> () | _ -> assert false
