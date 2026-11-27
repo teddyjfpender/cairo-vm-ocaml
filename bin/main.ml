@@ -25,7 +25,7 @@ let () =
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
   let secure = ref None and allow_missing = ref None and stats = ref false in
-  let fill_holes = ref None and proof = ref false in
+  let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
@@ -46,7 +46,7 @@ let () =
       ("--air_private_input", Arg.String (fun s -> air_private := Some s), "FILE  write the AIR private input (proof mode)");
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
-      ("--merge_extra_segments", Arg.Unit ignore, " merge extra segments in PIE output");
+      ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
       ("--version", Arg.Unit version, " print version");
@@ -87,7 +87,6 @@ let () =
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
-  if !pie_out <> None then require_backend "--cairo_pie_output";
   try
     let t0 = Unix.gettimeofday () in
     let prog = Program.load_file file in
@@ -100,7 +99,8 @@ let () =
     let cfg =
       {
         Runner.layout = !layout;
-        trace = !trace <> None || !air_public <> None;
+        (* a PIE needs the trace to count memory holes *)
+        trace = !trace <> None || !air_public <> None || !pie_out <> None;
         secure_run = Option.value !secure ~default:(not proof);
         allow_missing_builtins = Option.value !allow_missing ~default:proof;
         entrypoint = !entry;
@@ -126,6 +126,8 @@ let () =
     (match !air_private, !trace, !memory with
      | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
      | _ -> ());
+    Option.iter
+      (Pie.write r ~main:(Runner.entry_pc cfg prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra) !pie_out;
     if !stats then
       Printf.eprintf "generic=%d hint_pcs=%d " !Vm.generic_steps !Vm.hint_steps;
     if !stats then

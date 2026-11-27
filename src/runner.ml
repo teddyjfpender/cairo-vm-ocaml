@@ -726,3 +726,19 @@ let output_lines r =
   match output_segment r with
   | None -> []
   | Some b -> List.init (used_size r.vm b.base) (output_line r.vm b.base)
+
+(* Offsets cairo-vm's pedersen runner records as verified: output cells whose
+   inputs were present when it deduced them (during the run, in
+   verify_auto_deductions over the segment, and for missing outputs in the
+   secure-run check, which covers the last partial instance). *)
+let pedersen_verified ~secure r b =
+  let vm = r.vm in
+  let len = used_size vm b.base in
+  let limit = if secure then div_ceil len 3 * 3 else len in
+  let rec go o acc =
+    if o >= limit then List.rev acc
+    else
+      let a = read vm b.base (o - 1) and c = read vm b.base (o - 2) in
+      go (o + 3) (if a <> 0 && c <> 0 && Felt.is_felt a && Felt.is_felt c then o :: acc else acc)
+  in
+  go 2 []
