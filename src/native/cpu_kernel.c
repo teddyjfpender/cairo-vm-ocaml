@@ -10,6 +10,7 @@ extern intnat cvm_binop(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_bitwise(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_pedersen(value, intnat, intnat, intnat);
 extern intnat cvm_big_eq(value, intnat, intnat);
+extern intnat cvm_bits(value, intnat);
 
 #define OFFSET_MASK ((INT64_C(1) << 40) - 1)
 #define SMALL_BOUND (INT64_C(1) << 59)
@@ -228,7 +229,9 @@ general:;
           } else {
             if (kind && kind != 1 && kind != 2) break;
             b = inverse_operand(pool, result, dst, a, slot, slots);
-            if (!b || (kind && !(b > 0 && (b & 3) == 1))) break;
+            /* Range-check segments 1 and 2 accept integers below 2^128 and 2^96. */
+            if (!b || (kind && !((b & 3) == 1 ? b > 0 :
+                (b & 3) == 3 && cvm_bits(pool, b) <= (kind == 1 ? 128 : 96)))) break;
           }
           missing = cells+at; missing_at = at; missing_seg = sg;
         }
