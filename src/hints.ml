@@ -384,26 +384,71 @@ let () =
       t.current_ptr <- get_ptr vm c "squashed_dict_end");
   reg H.h39 (fun c vm -> write_ap vm (new_dict vm c.scopes None (Some (get_val vm c "default_value"))))
 
-(* Rows before the last result were strictly below its key. Write-once
-   memory preserves that fact, even for an unsorted array. A larger query
-   can resume at the result itself; a smaller one must restart. *)
+(* A completed block records the maximum seen since row zero. These maxima
+   are ordered even when the input is unsorted. A relocatable terminates any
+   scan, so it never needs to be inserted into the index. *)
+type lower_index = { mutable maxima : int array; mutable blocks : int }
+type lower_cursor = {
+  owner : vm; base : int; stride : int;
+  mutable last_key : int; mutable last_index : int;
+  mutable index : lower_index option;
+}
+
+let lower_block_size = 128
+
 let search_lower cursor vm arr width length key =
-  let start =
-    match !cursor with
-    | Some (owner, base, stride, last_key, index)
-      when owner == vm && arr = base && width = stride && Felt.compare key last_key >= 0 ->
-        min length index
-    | _ -> 0
-  in
+  let row i = mem_at vm arr (width * i) in
+  let reaches v = Felt.is_reloc v || Felt.compare v key >= 0 in
   let rec scan i =
-    if i = length then i
-    else
-      let v = mem_at vm arr (width * i) in
-      if Felt.is_reloc v || Felt.compare v key >= 0 then i else scan (i + 1)
+    if i = length || reaches (row i) then i else scan (i + 1)
   in
-  let index = scan start in
-  cursor := Some (vm, arr, width, key, index);
-  index
+  let indexed t =
+    let rec first_block lo hi =
+      if lo = hi then lo else
+        let mid = lo + (hi - lo) / 2 in
+        if Felt.compare t.maxima.(mid) key >= 0 then first_block lo mid
+        else first_block (mid + 1) hi
+    in
+    let block = first_block 0 t.blocks in
+    let start = min length (block * lower_block_size) in
+    if block < t.blocks then scan start
+    else begin
+      let rec extend i maximum =
+        if i = length then i else
+          let v = row i in
+          if reaches v then i else begin
+            let maximum = if Felt.compare v maximum > 0 then v else maximum in
+            let next = i + 1 in
+            if next mod lower_block_size = 0 then begin
+              if t.blocks = Array.length t.maxima then
+                t.maxima <- Array.append t.maxima (Array.make t.blocks Felt.zero);
+              t.maxima.(t.blocks) <- maximum;
+              t.blocks <- t.blocks + 1
+            end;
+            extend next maximum
+          end
+      in
+      extend start (if block = 0 then Felt.zero else t.maxima.(block - 1))
+    end
+  in
+  match !cursor with
+  | Some c when c.owner == vm && c.base = arr && c.stride = width ->
+      let answer =
+        match c.index with
+        | Some t -> indexed t
+        | None when Felt.compare key c.last_key >= 0 -> scan (min length c.last_index)
+        | None when c.last_index < lower_block_size -> scan 0
+        | None ->
+            let t = {maxima = Array.make 8 Felt.zero; blocks = 0} in
+            c.index <- Some t;
+            indexed t
+      in
+      c.last_key <- key; c.last_index <- answer; answer
+  | _ ->
+      let answer = scan 0 in
+      cursor := Some { owner = vm; base = arr; stride = width; last_key = key;
+                       last_index = answer; index = None };
+      answer
 
 let () =
   (* unsafe_keccak *)
