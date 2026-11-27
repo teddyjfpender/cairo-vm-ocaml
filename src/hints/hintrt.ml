@@ -21,12 +21,6 @@ module Int_tbl = Hashtbl.Make (struct
   let hash = Felt.mix
 end)
 
-module Str_tbl = Hashtbl.Make (struct
-  type t = string
-  let equal = String.equal
-  let hash (s : string) = Hashtbl.hash s
-end)
-
 module Dict_changes = Map.Make (struct
   type t = Felt.t
   let compare (a : t) (b : t) = Int.compare (a :> int) (b :> int)
@@ -53,16 +47,25 @@ type dyn =
   | Initial_dict of Felt.t Felt_tbl.t
   | Nothing
 
-type scopes = { mutable stack : dyn Str_tbl.t list }
+(* Hint bodies pass literal names, so a physical match almost always settles
+   a lookup in these short association lists before any string comparison. *)
+let named name l = match List.assq_opt name l with None -> List.assoc_opt name l | hit -> hit
 
-let new_scopes () = { stack = [ Str_tbl.create 8 ] }
+(* A scope holds a handful of variables. *)
+type frame = { mutable vars : (string * dyn ref) list }
+type scopes = { mutable stack : frame list }
+
+let new_scopes () = { stack = [ { vars = [] } ] }
 let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
+let assign f name v =
+  match named name f.vars with Some r -> r := v | None -> f.vars <- (name, ref v) :: f.vars
+
 let enter s vars =
-  let h = Str_tbl.create 8 in
-  List.iter (fun (k, v) -> Str_tbl.replace h k v) vars;
-  s.stack <- h :: s.stack
+  let f = { vars = [] } in
+  List.iter (fun (k, v) -> assign f k v) vars;
+  s.stack <- f :: s.stack
 
 let exit_scope s =
   match s.stack with
@@ -70,10 +73,10 @@ let exit_scope s =
   | _ :: rest -> s.stack <- rest
   | [] -> assert false
 
-let var s name = match Str_tbl.find_opt (top s) name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
-let var_opt s name = Str_tbl.find_opt (top s) name
-let set s name v = Str_tbl.replace (top s) name v
-let del s name = Str_tbl.remove (top s) name
+let var_opt s name = match named name (top s).vars with Some r -> Some !r | None -> None
+let var s name = match var_opt s name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
+let set s name v = assign (top s) name v
+let del s name = let f = top s in f.vars <- List.filter (fun (n, _) -> not (String.equal n name)) f.vars
 
 (* An integer variable, converted to Z only where needed. *)
 let var_num s name =
@@ -190,13 +193,15 @@ let rec compile_expr ctx (r : P.reference) expr =
       (fun vm -> read_reference vm (addr vm))
   | P.Add (e, P.Int n) | P.Add (e, P.Neg (P.Int n)) ->
       let n = match expr with P.Add (_, P.Neg _) -> Z.neg n | _ -> n in
-      let base = compile_expr ctx r e and offset = Felt.of_z n in
-      (fun vm -> value_add (base vm) offset)
+      let offset = Felt.of_z n in
+      (match e with
+       | P.Reg_fp -> fun vm -> reloc_add_felt (Felt.reloc 1 vm.fp) offset
+       | _ -> let base = compile_expr ctx r e in fun vm -> value_add (base vm) offset)
   | _ -> (fun vm -> eval vm ctx r expr)
 
 let binding ctx name =
-  match List.find_opt (fun (n, _) -> String.equal n name) ctx.bindings with
-  | Some (_, plan) -> plan
+  match named name ctx.bindings with
+  | Some plan -> plan
   | None ->
       let r = find_ref ctx name in
       let plan = match r.r_expr with
@@ -209,36 +214,6 @@ let binding ctx name =
       in
       ctx.bindings <- (name, plan) :: ctx.bindings;
       plan
-
-(* The compiler can resolve a simple FP address in one operation. Keep the
-   ordinary expression path for out-of-range offsets and uncommon shapes. *)
-let bound_address ctx name =
-  let plan = lazy (
-    match (find_ref ctx name).r_expr with
-    | P.Deref (P.Cast (P.Reg_fp, _)) -> (fun vm -> Felt.reloc 1 vm.fp)
-    | P.Deref (P.Cast (P.Add (P.Reg_fp, (P.Int n | P.Neg (P.Int n) as term)), _))
-      when Z.fits_int n && Z.lt (Z.abs n) (Z.of_int 65536) ->
-        let delta = Z.to_int n * (match term with P.Neg _ -> -1 | _ -> 1) in
-        (fun vm -> let off = vm.fp + delta in
-          if off < 0 || off > Felt.off_mask then (binding ctx name).address vm
-          else Felt.reloc 1 off)
-    | _ -> (binding ctx name).address)
-  in fun vm -> (Lazy.force plan) vm
-
-let bound_felt ctx name =
-  let plan = lazy (match (find_ref ctx name).r_expr with
-    | P.Deref _ -> let addr = bound_address ctx name in (fun vm -> read_reference vm (addr vm))
-    | _ -> (binding ctx name).value) in
-  fun vm -> let v = (Lazy.force plan) vm in
-    if not (Felt.is_felt v) then fail "ids.%s: expected an integer" name;
-    v
-
-let bound_set ctx name =
-  let addr = bound_address ctx name in
-  fun vm v ->
-    let a = addr vm in
-    if not (Felt.is_reloc a) then fail "ids.%s has no address" name;
-    write_checked vm (Felt.rseg a) (Felt.roff a) v
 
 let get_val vm ctx name = (binding ctx name).value vm
 
@@ -311,12 +286,16 @@ let member_plan ctx name path =
   in
   (is_ptr, go st path)
 
+(* Physical match first, as in [named]; [all] is the whole memo. *)
+let rec find_plan name path all = function
+  | [] -> List.find_map (fun (n, p, plan) -> if String.equal n name && p = path then Some plan else None) all
+  | (n, p, plan) :: rest -> if n == name && p == path then Some plan else find_plan name path all rest
+
 (* address of ids.a.b.c: struct variables are addressed in place, pointers are followed *)
 let member_addr vm ctx name path =
-  let same (n, p, _) = String.equal n name && (p == path || p = path) in
   let is_ptr, plan =
-    match List.find_opt same ctx.plans with
-    | Some (_, _, p) -> p
+    match find_plan name path ctx.plans ctx.plans with
+    | Some p -> p
     | None ->
         let p = member_plan ctx name path in
         ctx.plans <- (name, path, p) :: ctx.plans;
@@ -376,7 +355,7 @@ let resolve_constant ctx name =
    Cache misses too: optional constants can otherwise scan every identifier
    on every iteration. Keep lookup lazy for hints that never execute. *)
 let const_opt ctx name =
-  match List.assoc_opt name ctx.constants with
+  match named name ctx.constants with
   | Some cached -> cached
   | None ->
       let value = resolve_constant ctx name in
