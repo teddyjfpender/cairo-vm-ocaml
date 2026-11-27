@@ -125,13 +125,16 @@ let () =
       end else
       let () = if Option.is_some !os_hints then Os_hints.configure_batch_gc () in
       let prog = Program.load_file file in
-      let r = match !bootloader_input, !os_hints with
-        | Some path, _ -> Bootloader.initialize ?layout_def ~proof ~path cfg prog
-        | _, Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
-        | None, None -> Runner.initialize ?layout_def ~proof cfg prog in
-      let t1 = Unix.gettimeofday () in
-      Runner.run_until_end r;
-      let t2 = Unix.gettimeofday () in
+      let execute on_pie_loaded =
+        let r = match !bootloader_input, !os_hints with
+          | Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg prog
+          | _, Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
+          | None, None -> Runner.initialize ?layout_def ~proof cfg prog in
+        let t1 = Unix.gettimeofday () in
+        Runner.run_until_end r;
+        r, t1, Unix.gettimeofday () in
+      let r, t1, t2 = if Option.is_some !bootloader_input then Resources.with_pedersen_verifier execute
+        else execute ignore in
       Finalize.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2

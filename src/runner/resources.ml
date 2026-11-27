@@ -152,22 +152,36 @@ external verified_pedersen : Felt.pool -> seg -> int -> Felt.t array -> bool = "
 external start_pedersen : Felt.pool -> Segment.seg -> nativeint = "cvm_start_pedersen"
 external join_pedersen : nativeint -> Segment.seg -> bool = "cvm_join_pedersen" [@@noalloc]
 
+let with_pedersen_verifier execute =
+  let active = ref true and previous = ref 0 and pending = ref None in
+  let finish () = match !pending with
+    | None -> ()
+    | Some (b, off, snapshot, worker) ->
+        pending := None;
+        if join_pedersen worker snapshot then
+          for i = 0 to Segment.slen snapshot / 3 - 1 do
+            let base = 3*i in
+            let a = sget snapshot base and c = sget snapshot (base+1) and out = sget snapshot (base+2) in
+            if Felt.is_felt a && Felt.is_felt c && Felt.is_felt out then cache_set b (off+base+2) out
+          done in
+  let submit vm =
+    if !active then match List.find_opt (fun b -> b.kind = Pedersen) vm.builtins with
+      | Some b ->
+          let n = used_size vm b.base in
+          let stop = n - n mod 3 in
+          let off = !previous in
+          if stop - off >= 3 * 2048 then begin
+            finish ();
+            let snapshot = Segment.snapshot ~off vm.segs.(b.base) (stop-off) in
+            let worker = start_pedersen Felt.pool snapshot in
+            pending := Some (b, off, snapshot, worker);
+            previous := stop
+          end
+      | None -> () in
+  Fun.protect ~finally:(fun () -> active := false; finish ()) (fun () -> execute submit)
+
 let with_preverified_pedersen vm execute =
-  match List.find_opt (fun b -> b.kind = Pedersen) vm.builtins with
-  | Some b when used_size vm b.base >= 3 * 2048 ->
-      let n = used_size vm b.base in
-      let snapshot = Segment.snapshot vm.segs.(b.base) n in
-      let worker = start_pedersen Felt.pool snapshot in
-      let result = try execute () with ex -> ignore (join_pedersen worker snapshot); raise ex in
-      if join_pedersen worker snapshot then begin
-        for i = 0 to n / 3 - 1 do
-          let off = 3 * i in
-          let a = sget snapshot off and c = sget snapshot (off + 1) and out = sget snapshot (off + 2) in
-          if Felt.is_felt a && Felt.is_felt c && Felt.is_felt out then cache_set b (off + 2) out
-        done
-      end;
-      result
-  | _ -> execute ()
+  with_pedersen_verifier (fun submit -> submit vm; execute ())
 
 external segment_full : seg -> int -> bool = "cvm_segment_full" [@@noalloc]
 

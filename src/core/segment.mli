@@ -30,8 +30,8 @@ val raw_set : seg -> int -> int -> unit
 val seg_grow : seg -> int -> seg
 (** A copy of the segment with the new (larger) capacity. *)
 
-val snapshot : seg -> int -> seg
-(** Copy the first [n] words into independent storage. *)
+val snapshot : ?off:int -> seg -> int -> seg
+(** Copy [n] words starting at [off] (default zero) into independent storage. *)
 
 val range_marked : bytes -> int -> int -> bool
 (** Whether any cell in a marked-address bitmap range is set. *)

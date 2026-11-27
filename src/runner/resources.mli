@@ -44,6 +44,10 @@ val check_used_cells : Runner.t -> unit
 val run_until_next_power_of_2 : Runner.t -> unit
 (** Step until the step count is a power of two. *)
 
+val with_pedersen_verifier : ((Vm.vm -> unit) -> 'a) -> 'a
+(** Scope a single VM's preverification jobs. Submit after loading each task.
+    Only one snapshot is in flight. All workers join on success or failure. *)
+
 val with_preverified_pedersen : Vm.vm -> (unit -> 'a) -> 'a
 (** Verify preloaded Pedersen triples concurrently with execution. *)
 

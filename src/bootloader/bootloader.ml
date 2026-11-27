@@ -24,7 +24,7 @@ let read_task j =
     | value -> fail "Unknown program hash function %s" value in
   { program; hash_function; pie }
 
-let initialize ?layout_def ~proof ~path cfg prog =
+let initialize ?(on_pie_loaded=ignore) ?layout_def ~proof ~path cfg prog =
   let input = Yojson.Safe.from_file path in
   let tasks = Array.of_list (U.to_list (U.member "tasks" input)) in
   let active = ref None and previous = ref None and address = ref Felt.empty in
@@ -78,6 +78,7 @@ let initialize ?layout_def ~proof ~path cfg prog =
           let return = vm.Vm.pc + pc "ret_pc_label" - pc "call_task" in
           Pie_run.load_subtask vm pie ~code:!address ~stack:(Felt.reloc 1 (vm.ap - List.length p.builtins))
             ~ret_fp:(Felt.reloc 1 vm.fp) ~ret_pc:(Felt.reloc vm.pc_seg return);
+          on_pie_loaded vm;
           (* Only metadata is needed for subsequent builtin and topology checks. *)
           active := Some { (current ()) with pie = Some { pie with memory = Bytes.empty } }) (current ()).pie;
       enter c.scopes [];
