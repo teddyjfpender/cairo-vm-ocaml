@@ -51,19 +51,19 @@ Deduced cells are written in the order `op0`, `op1`, `dst`. Arithmetic follows R
 `MaybeRelocatable` rules: pointer plus felt is a pointer, pointer minus pointer (same segment) is
 a felt, and multiplying a pointer is an error.
 
-## Three execution tiers
+## Two execution tiers
 
-The same semantics run at three speeds:
+The same semantics run at two speeds:
 
 | Tier | Where | Handles |
 | --- | --- | --- |
-| Native batch | `src/native/cpu_kernel.c` | up to 8,192 cached instructions per call, including common builtin inputs; stops at hints, uncached code, segment growth or unusual operands |
-| Fast path | `Cpu.run_fast` (OCaml) | an instruction whose operands are present, or whose only missing cell is the usual `dst`/`[ap]` |
+| Native batch | `src/native/cpu_kernel.c` | up to 8,192 cached instructions per call. It dispatches on the Stwo instruction shape, deduces `dst`, `op0` and builtin inputs (including big values written to range checks), and stops at the next hinted pc, uncached code, segment growth or anything unusual. |
 | Generic step | `Cpu.step` | everything else: full deduction, extensions, temporary segments, error reporting |
 
-The fast paths make no state change until they know they can finish the instruction. Anything
-unusual falls through to the generic step, which is the reference implementation. That's why
-the tiers can't disagree.
+`Cpu.run_fast` drives the loop. At a pc that carries hints it first runs the hints in OCaml,
+then hands that instruction to the kernel. When the kernel declines an instruction, it has
+changed nothing, and the generic step (the reference implementation) executes it instead.
+That's why the tiers can't disagree.
 
 ## Exercises
 
@@ -74,7 +74,7 @@ the tiers can't disagree.
 4. `[fp - 3] = [ap] + 5` runs with `[ap]` empty and `[fp - 3] = 12`. Which operand is missing,
    and what is deduced?
 5. Is `jmp rel [ap - 1] if [ap - 2] != 0` executable in v4.0.0?
-6. Why must the fast paths finish an instruction or change nothing at all?
+6. Why must the kernel either finish an instruction or change nothing at all?
 
 <details markdown>
 <summary>Solutions</summary>
@@ -94,8 +94,8 @@ the tiers can't disagree.
    `op0 = dst - op1 = 12 - 5 = 7`, so `[ap]` becomes 7.
 5. No. The only `jnz` shape with a Stwo component takes an immediate target (`off2 = 1`), so
    v4.0.0 rejects this with `Unsupported generic instruction`, and so does this VM.
-6. If a fast path changed registers or memory and then gave up, the generic step would rerun
-   the instruction from a modified state and could deduce different cells or report a different
+6. If the kernel changed registers or memory and then gave up, the generic step would rerun the
+   instruction from a modified state and could deduce different cells or report a different
    error. Finishing completely or leaving no trace keeps one source of truth.
 
 </details>

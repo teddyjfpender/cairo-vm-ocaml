@@ -3,6 +3,59 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Apple M5 Max, Rust cairo-vm v4.0.0 (main at de4c6ca)
+
+After the secp field kernel, lazy-reduction Poseidon, the shape-dispatched native kernel and
+cheaper hint dispatch. Best of three wall-clock runs per program, `--layout all_cairo
+--print_output`. Every row's stdout (and, when traced, trace and memory files) matched
+byte for byte.
+
+**Execution and printed output** (mean of per-program speedups: 6.4×)
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 0.366 | 0.070 | 5.23× |
+| big_fibonacci | 0.324 | 0.049 | 6.56× |
+| blake2s_integration_benchmark | 0.395 | 0.091 | 4.32× |
+| compare_arrays_200000 | 0.388 | 0.040 | 9.62× |
+| dict_integration_benchmark | 0.318 | 0.074 | 4.33× |
+| integration_builtins | 0.511 | 0.063 | 8.10× |
+| keccak_integration_benchmark | 0.505 | 0.119 | 4.24× |
+| linear_search | 0.374 | 0.041 | 9.24× |
+| math_cmp_and_pow_integration_benchmark | 0.387 | 0.063 | 6.13× |
+| math_integration_benchmark | 0.351 | 0.055 | 6.41× |
+| memory_integration_benchmark | 0.261 | 0.051 | 5.09× |
+| operations_with_data_structures_benchmarks | 0.366 | 0.051 | 7.12× |
+| pedersen | 0.155 | 0.014 | 11.08× |
+| poseidon_integration_benchmark | 0.215 | 0.091 | 2.35× |
+| secp_integration_benchmark | 0.461 | 0.102 | 4.50× |
+| set_integration_benchmark | 0.203 | 0.024 | 8.52× |
+| uint256_integration_benchmark | 0.480 | 0.083 | 5.76× |
+| **Total** | **6.060** | **1.082** | **5.60×** |
+
+**Execution, printed output, trace and memory files**
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 0.689 | 0.144 | 4.77× |
+| big_fibonacci | 0.616 | 0.119 | 5.16× |
+| blake2s_integration_benchmark | 0.571 | 0.128 | 4.46× |
+| compare_arrays_200000 | 0.676 | 0.101 | 6.68× |
+| dict_integration_benchmark | 0.501 | 0.112 | 4.48× |
+| integration_builtins | 0.757 | 0.117 | 6.48× |
+| keccak_integration_benchmark | 0.695 | 0.155 | 4.47× |
+| linear_search | 0.695 | 0.105 | 6.60× |
+| math_cmp_and_pow_integration_benchmark | 0.618 | 0.113 | 5.45× |
+| math_integration_benchmark | 0.556 | 0.108 | 5.14× |
+| memory_integration_benchmark | 0.448 | 0.094 | 4.79× |
+| operations_with_data_structures_benchmarks | 0.545 | 0.091 | 6.01× |
+| pedersen | 0.193 | 0.026 | 7.28× |
+| poseidon_integration_benchmark | 0.266 | 0.105 | 2.53× |
+| secp_integration_benchmark | 0.605 | 0.132 | 4.59× |
+| set_integration_benchmark | 0.248 | 0.036 | 6.85× |
+| uint256_integration_benchmark | 0.769 | 0.144 | 5.35× |
+| **Total** | **9.448** | **1.831** | **5.16×** |
+
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at de7216b)
 
 Best of three wall-clock runs per program, `--layout all_cairo --print_output`, same

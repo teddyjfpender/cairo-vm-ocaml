@@ -32,7 +32,7 @@ Artifacts / Air / Pie            relocation, trace and memory files, AIR inputs,
 | `Instruction` | decoding, validation, the v4.0.0 Stwo-shape classifier | packed `int` |
 | `Vm` | machine state, write-once memory, temporary segments, value arithmetic | `vm` |
 | `Deduce` | builtin auto-deduction with per-instance caches | |
-| `Cpu` | the generic step, the fast loop, the bridge to the C kernel | |
+| `Cpu` | the generic step and the run loop that drives the C kernel | |
 | `Hintrt` | hint context: `ids` bindings, ap tracking, scopes, monomorphic tables | `ctx`, `dyn` |
 | `Hints`, `Hints_*` | native implementations of cairo-lang hints | |
 | `Runner`, `Resources`, `Finalize`, `Artifacts` | run phases, proof-mode accounting, end checks, outputs | `Runner.t` |
@@ -41,9 +41,9 @@ Artifacts / Air / Pie            relocation, trace and memory files, AIR inputs,
 ## Design choices
 
 **Correctness first, then speed.** `Cpu.step` is a direct implementation of the semantics: it
-follows a formal executable model (in Lean) of the Rust VM. The fast loop and the C kernel
-handle only cases they can complete. Everything else goes through the step, so the fast tiers
-can't introduce new behaviour.
+follows a formal executable model (in Lean) of the Rust VM. The C kernel handles only
+instructions it can complete, and changes nothing when it declines one. Everything else goes
+through the step, so the fast tier can't introduce new behaviour.
 
 **Values as immediates.** Tagged ints (chapter 2) mean memory is a flat array of machine words,
 the GC has nothing to do, and the C kernel reads OCaml memory directly.
@@ -62,7 +62,7 @@ checked against the Rust CLI with `test/parity.py`.
 ## Exercises
 
 1. Starting from `bin/main.ml`, find where a hint attached to a `pc` is executed during a run.
-   Which tier hands control back to OCaml for it?
+   Which part of the loop hands control back to OCaml for it?
 2. In `src/core/deduce.ml`, find the cache that keeps the Poseidon builtin from computing the
    same permutation twice when a program reads all three outputs.
 3. `Segment.sget` returns `Felt.t` but `Segment.raw_get` returns `int`. Which module uses
@@ -73,9 +73,10 @@ checked against the Rust CLI with `test/parity.py`.
 <details markdown>
 <summary>Solutions</summary>
 
-1. `Runner.run_until_end` calls `Cpu.run`. In `Cpu.run_fast`, a cached instruction word with the
-   hint bit set makes the C batch stop at that `pc`. OCaml then runs the compiled hint closures
-   before executing the instruction.
+1. `Runner.run_until_end` calls `Cpu.run`, which calls `Cpu.run_fast`. A cached instruction word
+   with the hint bit set makes the C batch stop before that `pc`. `run_fast` runs the compiled
+   hint closures in OCaml, then calls the kernel again, which executes the hinted instruction
+   itself.
 2. Each `builtin` record has a `cache : Felt.t array` indexed by cell offset. `Felt.poseidon`
    returns all three outputs, and `cache_outputs` stores them, so later reads of the other two
    outputs hit the cache.

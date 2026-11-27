@@ -2,7 +2,7 @@
 
 A Cairo virtual machine written in OCaml with [OxCaml](https://oxcaml.org/). It is a drop-in
 replacement for the `cairo-vm-cli` of [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm)
-v4.0.0: same flags, byte-identical outputs, about four times faster.
+v4.0.0: same flags, byte-identical outputs, more than five times faster.
 
 ## What you'll find here
 
@@ -17,7 +17,8 @@ v4.0.0: same flags, byte-identical outputs, about four times faster.
 
 ## At a glance
 
-- **Speed:** 4.2× the Rust CLI on its 17 benchmarks; 10× on the Pedersen benchmark.
+- **Speed:** 5.6× the Rust CLI on its 17 benchmarks (5.2× with trace and memory files); up to
+  11× on single programs.
 - **Parity:** across the upstream test corpus, every output (stdout, trace, memory, AIR
   inputs, PIE archives) is identical, in execution and proof mode.
 - **Coverage:** every builtin, every v4.0.0 layout including `dynamic`, and the Blake and
