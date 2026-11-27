@@ -4,25 +4,18 @@ open Casm_segments
 
 (* Starknet's Blake2Felt252 packs the big-endian limbs of each field
    element as little-endian u32 words before applying BLAKE2s-256. *)
+external blake_fields : Felt.pool -> Felt.t array -> int -> int -> bytes -> unit
+  = "cvm_blake_fields" [@@noalloc]
+
+let blake_slice data start length =
+  if start < 0 || length < 0 || start > Array.length data - length then fail "Invalid class hash slice";
+  let bytes = Bytes.create 32 in
+  blake_fields Felt.pool data start length bytes;
+  Felt.of_z (Z.of_bits (Bytes.unsafe_to_string bytes))
+
 let blake fields =
-  let state = ref (Blake2s.modified_iv ()) and block = Array.make 16 0 in
-  let size = ref 0 and bytes = ref 0 in
-  let compress final =
-    bytes := !bytes + 4 * !size;
-    state := Blake2s.compress !state block (!bytes land m32) (!bytes lsr 32) final 0 in
-  let push word =
-    if !size = 16 then begin compress 0; size := 0 end;
-    block.(!size) <- word; incr size in
-  List.iter (fun field ->
-      let z = Felt.to_z field in
-      let words = if Z.numbits z <= 63 then 2 else 8 in
-      for i = words - 1 downto 0 do
-        let word = Z.to_int (Z.extract z (32*i) 32) in
-        push (if i = 7 then word lor (1 lsl 31) else word)
-      done) fields;
-  Array.fill block !size (16 - !size) 0;
-  compress m32;
-  Felt.of_z (Array.fold_right (fun word upper -> Z.(logor (shift_left upper 32) (of_int word))) !state Z.zero)
+  let data = Array.of_list fields in
+  blake_slice data 0 (Array.length data)
 
 let register ~accessed ~structures reg =
   let current c = match var c.scopes "class_segment" with
@@ -62,5 +55,5 @@ let register ~accessed ~structures reg =
       exit_scope c.scopes;
       if not (Felt.equal (get_felt vm c "hash") (get_member vm c "compiled_class_fact" ["hash"])) then
         fail "Inconsistent compiled class hash");
-  reg "SetApToSegmentHashBlake" (fun c vm -> write_ap vm (hash blake (current c)));
-  reg "SetApToSegmentHashPoseidon" (fun c vm -> write_ap vm (hash Os_block_hash.hash_many (current c)))
+  reg "SetApToSegmentHashBlake" (fun c vm -> write_ap vm (hash ~leaf:blake_slice blake (current c)));
+  reg "SetApToSegmentHashPoseidon" (fun c vm -> write_ap vm (hash ~leaf:(fun data start n -> Os_block_hash.hash_many (Array.sub data start n |> Array.to_list)) Os_block_hash.hash_many (current c)))

@@ -20,9 +20,9 @@ let of_json words lengths =
   if !next <> Array.length data then fail "Class segments do not cover bytecode";
   result
 
-let rec hash digest node =
+let rec hash ~leaf digest node =
   match node.contents with
-  | Words (data,start) -> digest (Array.sub data start node.length |> Array.to_list)
+  | Words (data,start) -> leaf data start node.length
   | Children nodes ->
-      let fields = List.concat_map (fun c -> [Felt.small c.length; hash digest c]) nodes in
+      let fields = List.concat_map (fun c -> [Felt.small c.length; hash ~leaf digest c]) nodes in
       Felt.add Felt.one (digest fields)
