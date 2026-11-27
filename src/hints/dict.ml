@@ -76,7 +76,7 @@ let register reg =
       let idx = Felt_tbl.create 64 in
       let order = ref [] in
       for i = 0 to n - 1 do
-        let key = canon (mem_at vm address (3 * i)) in
+        let key = mem_at vm address (3 * i) in
         (match Felt_tbl.find_opt idx key with
         | Some l -> Felt_tbl.replace idx key (i :: l)
         | None ->
@@ -151,20 +151,20 @@ let register reg =
   reg C.dict_read (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "dict_ptr") in
       incr_ptr t;
-      set_val vm c "value" (dict_lookup t (canon (get_val vm c "key"))));
+      set_val vm c "value" (dict_lookup t (get_val vm c "key")));
   (* dict_write *)
   reg C.dict_write (fun c vm ->
       let dp = get_ptr vm c "dict_ptr" in
       let t = get_tracker c.scopes dp in
       incr_ptr t;
-      let key = canon (get_val vm c "key") in
+      let key = get_val vm c "key" in
       let prev = dict_lookup t key in
       write_checked vm (Felt.rseg dp) (Felt.roff dp + 1) prev;
       dict_set t key (get_val vm c "new_value"));
   (* dict_update *)
   reg C.dict_update (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "dict_ptr") in
-      let key = canon (get_val vm c "key") in
+      let key = get_val vm c "key" in
       let cur = dict_lookup t key in
       let prev = get_val vm c "prev_value" in
       if not (Felt.equal cur prev) then

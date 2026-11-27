@@ -26,3 +26,18 @@ let () =
   done;
   List.iter (fun a -> List.iter (fun b ->
     assert (sign (Hintrt.compare_values a b) = sign (ordering a b))) !values) !values
+
+let () =
+  let z = Z.shift_left Z.one 186 in
+  let outer = Felt.intern (Felt.of_z z) in
+  let first = !Felt.pool_n in
+  (match Felt.with_temporary_slots (fun () ->
+       let inner = Felt.intern (Felt.of_z z) in
+       assert (inner <> outer && Felt.intern (Felt.of_z z) = inner);
+       raise Exit) with exception Exit -> () | _ -> assert false);
+  assert (!Felt.pool_n = first && Felt.intern (Felt.of_z z) = outer);
+  Felt.with_temporary_slots (fun () ->
+      let original = Felt.of_z z in
+      let copy = Felt.of_z z in
+      let map = Hintrt.Dict_changes.singleton original Felt.one in
+      assert (original <> copy && Hintrt.Dict_changes.find copy map = Felt.one))

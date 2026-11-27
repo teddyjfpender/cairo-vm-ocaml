@@ -5,7 +5,7 @@ module U = Yojson.Safe.Util
 
 let state_entry c vm key =
     let tracker = Dict.get_tracker c.scopes (get_ptr vm c "contract_state_changes") in
-    set_val vm c "state_entry" (Dict.dict_lookup tracker (canon key))
+    set_val vm c "state_entry" (Dict.dict_lookup tracker key)
 
 let register ~block ~felt reg =
   let initial () = U.member "initial_reads" (block ()) in
@@ -42,7 +42,7 @@ let register ~block ~felt reg =
       List.iter (fun addr ->
           let nonce = lookup nonces "nonce" addr and hash = lookup classes "class hash" addr in
           let storage = Felt.reloc (Vm.add_segment vm) 0 in
-          Felt_tbl.add entries (canon addr) (gen_arg vm [hash; storage; nonce])) all;
+          Felt_tbl.add entries addr (gen_arg vm [hash; storage; nonce])) all;
       set c.scopes "initial_dict" (Initial_dict entries));
   reg "InitializeClassHashes" (fun c _ ->
       set c.scopes "initial_dict" (Initial_dict (mapping (initial ()) "compiled_class_hashes")));

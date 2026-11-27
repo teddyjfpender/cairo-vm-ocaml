@@ -79,7 +79,7 @@ let register ~set_pages reg =
       set c.scopes "initial_dict" (Initial_dict dict));
   reg "GetPrevOffset" (fun c vm ->
       let tracker = Dict.get_tracker c.scopes (get_ptr vm c "dict_ptr") in
-      set_val vm c "prev_offset" (Dict.dict_lookup tracker (canon (get_val vm c "bucket_index"))));
+      set_val vm c "prev_offset" (Dict.dict_lookup tracker (get_val vm c "bucket_index")));
   reg "SetDecompressedDst" (fun c vm ->
       let base = get_z vm c "elm_bound" in
       if Z.equal base Z.zero then fail "Zero decompression bound";

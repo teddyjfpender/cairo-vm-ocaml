@@ -98,10 +98,6 @@ let pool_n = ref scratch
 (* A standalone run returning only serialized results can reuse its slots.
    The caller owns the single VM thread and joins all artifact readers before
    leaving this scope. Values from surrounding live VMs lie below [first]. *)
-let with_temporary_slots f =
-  let first = !pool_n in
-  Fun.protect ~finally:(fun () -> pool_n := first) f
-
 (* Fail unless slots [pool_n .. pool_n + k) exist. *)
 let[@inline] reserve k = if !pool_n + k > capacity then raise Out_of_memory
 
@@ -135,6 +131,26 @@ external c_big_hash : pool -> (int[@untagged]) -> (int[@untagged])
    valid hash. Big felts hash their limbs. *)
 let[@inline] mix x = let h = x * 0x9E3779B97F4A7C1 in h lxor (h lsr 29)
 let hash v = if is_big v then c_big_hash pool v else mix v
+
+module Keys = Hashtbl.Make (struct
+  type t = int
+  let equal = equal
+  let hash = hash
+end)
+
+let interned = ref (Keys.create 64)
+
+let intern v =
+  if not (is_big v) then v else
+    match Keys.find_opt !interned v with
+    | Some existing -> existing
+    | None -> Keys.add !interned v v; v
+
+let with_temporary_slots f =
+  let first = !pool_n and previous = !interned in
+  interned := Keys.create 16;
+  Fun.protect ~finally:(fun () -> interned := previous; pool_n := first) f
+
 
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 
