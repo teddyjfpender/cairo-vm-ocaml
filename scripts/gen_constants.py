@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate src/constants.h from the pinned Rust dependency sources (provenance:
+"""Generate src/native/constants.h from the pinned Rust dependency sources (provenance:
 starknet-curve 0.6.0 curve_params.rs and lambdaworks-crypto 0.13.0 poseidon/starknet/parameters.rs)."""
 import re, sys, glob, os
 reg = glob.glob(os.path.expanduser('~/.cargo/registry/src/*/'))[0]

@@ -1,0 +1,12 @@
+(rule
+ (target pedersen_table.h)
+ (deps constants.h)
+ (action
+  (with-stdout-to %{target}
+   (run %{exe:../../scripts/gen_pedersen_table.exe} %{dep:constants.h}))))
+
+(rule
+ (target native_flags.sexp)
+ (action
+  (with-stdout-to %{target}
+   (run %{exe:../../scripts/native_flags.exe} %{ocaml-config:architecture}))))
