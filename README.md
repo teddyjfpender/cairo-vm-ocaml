@@ -1,8 +1,10 @@
 # cairo-vm-ocaml
 
 A fast CairoZero virtual machine written in OCaml, built with [OxCaml](https://oxcaml.org/).
-The native runner produced byte-identical trace and memory files to upstream
-Rust cairo-vm 3.2.0 on all 17 CairoZero benchmark programs below.
+It targets [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm) **v4.0.0**:
+outputs, trace and memory files are byte-identical to the Rust CLI on all 155 programs of
+the upstream test corpus that Rust runs successfully (`test/parity.py`), including the
+Stwo-only instruction set enforced since v4.0.0. Results below name the Rust version they measured.
 
 ## Results
 

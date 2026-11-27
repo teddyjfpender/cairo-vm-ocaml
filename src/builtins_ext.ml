@@ -1,5 +1,5 @@
 (* Signature (ecdsa) and modular arithmetic (add_mod / mul_mod) builtins, as
-   in cairo-vm v3.2.0:
+   in cairo-vm v4.0.0:
      vm/src/vm/runners/builtin_runner/signature.rs
      vm/src/vm/runners/builtin_runner/modulo.rs
    Signatures are hint-supplied witnesses: the validation rule verifies them
@@ -136,7 +136,7 @@ let values_ptr_offset = 4
 let offsets_ptr_offset = 5
 let n_offset = 6
 
-(* Every v3.2.0 layout with mod builtins uses ModInstanceDef(_, 1, 96). *)
+(* Every v4.0.0 layout with mod builtins uses ModInstanceDef(_, 1, 96). *)
 let batch_size (_ : builtin) = 1
 let word_bit_len (_ : builtin) = 96
 

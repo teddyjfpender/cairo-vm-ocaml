@@ -26,7 +26,10 @@ let compare flags offsets cells imm =
   let raw = encode flags dst a b in
   let words = [|Felt.of_z raw;imm|] in
   let vm = make_vm words cells and reference = make_vm words cells in
-  let d = decode_word raw in
+  (* shapes without a Stwo opcode component are rejected at decode since cairo-vm v4.0.0 *)
+  match decode_word raw with
+  | exception Generic_instruction -> ()
+  | d ->
   let registers = [|0;8;6;vm.hi.(1);0;!Felt.pool_n;0;0;0|] in
   Felt.reserve 1;
   let steps = cpu_batch registers [|d;0;0;0|] vm.segs vm.seg_flag vm.hi vm.trace !Felt.pool 3 true [||] [||] in

@@ -1,6 +1,6 @@
 (* Hints outside the original builtin set: math/uint256 variants, Blake2s,
    SHA-256, cairo_keccak/keccak_utils variants and temporary segments.
-   Each implementation mirrors lambdaclass/cairo-vm v3.2.0 (including where
+   Each implementation mirrors starkware-libs/cairo-vm v4.0.0 (including where
    it deliberately departs from the Python hint text, e.g. hard-coded padding
    sizes), and is matched by the exact code string in Hint_codes_misc. *)
 
@@ -116,8 +116,7 @@ let register () =
       set_val vm c "is_small" (of_bool (Z.lt addr bound)));
   reg C.sqrt (fun c vm ->
       let v = get_z vm c "value" in
-      (* cairo-vm rejects only values strictly above 2**250 *)
-      if Z.gt v (two_pow 250) then fail "Value: %s is outside valid range [0, 2**250)" (Z.to_string v);
+      if Z.geq v (two_pow 250) then fail "Value: %s is outside valid range [0, 2**250)" (Z.to_string v);
       set_val vm c "root" (Felt.of_z (Z.sqrt v)));
   reg C.a_b_bitand_1 (fun c vm ->
       let a = get_z vm c "a" and b = get_z vm c "b" in

@@ -1,7 +1,7 @@
 (* secp256k1 / secp256r1 / ed25519 / Stark-curve EC, bigint, uint384, uint512,
    vrf, garaga and field-arithmetic hints.
 
-   Each hint mirrors the cairo-vm v3.2.0 Rust implementation (the parity
+   Each hint mirrors the cairo-vm v4.0.0 Rust implementation (the parity
    reference), including where it deviates from the Python hint text:
    - BigInt3/EcPoint/Uint384/... operands are read as consecutive limbs from
      the variable's address (get_relocatable_from_var_name), not by member name.

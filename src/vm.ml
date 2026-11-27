@@ -1,7 +1,7 @@
 (* Cairo CPU, memory and builtins.
 
    Semantics follow a formal executable model of
-   lambdaclass/cairo-vm v3.2.0: operand addresses are computed from the
+   starkware-libs/cairo-vm v4.0.0: operand addresses are computed from the
    original memory, missing op0/op1 are first deduced by the owning builtin,
    then by the Stone inverse rules; dst is deduced only from res (ASSERT_EQ) or
    fp (CALL).  Deduced cells are written in op0, op1, dst order. *)
@@ -583,6 +583,34 @@ let ext_mask = 3 lsl ext_shift
 let two_128 = Z.shift_left Z.one 128
 let low_63 = Z.pred (Z.shift_left Z.one 63)
 
+exception Generic_instruction
+
+(* cairo-vm v4.0.0 classify_instruction: only the instruction shapes that have a
+   dedicated Stwo opcode component are executable.  Field codes as packed below:
+   op1 0 op0/1 imm/2 fp/3 ap; res 0 op1/1 add/2 mul/3 unconstrained;
+   pc 0 regular/1 jump/2 jump_rel/3 jnz; ap 0 regular/1 add/2 add1/3 add2;
+   opcode 0 nop/1 call/2 ret/3 assert_eq; dst/op0 registers 0 ap/1 fp. *)
+let stwo_supported ~ext o0 o1 o2 dst op0 op1 res pc ap opc =
+  let ap01 = ap = 0 || ap = 2 and reg = op1 = 2 || op1 = 3 and fp_fp = dst = 1 && op0 = 1 in
+  (op1 <> 1 || o2 = 1)
+  &&
+  match ext with
+  | 0 -> (
+      match opc with
+      | 2 -> o0 = -2 && o1 = -1 && o2 = -1 && fp_fp && op1 = 2 && res = 0 && pc = 1 && ap = 0
+      | 1 -> o0 = 0 && o1 = 1 && dst = 0 && op0 = 0 && res = 0 && ap = 3 && ((op1 = 1 && pc = 2) || (reg && pc = 1))
+      | 3 ->
+          pc = 0 && ap01
+          && ((res = 0 && (op1 = 0 || (o1 = -1 && op0 = 1 && op1 <> 0))) || ((res = 1 || res = 2) && op1 <> 0))
+      | _ ->
+          (* ap += x; jmp rel x; jmp abs [reg + o2]; jmp abs [[reg + o1] + o2]; jnz *)
+          (o0 = -1 && dst = 1 && res = 0
+          && ((o1 = -1 && op0 = 1 && op1 <> 0 && ((pc = 0 && ap = 1) || (pc = 2 && ap01) || (pc = 1 && reg && ap01)))
+             || (pc = 1 && op1 = 0 && ap01)))
+          || (o1 = -1 && op0 = 1 && op1 = 1 && res = 3 && pc = 3 && ap01))
+  | 1 | 2 -> opc = 0 && reg && res = 0 && pc = 0 && ap01
+  | _ -> opc = 3 && op1 <> 0 && (res = 1 || res = 2) && pc = 0 && ap01
+
 let decode_word (w : Z.t) =
   if Z.geq w two_128 then fail "Invalid instruction encoding (does not fit in 128 bits)";
   let ext =
@@ -612,14 +640,15 @@ let decode_word (w : Z.t) =
   let pcc = match pcu with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
   let apc = if apu = 0 then (if opc = 1 then 3 else 0) else if apu = 1 then 1 else 2 in
   let opcc = match opc with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
-  (* cairo-vm v3.2.0 decoder: flag restrictions of the Stwo extensions *)
+  (* cairo-vm decoder: flag restrictions of the Stwo extensions *)
   if (ext = 1 || ext = 2)
      && not (opc = 0 && (op1 = 2 || op1 = 4) && res = 0 && pcu = 0 && (apu = 0 || apu = 2)) then
     fail "Invalid Blake2s flags: %d" flags;
   if ext = 3
      && not ((res = 1 || res = 2) && op1 <> 0 && pcu = 0 && opc = 4 && (apu = 0 || apu = 2)) then
     fail "Invalid QM31 add/mul flags: %d" flags;
-  if op1c = 1 && off2 <> 0x8001 then fail "Invalid immediate offset (op1 immediate requires off2 = 1)";
+  if not (stwo_supported ~ext (off0 - 0x8000) (off1 - 0x8000) (off2 - 0x8000) dst op0 op1c resc pcc apc opcc) then
+    raise Generic_instruction;
   (ext lsl ext_shift) lor off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
   lor (pcc lsl 54) lor (apc lsl 56) lor (opcc lsl 58) lor (1 lsl 60)
 
@@ -627,7 +656,9 @@ let decode_at vm seg off =
   let v = get vm seg off in
   if v = 0 then fail "Instruction at %d:%d is not assigned (UnknownMemoryCell)" seg off;
   if not (is_felt v) then fail "Instruction at %d:%d is a relocatable value" seg off;
-  decode_word (Felt.to_z v)
+  let z = Felt.to_z v in
+  try decode_word z
+  with Generic_instruction -> fail "Unsupported generic instruction at pc %d:%d: 0x%s" seg off (Z.format "%x" z)
 
 let[@inline never] fetch_slow vm =
   if vm.pc_seg = 0 then begin

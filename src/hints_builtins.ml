@@ -1,4 +1,4 @@
-(* Hints driving the signature and mod builtins (cairo-vm v3.2.0
+(* Hints driving the signature and mod builtins (cairo-vm v4.0.0
    hint_processor/builtin_hint_processor/{signature,mod_circuit}.rs). *)
 
 open Vm

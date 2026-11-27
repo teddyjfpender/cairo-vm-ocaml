@@ -1,4 +1,4 @@
-(* Execution-mode runner, mirroring cairo-vm v3.2.0's cairo_run for non-proof mode. *)
+(* Execution-mode runner, mirroring cairo-vm v4.0.0's cairo_run for non-proof mode. *)
 
 open Vm
 

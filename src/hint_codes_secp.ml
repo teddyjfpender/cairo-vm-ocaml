@@ -1,5 +1,5 @@
 (* Hint code strings for the secp/EC/bigint/uint384/uint512/vrf/field-arithmetic
-   families, byte-exact copies of cairo-vm v3.2.0 hint_code.rs (indoc applied).
+   families, byte-exact copies of cairo-vm v4.0.0 hint_code.rs (indoc applied).
    Generated; the cairo0_* codes come from secp/cairo0_hints.rs and are only
    dispatched by Rust with the `cairo-0-secp-hints` feature. *)
 

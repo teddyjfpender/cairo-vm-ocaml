@@ -28,7 +28,7 @@ let () =
   let fill_holes = ref false in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
-  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 3.2.0 (OCaml)"; exit 0 in
+  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OCaml)"; exit 0 in
   let bool_of s = match s with "true" -> true | "false" -> false | _ -> raise (Arg.Bad ("expected true|false: " ^ s)) in
   let spec =
     [

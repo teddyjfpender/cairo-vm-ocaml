@@ -1,4 +1,4 @@
-(* Stwo opcode extensions of cairo-vm v3.2.0: Blake, BlakeFinalize and
+(* Stwo opcode extensions of cairo-vm v4.0.0: Blake, BlakeFinalize and
    QM31Operation.
 
    Decoding (Vm.decode_word) already enforces the extension flag rules, so an

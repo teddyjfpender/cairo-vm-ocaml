@@ -1,4 +1,4 @@
-(* Hint code strings, byte-exact copies of cairo-vm v3.2.0 hint_code.rs (generated). *)
+(* Hint code strings, byte-exact copies of cairo-vm v4.0.0 hint_code.rs (generated). *)
 let assert_le_felt_v_0_6 = {rs|from starkware.cairo.common.math_utils import assert_integer
 assert_integer(ids.a)
 assert_integer(ids.b)
