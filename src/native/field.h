@@ -33,23 +33,47 @@ static inline int geq_p(const u64 a[4]) {
   return a[0] >= 1;
 }
 
+#define ALWAYS_INLINE static inline __attribute__((always_inline))
+/* Add with carry and subtract with borrow: the builtins where available
+   (clang, GCC >= 14), otherwise portable 128-bit sums that compilers lower
+   to adds/adcs or add/adc. Carries and borrows are 0 or 1. */
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_addcll) && __has_builtin(__builtin_subcll)
+#define HAVE_ADDCLL 1
+#endif
+#endif
+#ifdef HAVE_ADDCLL
+#define ADC(r, a, b, cin, cout) r = __builtin_addcll(a, b, cin, &cout)
+#define SBB(r, a, b, bin, bout) r = __builtin_subcll(a, b, bin, &bout)
+#else
+static inline unsigned long long adc64(unsigned long long a, unsigned long long b,
+                                       unsigned long long cin, unsigned long long *cout) {
+  u128 s = (u128)a + b + cin;
+  *cout = (unsigned long long)(s >> 64);
+  return (unsigned long long)s;
+}
+static inline unsigned long long sbb64(unsigned long long a, unsigned long long b,
+                                       unsigned long long bin, unsigned long long *bout) {
+  u128 d = (u128)a - b - bin;
+  *bout = (unsigned long long)(d >> 127);
+  return (unsigned long long)d;
+}
+#define ADC(r, a, b, cin, cout) r = adc64(a, b, cin, &cout)
+#define SBB(r, a, b, bin, bout) r = sbb64(a, b, bin, &bout)
+#endif
+
 static inline u64 sub4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 borrow = 0;
-  for (int i = 0; i < 4; i++) {
-    u128 d = (u128)a[i] - b[i] - borrow;
-    r[i] = (u64)d;
-    borrow = (u64)(d >> 64) & 1;
-  }
-  return borrow;
+  unsigned long long c;
+  SBB(r[0], a[0], b[0], 0, c); SBB(r[1], a[1], b[1], c, c);
+  SBB(r[2], a[2], b[2], c, c); SBB(r[3], a[3], b[3], c, c);
+  return c;
 }
 
 static inline u64 add4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u128 c = 0;
-  for (int i = 0; i < 4; i++) {
-    c = (u128)a[i] + b[i] + (u64)(c >> 64);
-    r[i] = (u64)c;
-  }
-  return (u64)(c >> 64);
+  unsigned long long c;
+  ADC(r[0], a[0], b[0], 0, c); ADC(r[1], a[1], b[1], c, c);
+  ADC(r[2], a[2], b[2], c, c); ADC(r[3], a[3], b[3], c, c);
+  return c;
 }
 
 static inline void fadd(u64 r[4], const u64 a[4], const u64 b[4]) {
