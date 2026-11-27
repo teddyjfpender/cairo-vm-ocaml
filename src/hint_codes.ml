@@ -321,83 +321,8 @@ ids.next_item_index = current_pos - last_pos
 last_pos = current_pos + 1|}
 let h61 = {|memory[ap] = to_felt_or_relocatable(ids.elements_end - ids.elements >= 10)|}
 let h62 = {|memory[ap] = to_felt_or_relocatable(ids.elements_end - ids.elements >= 2)|}
-let h63 = {|from starkware.cairo.common.cairo_secp.secp_utils import split
-
-segments.write_arg(ids.res.address_, split(value))|}
 let h64 = {|ids.low = (ids.x.d0 + ids.x.d1 * ids.BASE) & ((1 << 128) - 1)|}
-let h65 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-q, r = divmod(pack(ids.val, PRIME), SECP_P)
-assert r == 0, f"verify_zero: Invalid input {ids.val.d0, ids.val.d1, ids.val.d2}."
-ids.q = q % PRIME|}
-let h66 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-x = pack(ids.x, PRIME) % SECP_P|}
-let h67 = {|memory[ap] = to_felt_or_relocatable(x == 0)|}
-let h68 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P
-from starkware.python.math_utils import div_mod
-
-value = x_inv = div_mod(1, x, SECP_P)|}
-let h69 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-value = pack(ids.x, PRIME) % SECP_P|}
-let h70 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-y = pack(ids.point.y, PRIME) % SECP_P
-# The modulo operation in python always returns a nonnegative number.
-value = (-y) % SECP_P|}
-let h71 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-from starkware.python.math_utils import ec_double_slope
-
-# Compute the slope.
-x = pack(ids.point.x, PRIME)
-y = pack(ids.point.y, PRIME)
-value = slope = ec_double_slope(point=(x, y), alpha=0, p=SECP_P)|}
-let h72 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-from starkware.python.math_utils import line_slope
-
-# Compute the slope.
-x0 = pack(ids.point0.x, PRIME)
-y0 = pack(ids.point0.y, PRIME)
-x1 = pack(ids.point1.x, PRIME)
-y1 = pack(ids.point1.y, PRIME)
-value = slope = line_slope(point1=(x0, y0), point2=(x1, y1), p=SECP_P)|}
-let h73 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-slope = pack(ids.slope, PRIME)
-x = pack(ids.point.x, PRIME)
-y = pack(ids.point.y, PRIME)
-
-value = new_x = (pow(slope, 2, SECP_P) - 2 * x) % SECP_P|}
-let h74 = {|value = new_y = (slope * (x - new_x) - y) % SECP_P|}
-let h75 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-slope = pack(ids.slope, PRIME)
-x0 = pack(ids.point0.x, PRIME)
-x1 = pack(ids.point1.x, PRIME)
-y0 = pack(ids.point0.y, PRIME)
-
-value = new_x = (pow(slope, 2, SECP_P) - x0 - x1) % SECP_P|}
-let h76 = {|value = new_y = (slope * (x0 - new_x) - y0) % SECP_P|}
 let h77 = {|memory[ap] = (ids.scalar % PRIME) % 2|}
-let h78 = {|from starkware.cairo.common.cairo_secp.secp_utils import N, pack
-from starkware.python.math_utils import div_mod, safe_div
-
-a = pack(ids.a, PRIME)
-b = pack(ids.b, PRIME)
-value = res = div_mod(a, b, N)|}
-let h79 = {|value = k = safe_div(res * b - a, N)|}
-let h80 = {|from starkware.cairo.common.cairo_secp.secp_utils import SECP_P, pack
-
-x_cube_int = pack(ids.x_cube, PRIME) % SECP_P
-y_square_int = (x_cube_int + ids.BETA) % SECP_P
-y = pow(y_square_int, (SECP_P + 1) // 4, SECP_P)
-
-# We need to decide whether to take y or SECP_P - y.
-if ids.v % 2 == y % 2:
-    value = y
-else:
-    value = (-y) % SECP_P|}
 let h81 = {|assert ids.elm_size > 0
 assert ids.set_ptr <= ids.set_end_ptr
 elm_list = memory.get_range(ids.elm_ptr, ids.elm_size)

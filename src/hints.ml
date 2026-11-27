@@ -15,21 +15,6 @@ let mask n = Z.pred (two_pow n)
 let pz = Felt.p
 let check b msg = if not b then fail "%s" msg
 
-let secp_p = Z.of_string "115792089237316195423570985008687907853269984665640564039457584007908834671663"
-let secp_n = Z.of_string "115792089237316195423570985008687907852837564279074904382605163141518161494337"
-
-let div_mod n m p =
-  let inverse = try Z.invert m p with Division_by_zero -> fail "div_mod: not invertible" in
-  Z.erem (Z.mul n inverse) p
-
-let pack vm ctx name path =
-  let limb k = as_int (get_member_z vm ctx name (path @ [ k ])) in
-  Z.add (limb "d0") (Z.add (Z.shift_left (limb "d1") 86) (Z.shift_left (limb "d2") 172))
-
-let split3 num =
-  check (Z.sign num >= 0 && Z.numbits num <= 258) "split: value too large";
-  [Z.extract num 0 86; Z.extract num 86 86; Z.extract num 172 86]
-
 let read_uint256 vm c name =
   let low = get_member_z vm c name [ "low" ] in
   let high = get_member_z vm c name [ "high" ] in
@@ -828,85 +813,10 @@ let find_set_element cache vm base total elm =
 let () =
   let setz c n v = set c.scopes n (Int v) in
   let getz c n = var_z c.scopes n in
-  reg H.h63 (fun c vm ->
-      write_arg vm (get_addr vm c "res") (List.map zf (split3 (getz c "value"))));
   reg H.h64 (fun c vm ->
       let d0 = get_member_z vm c "x" [ "d0" ] and d1 = get_member_z vm c "x" [ "d1" ] in
       set_val vm c "low" (zf (Z.logand (Z.add d0 (Z.mul d1 (const_z c "BASE"))) (mask 128))));
-  reg H.h65 (fun c vm ->
-      let q, r = Z.ediv_rem (pack vm c "val" []) secp_p in
-      if not (Z.equal r Z.zero) then fail "verify_zero: Invalid input";
-      set_val vm c "q" (zf q));
-  reg H.h66 (fun c vm -> setz c "x" (Z.erem (pack vm c "x" []) secp_p));
-  reg H.h67 (fun c vm -> write_ap vm (of_bool (Z.equal (getz c "x") Z.zero)));
-  reg H.h68 (fun c _ ->
-      let v = div_mod Z.one (getz c "x") secp_p in
-      setz c "value" v;
-      setz c "x_inv" v);
-  reg H.h69 (fun c vm -> setz c "value" (Z.erem (pack vm c "x" []) secp_p));
-  reg H.h70 (fun c vm ->
-      let y = Z.erem (pack vm c "point" [ "y" ]) secp_p in
-      setz c "y" y;
-      setz c "value" (Z.erem (Z.neg y) secp_p));
-  reg H.h71 (fun c vm ->
-      let x = pack vm c "point" [ "x" ] and y = pack vm c "point" [ "y" ] in
-      setz c "x" x;
-      setz c "y" y;
-      check (not (Z.equal (Z.erem y secp_p) Z.zero)) "ec_double_slope: y == 0";
-      let s = div_mod (Z.mul (z 3) (Z.mul x x)) (Z.mul (z 2) y) secp_p in
-      setz c "value" s;
-      setz c "slope" s);
-  reg H.h72 (fun c vm ->
-      let x0 = pack vm c "point0" [ "x" ] and y0 = pack vm c "point0" [ "y" ] in
-      let x1 = pack vm c "point1" [ "x" ] and y1 = pack vm c "point1" [ "y" ] in
-      List.iter (fun (n, v) -> setz c n v) [ ("x0", x0); ("y0", y0); ("x1", x1); ("y1", y1) ];
-      check (not (Z.equal (Z.erem (Z.sub x0 x1) secp_p) Z.zero)) "line_slope: same x";
-      let s = div_mod (Z.sub y0 y1) (Z.sub x0 x1) secp_p in
-      setz c "value" s;
-      setz c "slope" s);
-  reg H.h73 (fun c vm ->
-      let slope = pack vm c "slope" [] and x = pack vm c "point" [ "x" ] and y = pack vm c "point" [ "y" ] in
-      setz c "slope" slope;
-      setz c "x" x;
-      setz c "y" y;
-      let nx = Z.erem (Z.sub (Z.mul slope slope) (Z.mul (z 2) x)) secp_p in
-      setz c "value" nx;
-      setz c "new_x" nx);
-  reg H.h74 (fun c _ ->
-      let ny = Z.erem (Z.sub (Z.mul (getz c "slope") (Z.sub (getz c "x") (getz c "new_x"))) (getz c "y")) secp_p in
-      setz c "value" ny;
-      setz c "new_y" ny);
-  reg H.h75 (fun c vm ->
-      let slope = pack vm c "slope" [] and x0 = pack vm c "point0" [ "x" ] and x1 = pack vm c "point1" [ "x" ] in
-      let y0 = pack vm c "point0" [ "y" ] in
-      List.iter (fun (n, v) -> setz c n v) [ ("slope", slope); ("x0", x0); ("x1", x1); ("y0", y0) ];
-      let nx = Z.erem (Z.sub (Z.sub (Z.mul slope slope) x0) x1) secp_p in
-      setz c "value" nx;
-      setz c "new_x" nx);
-  reg H.h76 (fun c _ ->
-      let ny = Z.erem (Z.sub (Z.mul (getz c "slope") (Z.sub (getz c "x0") (getz c "new_x"))) (getz c "y0")) secp_p in
-      setz c "value" ny;
-      setz c "new_y" ny);
   reg H.h77 (fun c vm -> write_ap vm (zf (Z.erem (felt_z vm c "scalar") (z 2))));
-  reg H.h78 (fun c vm ->
-      let a = pack vm c "a" [] and b = pack vm c "b" [] in
-      setz c "a" a;
-      setz c "b" b;
-      let r = div_mod a b secp_n in
-      setz c "value" r;
-      setz c "res" r);
-  reg H.h79 (fun c _ ->
-      let x = Z.sub (Z.mul (getz c "res") (getz c "b")) (getz c "a") in
-      if not (Z.equal (Z.erem x secp_n) Z.zero) then fail "safe_div: not divisible";
-      let k = Z.div x secp_n in
-      setz c "value" k;
-      setz c "k" k);
-  reg H.h80 (fun c vm ->
-      let xc = Z.erem (pack vm c "x_cube" []) secp_p in
-      let ys = Z.erem (Z.add xc (const_z c "BETA")) secp_p in
-      let y = Z.powm ys (Z.div (Z.succ secp_p) (z 4)) secp_p in
-      let v = felt_z vm c "v" in
-      setz c "value" (if Z.equal (Z.erem v (z 2)) (Z.erem y (z 2)) then y else Z.erem (Z.neg y) secp_p));
   reg H.h81 (fun c ->
       let cache = ref None in
       fun vm ->
