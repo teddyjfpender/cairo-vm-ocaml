@@ -163,9 +163,13 @@ files) matched byte-for-byte.
 | uint256_integration_benchmark | 0.794 | 0.186 | 4.28× |
 | **Total** | **9.589** | **2.333** | **4.11×** |
 
-Traced runs of the largest CPU-bound programs are bounded by the filesystem: big_fibonacci
-writes 688 MB of trace and memory, which takes about 0.1 s at the ~7 GB/s this machine
-sustains for any write strategy (buffered, `write`, `mmap`; concurrent writers do not help).
+Large traced runs write a lot of data: big_fibonacci writes 688 MB of trace and memory. The
+earlier claim here that ~7 GB/s was the machine's limit was wrong. The internal SSD sustains about
+13–14 GB/s with large `write(2)` chunks or `F_NOCACHE` (Apple's rated figure is 14.5 GB/s), and no
+write technique beats that. Lower measurements came from other processes and Spotlight writing at
+the same time, and from relocating and writing in turn instead of overlapping them. In proof mode,
+I/O is under 10% of the time; most of it is building the AIR private input and the end-of-run
+checks.
 
 ## Linux x86-64, Rust cairo-vm 3.2.0: native instruction batches
 
