@@ -261,9 +261,33 @@ static inline intnat store(value pool, const u64 x[4], intnat dst) {
 
 value cvm_init(value unit) { init_consts(); return Val_unit; }
 
+/* Multiply a canonical field element by an immediate signed word. With
+   B=2^64, p = P[3]*B^3 + 1. Divide the top two limbs by P[3], then
+   subtract the quotient from the low limbs. The intermediate is already
+   below p, or negative by at most one word. */
+static void fmul_word(u64 r[4], const u64 x[4], i64 word) {
+  u64 magnitude = word < 0 ? (u64)-word : (u64)word;
+  u128 product = 0;
+  for (int i = 0; i < 4; i++) {
+    product = (u128)x[i] * magnitude + (u64)(product >> 64);
+    r[i] = (u64)product;
+  }
+  u64 quotient = (u64)(product / P[3]);
+  r[3] = (u64)(product - (u128)quotient * P[3]);
+  u64 correction[4] = {quotient, 0, 0, 0};
+  fsub(r, r, correction);
+  if (word < 0 && !is_zero(r)) sub4(r, P, r);
+}
+
 /* op: 0 add, 1 sub, 2 mul, 3 div (returns 0 when b == 0) */
 intnat cvm_binop(value pool, intnat op, intnat a, intnat b, intnat dst) {
   u64 x[4], y[4], r[4];
+  if (op == 2 && ((a & 3) == 1 || (b & 3) == 1)) {
+    if ((a & 3) != 1) { intnat tmp = a; a = b; b = tmp; }
+    load(pool, b, y);
+    fmul_word(r, y, a >> 2);
+    return store(pool, r, dst);
+  }
   load(pool, a, x);
   load(pool, b, y);
   switch (op) {
