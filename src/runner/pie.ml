@@ -123,7 +123,7 @@ let memory_bytes (r : Runner.t) remap =
   for s = 0 to vm.nsegs - 1 do
     for o = 0 to used_size vm s - 1 do
       let v = read vm s o in
-      if v <> 0 then begin
+      if v <> Felt.empty then begin
         le (addr s o) 8;
         if Felt.is_reloc v then begin
           let rs, ro = remap (Felt.rseg v) (Felt.roff v) in
@@ -144,7 +144,7 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
   let n_used = List.length r.prog_builtins in
   let ret_fp = read vm 1 n_used and ret_pc = read vm 1 (n_used + 1) in
   let check_ret v what =
-    if v = 0 || not (Felt.is_reloc v) then fail "Expected relocatable %s at 1:%d" what n_used;
+    if v = Felt.empty || not (Felt.is_reloc v) then fail "Expected relocatable %s at 1:%d" what n_used;
     if used_size vm (Felt.rseg v) <> 0 then fail "Unexpected %s segment size" what;
     if Felt.roff v <> 0 then fail "%s offset is not zero" what
   in

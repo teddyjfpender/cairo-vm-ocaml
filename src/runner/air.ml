@@ -74,7 +74,7 @@ let hex_felt v = Str (hex_z (Felt.to_z v))
 
 (* Relocated value of a cell, as cairo-vm's relocated memory holds it. *)
 let relocated_value table v =
-  if v = 0 then Null
+  if v = Felt.empty then Null
   else if Felt.is_reloc v then Str (hex_z (Z.of_int (table.(Felt.rseg v) + Felt.roff v)))
   else hex_felt v
 
@@ -87,7 +87,7 @@ let public_input (r : Runner.t) =
   let mem_len = ref 1 in
   for s = 0 to vm.nsegs - 1 do
     for o = 0 to used_size vm s - 1 do
-      if read vm s o <> 0 then mem_len := max !mem_len (table.(s) + o + 1) else incr mem_len
+      if read vm s o <> Felt.empty then mem_len := max !mem_len (table.(s) + o + 1) else incr mem_len
     done
   done;
   (* reverse map relocated address -> (segment, offset) for public cells *)
@@ -147,7 +147,7 @@ let write_public_input r path = write_file path (to_string (public_input r))
 
 let int_cell vm seg off =
   let v = read vm seg off in
-  if v <> 0 && Felt.is_felt v then Some v else None
+  if v <> Felt.empty && Felt.is_felt v then Some v else None
 
 let instances vm b fields =
   let cpi = cells_per_instance b.kind in
@@ -167,12 +167,12 @@ let instances vm b fields =
 let mod_private_input (r : Runner.t) b =
   let vm = r.vm in
   let table = Artifacts.relocation_table r in
-  let cell (sg, o) = if sg >= 0 && sg < vm.nsegs && o >= 0 then read vm sg o else 0 in
-  let int_or0 a = let v = cell a in if v <> 0 && Felt.is_felt v then v else Felt.zero in
-  let reloc_or0 a = let v = cell a in if v <> 0 && Felt.is_reloc v then (Felt.rseg v, Felt.roff v) else (0, 0) in
+  let cell (sg, o) = if sg >= 0 && sg < vm.nsegs && o >= 0 then read vm sg o else Felt.empty in
+  let int_or0 a = let v = cell a in if v <> Felt.empty && Felt.is_felt v then v else Felt.zero in
+  let reloc_or0 a = let v = cell a in if v <> Felt.empty && Felt.is_reloc v then (Felt.rseg v, Felt.roff v) else (0, 0) in
   let usize_or0 a =
     let v = cell a in
-    if v <> 0 && Felt.is_felt v then (let n = Felt.to_nat v in if n < 0 then 0 else n) else 0
+    if v <> Felt.empty && Felt.is_felt v then (let n = Felt.to_nat v in if n < 0 then 0 else n) else 0
   in
   let relocate (sg, o) = if sg < Array.length table then table.(sg) + o else 0 in
   let base = b.base in

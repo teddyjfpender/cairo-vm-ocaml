@@ -1,13 +1,13 @@
 (* Incremental first-occurrence index for one compiled find_element hint. *)
 module Words = Hashtbl.Make (struct
-  type t = int
+  type t = Felt.t
   let equal = Felt.equal
   let hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
 end)
 
 type index = {
   owner : Vm.vm;
-  base : int;
+  base : Felt.t;
   width : int;
   first : int Words.t;
   (* Only moving windows need later occurrences. A fixed table keeps one

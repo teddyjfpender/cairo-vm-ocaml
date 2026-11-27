@@ -98,11 +98,11 @@ let typed_div a b = pack (q_div (unpack a) (unpack b))
 
 (* ---------------- shared operand plumbing ---------------- *)
 
-let operand_or_builtin vm seg off v = if v <> 0 then v else deduce_cell vm seg off
+let operand_or_builtin vm seg off v = if v <> Felt.empty then v else deduce_cell vm seg off
 
 let read_u32 vm seg off =
   let v = get vm seg off in
-  if v = 0 then fail "Unknown memory cell %d:%d (Blake2s operand)" seg off;
+  if v = Felt.empty then fail "Unknown memory cell %d:%d (Blake2s operand)" seg off;
   if not (Felt.is_felt v) then fail "Expected integer at %d:%d (Blake2s operand)" seg off;
   let n = Felt.to_nat v in
   if n < 0 || n > 0xFFFFFFFF then fail "Blake2s operand at %d:%d does not fit in 32 bits" seg off;
@@ -110,7 +110,7 @@ let read_u32 vm seg off =
 
 let read_ptr vm seg off what =
   let v = get vm seg off in
-  if v = 0 then fail "Unknown memory cell %d:%d (Blake2s %s)" seg off what;
+  if v = Felt.empty then fail "Unknown memory cell %d:%d (Blake2s %s)" seg off what;
   if not (Felt.is_reloc v) then fail "Expected relocatable at %d:%d (Blake2s %s)" seg off what;
   v
 
@@ -145,12 +145,12 @@ let step vm d =
   | 1 | 2 ->
       (* NOP with res = op1: only builtin deduction can supply operands *)
       let op0' = operand_or_builtin vm 1 op0_addr op0 in
-      if op0' = 0 then fail "Failed to compute operand op0 at 1:%d" op0_addr;
+      if op0' = Felt.empty then fail "Failed to compute operand op0 at 1:%d" op0_addr;
       let op1' = operand_or_builtin vm op1_seg op1_off op1 in
-      if op1' = 0 then fail "Failed to compute operand op1 at %d:%d" op1_seg op1_off;
-      if dst = 0 then fail "NoDst: couldn't deduce dst";
-      if op0 = 0 then write_checked vm 1 op0_addr op0';
-      if op1 = 0 then write_checked vm op1_seg op1_off op1';
+      if op1' = Felt.empty then fail "Failed to compute operand op1 at %d:%d" op1_seg op1_off;
+      if dst = Felt.empty then fail "NoDst: couldn't deduce dst";
+      if op0 = Felt.empty then write_checked vm 1 op0_addr op0';
+      if op1 = Felt.empty then write_checked vm op1_seg op1_off op1';
       (* handle_blake2s_instruction *)
       if not (Felt.is_felt dst) then fail "Expected integer at 1:%d (Blake2s counter)" dst_addr;
       let counter = Felt.to_nat dst in
@@ -166,52 +166,52 @@ let step vm d =
       finish vm d pc ap size
   | 3 ->
       let mul = (d lsr 52) land 3 = 2 in
-      let res = ref 0 in
+      let res = ref Felt.empty in
       let op0' =
-        if op0 <> 0 then op0
+        if op0 <> Felt.empty then op0
         else begin
           let b = deduce_cell vm 1 op0_addr in
-          if b <> 0 then b
+          if b <> Felt.empty then b
           else begin
             let v =
-              if dst = 0 || op1 = 0 then 0
+              if dst = Felt.empty || op1 = Felt.empty then Felt.empty
               else if not mul then (res := dst; typed_sub dst op1)
               else if Felt.is_felt dst && Felt.is_felt op1 && not (Felt.equal op1 Felt.zero) then
                 (res := dst; typed_div dst op1)
-              else 0
+              else Felt.empty
             in
-            if v = 0 then fail "Failed to compute operand op0 at 1:%d" op0_addr;
+            if v = Felt.empty then fail "Failed to compute operand op0 at 1:%d" op0_addr;
             v
           end
         end
       in
       let op1' =
-        if op1 <> 0 then op1
+        if op1 <> Felt.empty then op1
         else begin
           let b = deduce_cell vm op1_seg op1_off in
-          if b <> 0 then b
+          if b <> Felt.empty then b
           else begin
             let v =
               if not mul then begin
-                if !res = 0 then res := dst;
-                if dst = 0 then 0 else (try typed_sub dst op0' with Vm_error _ -> 0)
+                if !res = Felt.empty then res := dst;
+                if dst = Felt.empty then Felt.empty else (try typed_sub dst op0' with Vm_error _ -> Felt.empty)
               end
-              else if dst <> 0 && Felt.is_felt dst && Felt.is_felt op0' && not (Felt.equal op0' Felt.zero) then begin
-                if !res = 0 then res := dst;
+              else if dst <> Felt.empty && Felt.is_felt dst && Felt.is_felt op0' && not (Felt.equal op0' Felt.zero) then begin
+                if !res = Felt.empty then res := dst;
                 typed_div dst op0'
               end
-              else 0
+              else Felt.empty
             in
-            if v = 0 then fail "Failed to compute operand op1 at %d:%d" op1_seg op1_off;
+            if v = Felt.empty then fail "Failed to compute operand op1 at %d:%d" op1_seg op1_off;
             v
           end
         end
       in
-      let res = if !res <> 0 then !res else if mul then typed_mul op0' op1' else typed_add op0' op1' in
-      let dst' = if dst <> 0 then dst else res in
-      if op0 = 0 then write_checked vm 1 op0_addr op0';
-      if op1 = 0 then write_checked vm op1_seg op1_off op1';
-      if dst = 0 then write_checked vm 1 dst_addr dst';
+      let res = if !res <> Felt.empty then !res else if mul then typed_mul op0' op1' else typed_add op0' op1' in
+      let dst' = if dst <> Felt.empty then dst else res in
+      if op0 = Felt.empty then write_checked vm 1 op0_addr op0';
+      if op1 = Felt.empty then write_checked vm op1_seg op1_off op1';
+      if dst = Felt.empty then write_checked vm 1 dst_addr dst';
       if not (Felt.equal res dst') then
         fail "An ASSERT_EQ instruction failed: %s != %s." (value_to_string res) (value_to_string dst');
       finish vm d pc ap size

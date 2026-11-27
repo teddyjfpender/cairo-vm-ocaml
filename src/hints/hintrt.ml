@@ -7,26 +7,29 @@ open Errors
 open Vm
 module P = Program
 
-module Dict_changes = Map.Make (Int)
-type snapshot = (int, int) Hashtbl.t * int Dict_changes.t
+module Dict_changes = Map.Make (struct
+  type t = Felt.t
+  let compare (a : t) (b : t) = Int.compare (a :> int) (b :> int)
+end)
+type snapshot = (Felt.t, Felt.t) Hashtbl.t * Felt.t Dict_changes.t
 
 type dict_tracker = {
-  data : (int, int) Hashtbl.t; (* canonical key code -> value code *)
-  mutable changes : int Dict_changes.t option; (* Some freezes data for snapshots *)
-  default : int option;
-  mutable current_ptr : int; (* relocatable code *)
+  data : (Felt.t, Felt.t) Hashtbl.t; (* canonical key -> value *)
+  mutable changes : Felt.t Dict_changes.t option; (* Some freezes data for snapshots *)
+  default : Felt.t option;
+  mutable current_ptr : Felt.t; (* relocatable *)
 }
 
 type dyn =
   | Int of Z.t
-  | Value of int (* felt/relocatable code *)
+  | Value of Felt.t
   | Ints of int list
-  | Values of int list
-  | Dict_manager of (int, dict_tracker) Hashtbl.t
-  | Access_indices of (int, int list) Hashtbl.t
-  | Positions of (int, int list) Hashtbl.t
+  | Values of Felt.t list
+  | Dict_manager of (int, dict_tracker) Hashtbl.t (* by segment index *)
+  | Access_indices of (Felt.t, int list) Hashtbl.t
+  | Positions of (Felt.t, int list) Hashtbl.t
   | Dict_snapshot of snapshot
-  | Initial_dict of (int, int) Hashtbl.t
+  | Initial_dict of (Felt.t, Felt.t) Hashtbl.t
   | Nothing
 
 type scopes = { mutable stack : (string, dyn) Hashtbl.t list }
@@ -56,7 +59,7 @@ let var_z s name = match var s name with Int z -> z | Value v when Felt.is_felt 
 (* ---- canonical keys (big felts interned so keys are plain ints) ---- *)
 
 module Felt_keys = Hashtbl.Make (struct
-  type t = int
+  type t = Felt.t
   let equal = Felt.equal
   let hash = Felt.hash
 end)
@@ -80,7 +83,7 @@ let compare_values a b =
 
 (* ---- compiled hint context ---- *)
 
-type access = { value : vm -> int; address : vm -> int }
+type access = { value : vm -> Felt.t; address : vm -> Felt.t }
 
 type ctx = {
   prog : P.t;
@@ -112,10 +115,10 @@ let make_ctx prog scopes (hint : P.hint) =
 let read_reference vm a =
   if not (Felt.is_reloc a) then fail "Dereference of a non-pointer in reference";
   let v = get vm (Felt.rseg a) (Felt.roff a) in
-  if v = 0 then fail "Unknown memory cell %d:%d while evaluating a reference" (Felt.rseg a) (Felt.roff a);
+  if v = Felt.empty then fail "Unknown memory cell %d:%d while evaluating a reference" (Felt.rseg a) (Felt.roff a);
   v
 
-let rec eval vm ctx (r : P.reference) (e : P.expr) : int =
+let rec eval vm ctx (r : P.reference) (e : P.expr) : Felt.t =
   match e with
   | P.Reg_ap ->
       if r.r_group <> ctx.hint.h_group then fail "AP tracking group mismatch when evaluating a reference";
@@ -303,7 +306,7 @@ let member_addr vm ctx name path =
 let get_member vm ctx name path =
   let a = member_addr vm ctx name path in
   let v = get vm (Felt.rseg a) (Felt.roff a) in
-  if v = 0 then fail "ids.%s.%s is not assigned" name (String.concat "." path);
+  if v = Felt.empty then fail "ids.%s.%s is not assigned" name (String.concat "." path);
   v
 
 let get_member_z vm ctx name path =
@@ -360,11 +363,11 @@ let write_ap vm v = write_checked vm 1 vm.ap v
 let zf z = Felt.of_z z
 let of_bool b = if b then Felt.one else Felt.zero
 
-let write_arg vm ptr (vals : int list) =
+let write_arg vm ptr (vals : Felt.t list) =
   if not (Felt.is_reloc ptr) then fail "write_arg: expected a pointer";
   List.iteri (fun i v -> write_checked vm (Felt.rseg ptr) (Felt.roff ptr + i) v) vals
 
-let gen_arg vm (vals : int list) =
+let gen_arg vm (vals : Felt.t list) =
   let s = add_segment vm in
   write_arg vm (Felt.reloc s 0) vals;
   Felt.reloc s 0
@@ -372,12 +375,12 @@ let gen_arg vm (vals : int list) =
 let read_range vm ptr n =
   List.init n (fun i ->
       let v = get vm (Felt.rseg ptr) (Felt.roff ptr + i) in
-      if v = 0 then fail "Unknown memory cell %d:%d" (Felt.rseg ptr) (Felt.roff ptr + i);
+      if v = Felt.empty then fail "Unknown memory cell %d:%d" (Felt.rseg ptr) (Felt.roff ptr + i);
       v)
 
 let mem_at vm ptr k =
   let v = get vm (Felt.rseg ptr) (Felt.roff ptr + k) in
-  if v = 0 then fail "Unknown memory cell %d:%d" (Felt.rseg ptr) (Felt.roff ptr + k);
+  if v = Felt.empty then fail "Unknown memory cell %d:%d" (Felt.rseg ptr) (Felt.roff ptr + k);
   v
 
 let rc_bound = Z.shift_left Z.one 128

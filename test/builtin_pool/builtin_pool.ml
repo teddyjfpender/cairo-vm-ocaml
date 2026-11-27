@@ -1,18 +1,17 @@
 open Cairovm
 
+(* A multi-cell kernel block that straddles a pool growth boundary must
+   produce the same outputs as a fresh computation, and only big outputs may
+   consume pool slots. *)
 let () =
-  (* Put the workspace across the next pool growth boundary. Include both
-     small and big results so source and committed slot offsets diverge. *)
   let big = Felt.of_z (Z.shift_left Z.one 190) in
-  while !Felt.pool_n < Bytes.length !Felt.pool / 32 - 1 do
+  let words = [| Felt.zero; big; Felt.one; big; big; Felt.zero; big; Felt.one |] in
+  while !Felt.pool_n < (Bytes.length !Felt.pool / 32) - 1 do
     ignore (Felt.of_z (Z.shift_left Z.one 180))
   done;
   let start = !Felt.pool_n in
-  Felt.reserve 16;
-  let words = [|Felt.zero; big; Felt.one; big; big; Felt.zero; big; Felt.one|] in
-  Array.iteri (fun i v -> Felt.c_load_slot !Felt.pool v (start + 8 + i)) words;
-  let b : Builtin.builtin = { kind = Builtin.Keccak; base = 0; included = true;
-                         stop_ptr = 0; cache = [||] } in
-  Deduce.cache_outputs b 8 (start + 8) 8;
-  assert (!Felt.pool_n = start + 4);
-  Array.iteri (fun i v -> assert (Felt.equal (Deduce.cache_get b (8 + i)) v)) words
+  let across = Felt.keccak words in
+  let bigs = Array.fold_left (fun n v -> if Felt.is_big v then n + 1 else n) 0 across in
+  assert (!Felt.pool_n = start + bigs);
+  let fresh = Felt.keccak words in
+  Array.iteri (fun i v -> assert (Felt.equal v fresh.(i))) across

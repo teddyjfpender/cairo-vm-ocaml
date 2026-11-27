@@ -6,7 +6,7 @@ open Builtin
 open Vm
 
 
-let cache_get b off = if off < Array.length b.cache then b.cache.(off) else 0
+let cache_get b off = if off < Array.length b.cache then b.cache.(off) else Felt.empty
 
 let cache_set b off v =
   if off >= Array.length b.cache then begin
@@ -14,7 +14,7 @@ let cache_set b off v =
     while !n <= off do
       n := 2 * !n
     done;
-    let na = Array.make !n 0 in
+    let na = Array.make !n Felt.empty in
     Array.blit b.cache 0 na 0 (Array.length b.cache);
     b.cache <- na
   end;
@@ -22,43 +22,28 @@ let cache_set b off v =
 
 (* inputs of instance starting at [inst]; None if a cell is missing *)
 let input_felts vm seg inst n =
-  let r = Array.make n 0 in
+  let r = Array.make n Felt.empty in
   let ok = ref true in
   for i = 0 to n - 1 do
     let v = read vm seg (inst + i) in
-    if v = 0 then ok := false
+    if v = Felt.empty then ok := false
     else if not (is_felt v) then fail "Builtin %d: expected integer at %d:%d" seg seg (inst + i)
     else r.(i) <- v
   done;
   if !ok then Some r else None
 
-(* Inputs and raw outputs occupy reserved, uncommitted slots at the end of
-   the pool. Compact the canonical outputs forward, starting at the input
-   base: the write cursor can never overtake an unread output. Only big
-   results advance pool_n. The caller reserved space for the whole block. *)
-let cache_outputs b off first_output count =
-  for i = 0 to count - 1 do
-    let result = c_code_of_slot !pool (first_output + i) !pool_n in
-    commit result;
-    cache_set b (off + i) result
-  done
+let cache_outputs b off (out : Felt.t array) = Array.iteri (fun i r -> cache_set b (off + i) r) out
 
 let bitwise_output vm seg off idx =
   let base = off - idx in
   let x = read vm seg base and y = read vm seg (base + 1) in
-  if (x <> 0 && not (is_felt x)) || (y <> 0 && not (is_felt y)) then
-    fail "Builtin %d: expected integer at %d:%d" seg seg
-      (if x <> 0 && not (is_felt x) then base else base + 1);
-  if x = 0 || y = 0 then 0
-  else if both_small x y && x >= 0 && y >= 0 then
-    (match idx with 2 -> x land y | 3 -> (x lxor y) lor 1 | _ -> x lor y)
+  let bad v = v <> Felt.empty && not (is_felt v) in
+  if bad x || bad y then fail "Builtin %d: expected integer at %d:%d" seg seg (if bad x then base else base + 1);
+  if x = Felt.empty || y = Felt.empty then Felt.empty
   else begin
-    reserve 1;
-    let r = c_bitwise !pool (idx - 2) x y !pool_n in
-    if r = 0 then
-      fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg
-        (if Felt.bits x > 251 then base else base + 1);
-    commit r;
+    let r = Felt.bitwise (idx - 2) x y in
+    if r = Felt.empty then
+      fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg (if Felt.bits x > 251 then base else base + 1);
     r
   end
 
@@ -66,72 +51,51 @@ let deduce_builtin vm (b : builtin) seg off =
   let cpi = cells_per_instance b.kind in
   let idx = off mod cpi in
   let nin = n_input_cells b.kind in
-  if idx < nin then 0
+  if idx < nin then Felt.empty
   else if b.kind = Bitwise then bitwise_output vm seg off idx
   else begin
     let c = cache_get b off in
-    if c <> 0 then c
+    if c <> Felt.empty then c
     else begin
       let inst = off - idx in
       match input_felts vm seg inst nin with
-      | None -> 0
+      | None -> Felt.empty
       | Some inp -> (
           match b.kind with
           | Pedersen ->
               (* Equal adjacent inputs have equal hashes. Reuse only an
                  output already computed by this builtin, never a memory
                  value supplied by the program. *)
-              let prev = if inst >= cpi then cache_get b (off - cpi) else 0 in
+              let prev = if inst >= cpi then cache_get b (off - cpi) else Felt.empty in
               let r =
-                if prev <> 0 && Felt.equal inp.(0) (read vm seg (inst - cpi))
+                if prev <> Felt.empty && Felt.equal inp.(0) (read vm seg (inst - cpi))
                    && Felt.equal inp.(1) (read vm seg (inst - cpi + 1)) then prev
-                else begin
-                  reserve 1;
-                  let result = c_pedersen !pool inp.(0) inp.(1) !pool_n in
-                  commit result;
-                  result
-                end
+                else Felt.pedersen inp.(0) inp.(1)
               in
               cache_set b off r;
               r
           | Poseidon ->
-              reserve 6;
-              let s = !pool_n in
-              for i = 0 to 2 do
-                c_load_slot !pool inp.(i) (s + i)
-              done;
-              c_poseidon !pool s (s + 3);
-              cache_outputs b (inst + 3) (s + 3) 3;
+              cache_outputs b (inst + 3) (Felt.poseidon inp);
               cache_get b off
           | Keccak ->
               Array.iteri
                 (fun k v -> if Felt.bits v > 200 then fail "Keccak builtin: input %d:%d exceeds 2^200" seg (inst + k))
                 inp;
-              reserve 16;
-              let s = !pool_n in
-              for i = 0 to 7 do
-                c_load_slot !pool inp.(i) (s + i)
-              done;
-              c_keccak !pool s (s + 8);
-              cache_outputs b (inst + 8) (s + 8) 8;
+              cache_outputs b (inst + 8) (Felt.keccak inp);
               cache_get b off
-          | Ec_op ->
-              reserve 7;
-              let s = !pool_n in
-              for i = 0 to 4 do
-                c_load_slot !pool inp.(i) (s + i)
-              done;
-              let rc = c_ec_op !pool s (s + 5) in
-              if rc = 2 then fail "EcOp builtin: point not on curve";
-              if rc = 1 then fail "EcOp builtin: EcOpSameXCoordinate";
-              if rc <> 0 then fail "EcOp builtin: invalid point";
-              cache_outputs b (inst + 5) (s + 5) 2;
-              cache_get b off
-          | _ -> 0)
+          | Ec_op -> (
+              match Felt.ec_op inp with
+              | Ok out ->
+                  cache_outputs b (inst + 5) out;
+                  cache_get b off
+              | Error 2 -> fail "EcOp builtin: point not on curve"
+              | Error 1 -> fail "EcOp builtin: EcOpSameXCoordinate"
+              | Error _ -> fail "EcOp builtin: invalid point")
+          | _ -> Felt.empty)
     end
   end
 
 let[@inline never] deduce_cell vm seg off =
   if seg >= 0 && seg < vm.nsegs && is_deducing vm.seg_flag.(seg) then
-    match vm.seg_builtin.(seg) with Some b -> deduce_builtin vm b seg off | None -> 0
-  else 0
+    match vm.seg_builtin.(seg) with Some b -> deduce_builtin vm b seg off | None -> Felt.empty
+  else Felt.empty

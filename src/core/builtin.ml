@@ -59,7 +59,7 @@ type builtin = {
   base : int; (* segment index *)
   included : bool;
   mutable stop_ptr : int;
-  mutable cache : int array; (* deduced output codes by offset, 0 = none *)
+  mutable cache : Felt.t array; (* deduced outputs by offset, [Felt.empty] = none *)
 }
 
 

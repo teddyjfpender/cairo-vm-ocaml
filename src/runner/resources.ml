@@ -49,9 +49,11 @@ let decoded vm pc_seg pc =
 (* Trace layout (see Cpu.record_trace): a packed word with low bit 1, or a
    relocatable pc code followed by ap and fp. *)
 let trace_entry t i =
-  let w = sget t i in
+  let w = raw_get t i in
   if w land 1 = 1 then (i + 1, 0, w lsr 47, (w lsr 24) land ((1 lsl 23) - 1), (w lsr 1) land ((1 lsl 23) - 1))
-  else (i + 3, Felt.rseg w, Felt.roff w, sget t (i + 1), sget t (i + 2))
+  else
+    let pc = Felt.unsafe_of_int w in
+    (i + 3, Felt.rseg pc, Felt.roff pc, raw_get t (i + 1), raw_get t (i + 2))
 
 let update_accessed r =
   let vm = r.vm and acc = r.acc in
@@ -104,7 +106,7 @@ let accessed_count r seg =
 
 external verified_bitwise : bytes -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
 
-external verified_pedersen : bytes -> seg -> int -> int array -> bool = "cvm_verify_pedersen" [@@noalloc]
+external verified_pedersen : bytes -> seg -> int -> Felt.t array -> bool = "cvm_verify_pedersen" [@@noalloc]
 
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
@@ -125,9 +127,9 @@ let verify_auto_deductions ?(fill_holes=false) vm =
           for off = instance * width + inputs to min limit ((instance + 1) * width) - 1 do
             let v = read vm b.base off in
             let cached = cache_get b off in
-            let d = if cached <> 0 then cached else deduce_builtin vm b b.base off in
-            if d <> 0 then begin
-              if v = 0 then (if fill_holes then write vm b.base off d)
+            let d = if cached <> Felt.empty then cached else deduce_builtin vm b b.base off in
+            if d <> Felt.empty then begin
+              if v = Felt.empty then (if fill_holes then write vm b.base off d)
               else if not (Felt.equal d v) then
                 fail "Inconsistent auto-deduction for %s builtin at %d:%d: expected %s, got %s" (bname b.kind) b.base off
                   (value_to_string d) (value_to_string v)
@@ -211,7 +213,7 @@ let builtin_rc_usage vm b =
       in
       for i = 0 to n - 1 do
         let v = read vm b.base i in
-        if v = 0 || not (Felt.is_felt v) then raise Exit;
+        if v = Felt.empty || not (Felt.is_felt v) then raise Exit;
         let taken = ref 0 in
         if Felt.is_small v && Felt.small_val v >= 0 then begin
           let d0 = Felt.small_val v in

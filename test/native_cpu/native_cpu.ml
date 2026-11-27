@@ -16,7 +16,7 @@ let make_vm words cells =
     a
   in
   let segs = [|segment words; segment cells; seg_make 8|] in
-  let high cells = Array.fold_left (fun (i, n) v -> i+1, (if v = 0 then n else i+1)) (0, 0) cells |> snd in
+  let high cells = Array.fold_left (fun (i, n) v -> i+1, (if v = Felt.empty then n else i+1)) (0, 0) cells |> snd in
   { (create ~trace:false) with segs; nsegs=3; seg_flag=[|0;0;0|];
     seg_builtin=Array.make 3 None; hi=[|high words; high cells; 0|];
     pc=0; ap=8; fp=6; trace_on=true; trace=seg_make 8 }
@@ -48,7 +48,7 @@ let compare flags offsets cells imm =
   end;
   assert (registers.(0) = reference.pc && registers.(1) = reference.ap && registers.(2) = reference.fp);
   assert (registers.(3) = reference.hi.(1) && registers.(4) = reference.tlen);
-  for i = 0 to reference.tlen - 1 do assert (sget vm.trace i = sget reference.trace i) done;
+  for i = 0 to reference.tlen - 1 do assert (raw_get vm.trace i = raw_get reference.trace i) done;
   Array.iteri (fun seg mem ->
     if seg <> 1 then assert (vm.hi.(seg) = reference.hi.(seg));
     for i = 0 to slen mem - 1 do
@@ -57,7 +57,7 @@ let compare flags offsets cells imm =
 
 let () =
   let rng = Random.State.make [|67231|] in
-  let values = [|0; Felt.zero; Felt.one; Felt.small 3; Felt.small (-4);
+  let values = [|Felt.empty; Felt.zero; Felt.one; Felt.small 3; Felt.small (-4);
     Felt.of_z (Z.shift_left Z.one 180); Felt.reloc 2 1; Felt.reloc 1 9|] in
   let rand n = Random.State.int rng n in
   for _ = 1 to 4000 do
@@ -68,7 +68,7 @@ let () =
     compare flags (delta (), delta (), (if src = 1 then 1 else delta ())) cells (Felt.small 3)
   done;
   let cells = Array.make 16 Felt.one in
-  cells.(8) <- 0; cells.(9) <- 0;
+  cells.(8) <- Felt.empty; cells.(9) <- Felt.empty;
   compare 0x1104 (0,1,1) cells (Felt.small 2);
   cells.(4) <- Felt.reloc 1 4; cells.(5) <- Felt.reloc 0 4;
   compare 0x208b (-2,-1,-1) cells Felt.zero;
@@ -81,9 +81,9 @@ let () =
   let words = Array.map Felt.of_z [|raw (-4); raw (-3); raw (-2)|] in
   let cache = Array.map (fun word -> decode_word (Felt.to_z word)) words in
   let execute ~hint ~hole =
-    let cells = Array.make 16 0 in
+    let cells = Array.make 16 Felt.empty in
     for i = 2 to 5 do cells.(i) <- Felt.small (i + 7) done;
-    if hole then cells.(3) <- 0;
+    if hole then cells.(3) <- Felt.empty;
     let vm = make_vm words cells and reference = make_vm words cells in
     let code = Array.copy cache in
     if hint then code.(1) <- code.(1) lor hint_bit;
@@ -94,7 +94,7 @@ let () =
     for i = 0 to n-1 do step_instr reference cache.(i) done;
     assert (regs.(0) = reference.pc && regs.(1) = reference.ap && regs.(3) = reference.hi.(1));
     for i = 0 to 15 do assert (sget vm.segs.(1) i = sget reference.segs.(1) i) done;
-    for i = 0 to n-1 do assert (sget vm.trace i = sget reference.trace i) done
+    for i = 0 to n-1 do assert (raw_get vm.trace i = raw_get reference.trace i) done
   in
   execute ~hint:false ~hole:false;
   execute ~hint:true ~hole:false;
@@ -102,7 +102,7 @@ let () =
 
 let () =
   List.iter (fun (kind, flag, width, expected) ->
-    let vm = make_vm [|Felt.zero|] (Array.make 16 0) in
+    let vm = make_vm [|Felt.zero|] (Array.make 16 Felt.empty) in
     let b = {kind; base=2; included=true; stop_ptr=width; cache=[||]} in
     vm.builtins <- [b];
     vm.seg_flag.(2) <- flag;

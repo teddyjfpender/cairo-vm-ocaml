@@ -11,7 +11,7 @@ open Deduce
 
 let decode_at vm seg off =
   let v = get vm seg off in
-  if v = 0 then fail "Instruction at %d:%d is not assigned (UnknownMemoryCell)" seg off;
+  if v = Felt.empty then fail "Instruction at %d:%d is not assigned (UnknownMemoryCell)" seg off;
   if not (is_felt v) then fail "Instruction at %d:%d is a relocatable value" seg off;
   let z = Felt.to_z v in
   try decode_word z
@@ -47,12 +47,12 @@ let[@inline] record_trace vm pc_seg pc ap fp =
   if i + 3 > slen vm.trace then trace_grow vm;
   let t = vm.trace in
   if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
-    sset t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
+    raw_set t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
     vm.tlen <- i + 1
   end else begin
-    sset t i (reloc pc_seg pc);
-    sset t (i + 1) ap;
-    sset t (i + 2) fp;
+    raw_set t i (reloc pc_seg pc :> int);
+    raw_set t (i + 1) ap;
+    raw_set t (i + 2) fp;
     vm.tlen <- i + 3
   end
 
@@ -74,8 +74,8 @@ let rec step_instr vm d =
   if dst_addr < 0 || op0_addr < 0 then fail "Negative operand address";
   let exec = Array.unsafe_get vm.segs 1 in
   let elen = slen exec in
-  let dst = if dst_addr < elen then sget exec dst_addr else 0 in
-  let op0 = if op0_addr < elen then sget exec op0_addr else 0 in
+  let dst = if dst_addr < elen then sget exec dst_addr else Felt.empty in
+  let op0 = if op0_addr < elen then sget exec op0_addr else Felt.empty in
   (* with relocation rules, operands are read through Memory.get *)
   let dst = if vm.relocating then relocate_temp_value vm dst else dst in
   let op0 = if vm.relocating then relocate_temp_value vm op0 else op0 in
@@ -84,7 +84,7 @@ let rec step_instr vm d =
   let op1_seg, op1_off =
     match op1_src with
     | 0 ->
-        if op0 = 0 then missing "op0" 1 op0_addr;
+        if op0 = Felt.empty then missing "op0" 1 op0_addr;
         if not (is_reloc op0) then fail "op1 source is op0, but op0 is not a relocatable";
         (rseg op0, roff op0 + off2)
     | 1 -> (pc_seg, pc + off2)
@@ -92,22 +92,22 @@ let rec step_instr vm d =
     | _ -> (1, ap + off2)
   in
   if op1_off < 0 then fail "Negative op1 address";
-  let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else 0) else slow_operand_read vm op1_seg op1_off in
+  let op1 = if op1_seg = 1 then (if op1_off < elen then sget exec op1_off else Felt.empty) else slow_operand_read vm op1_seg op1_off in
   let op1 = if vm.relocating then relocate_temp_value vm op1 else op1 in
   let size = if op1_src = 1 then 2 else 1 in
   let res_kind = (d lsr 52) land 3 in
   let opcode = (d lsr 58) land 3 in
-  if dst <> 0 && op0 <> 0 && op1 <> 0 then begin
+  if dst <> Felt.empty && op0 <> Felt.empty && op1 <> Felt.empty then begin
     (* fast path: all operands assigned *)
     let res =
       match res_kind with
       | 0 -> op1
       | 1 -> if both_small op0 op1 then Felt.add op0 op1 else value_add op0 op1
       | 2 -> value_mul op0 op1
-      | _ -> 0
+      | _ -> Felt.empty
     in
     (match opcode with
-    | 3 -> if res = 0 then fail "UnconstrainedResAssertEq" else if not (Felt.equal res dst) then
+    | 3 -> if res = Felt.empty then fail "UnconstrainedResAssertEq" else if not (Felt.equal res dst) then
           fail "An ASSERT_EQ instruction failed: %s != %s." (value_to_string res) (value_to_string dst)
     | 1 ->
         if op0 <> reloc pc_seg (pc + size) then fail "Call failed to write return-pc (inconsistent op0)";
@@ -119,13 +119,13 @@ let rec step_instr vm d =
 
 and[@inline never] slow_step vm d pc_seg pc ap fp size dst_addr op0_addr op1_seg op1_off dst op0 op1 res_kind
     opcode =
-  let res = ref 0 in
-  let ded0 = op0 = 0 and ded1 = op1 = 0 and dedd = dst = 0 in
+  let res = ref Felt.empty in
+  let ded0 = op0 = Felt.empty and ded1 = op1 = Felt.empty and dedd = dst = Felt.empty in
   let op0 =
-    if op0 <> 0 then op0
+    if op0 <> Felt.empty then op0
     else begin
       let b = deduce_cell vm 1 op0_addr in
-      if b <> 0 then b
+      if b <> Felt.empty then b
       else begin
         let v =
           match opcode with
@@ -133,62 +133,62 @@ and[@inline never] slow_step vm d pc_seg pc ap fp size dst_addr op0_addr op1_seg
           | 3 -> (
               match res_kind with
               | 1 ->
-                  if dst <> 0 && op1 <> 0 then begin
+                  if dst <> Felt.empty && op1 <> Felt.empty then begin
                     res := dst;
                     value_sub dst op1
                   end
-                  else 0
+                  else Felt.empty
               | 2 ->
-                  if dst <> 0 && op1 <> 0 && is_felt dst && is_felt op1 && op1 <> zero then begin
+                  if dst <> Felt.empty && op1 <> Felt.empty && is_felt dst && is_felt op1 && op1 <> zero then begin
                     res := dst;
-                    match Felt.div dst op1 with Some q -> q | None -> 0
+                    match Felt.div dst op1 with Some q -> q | None -> Felt.empty
                   end
-                  else 0
-              | _ -> 0)
-          | _ -> 0
+                  else Felt.empty
+              | _ -> Felt.empty)
+          | _ -> Felt.empty
         in
-        if v = 0 then missing "op0" 1 op0_addr;
+        if v = Felt.empty then missing "op0" 1 op0_addr;
         v
       end
     end
   in
   let op1 =
-    if op1 <> 0 then op1
+    if op1 <> Felt.empty then op1
     else begin
       let b = deduce_cell vm op1_seg op1_off in
-      if b <> 0 then b
+      if b <> Felt.empty then b
       else begin
         let v, r =
           if opcode = 3 then
             match res_kind with
             | 0 -> (dst, dst)
-            | 1 -> ((if dst <> 0 then (try value_sub dst op0 with Vm_error _ -> 0) else 0), dst)
+            | 1 -> ((if dst <> Felt.empty then (try value_sub dst op0 with Vm_error _ -> Felt.empty) else Felt.empty), dst)
             | 2 ->
-                if dst <> 0 && is_felt dst && is_felt op0 && op0 <> zero then
-                  ((match Felt.div dst op0 with Some q -> q | None -> 0), dst)
-                else (0, 0)
-            | _ -> (0, 0)
-          else (0, 0)
+                if dst <> Felt.empty && is_felt dst && is_felt op0 && op0 <> zero then
+                  ((match Felt.div dst op0 with Some q -> q | None -> Felt.empty), dst)
+                else (Felt.empty, Felt.empty)
+            | _ -> (Felt.empty, Felt.empty)
+          else (Felt.empty, Felt.empty)
         in
-        if !res = 0 then res := r;
-        if v = 0 then missing "op1" op1_seg op1_off;
+        if !res = Felt.empty then res := r;
+        if v = Felt.empty then missing "op1" op1_seg op1_off;
         v
       end
     end
   in
-  if !res = 0 then
+  if !res = Felt.empty then
     res :=
       (match res_kind with
       | 0 -> op1
       | 1 -> value_add op0 op1
       | 2 -> value_mul op0 op1
-      | _ -> 0);
+      | _ -> Felt.empty);
   let res = !res in
   let dst =
-    if dst <> 0 then dst
+    if dst <> Felt.empty then dst
     else
       match opcode with
-      | 3 -> if res = 0 then fail "NoDst" else res
+      | 3 -> if res = Felt.empty then fail "NoDst" else res
       | 1 -> reloc 1 fp
       | _ -> fail "NoDst: couldn't deduce dst"
   in
@@ -197,7 +197,7 @@ and[@inline never] slow_step vm d pc_seg pc ap fp size dst_addr op0_addr op1_seg
   if dedd then write_checked vm 1 dst_addr dst;
   (match opcode with
   | 3 ->
-      if res = 0 then fail "UnconstrainedResAssertEq"
+      if res = Felt.empty then fail "UnconstrainedResAssertEq"
       else if not (Felt.equal res dst) then
         fail "An ASSERT_EQ instruction failed: %s != %s." (value_to_string res) (value_to_string dst)
   | 1 ->
@@ -223,7 +223,7 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
     match (d lsr 56) land 3 with
     | 0 -> ap
     | 1 ->
-        if res = 0 then fail "UnconstrainedResAdd: ap += res with unconstrained res";
+        if res = Felt.empty then fail "UnconstrainedResAdd: ap += res with unconstrained res";
         if not (is_felt res) then fail "ap += res requires an integer res";
         roff (reloc_add_felt (reloc 1 ap) res)
     | 2 -> ap + 1
@@ -233,11 +233,11 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
   (match (d lsr 54) land 3 with
   | 0 -> vm.pc <- pc + size
   | 1 ->
-      if res = 0 || not (is_reloc res) then fail "Jump requires a relocatable res";
+      if res = Felt.empty || not (is_reloc res) then fail "Jump requires a relocatable res";
       vm.pc_seg <- rseg res;
       vm.pc <- roff res
   | 2 ->
-      if res = 0 || not (is_felt res) then fail "Relative jump requires an integer res";
+      if res = Felt.empty || not (is_felt res) then fail "Relative jump requires an integer res";
       if is_small res then begin
         let o = pc + small_val res in
         if o < 0 then fail "pc offset underflow";
@@ -291,7 +291,11 @@ let generic_steps = ref 0
 let hint_steps = ref 0
 
 external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
-  seg -> bytes -> int -> bool -> int array -> int array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
+  seg -> bytes -> int -> bool -> int array -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
+
+(* JNZ's unconstrained result: tag 3 with an impossible pool index, so it
+   never equals a real value. *)
+let unconstrained = Felt.unsafe_of_int (-1)
 
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
@@ -343,68 +347,68 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
       let mem = Array.unsafe_get vm.segs 1 in
       let len = slen mem in
       if dst_addr >= 0 && op0_addr >= 0 && dst_addr < len - 2 then begin
-        let op0 = if op0_addr < len then sget mem op0_addr else 0 in
+        let op0 = if op0_addr < len then sget mem op0_addr else Felt.empty in
         let src = (d lsr 50) land 3 in
         let op1 =
           match src with
           | 1 ->
               let prog = Array.unsafe_get vm.segs 0 in
               let a = pcv + 1 in
-              if a < slen prog then sget prog a else 0
-          | 2 -> let a = fpv + off2 in if a >= 0 && a < len then sget mem a else 0
-          | 3 -> let a = apv + off2 in if a >= 0 && a < len then sget mem a else 0
+              if a < slen prog then sget prog a else Felt.empty
+          | 2 -> let a = fpv + off2 in if a >= 0 && a < len then sget mem a else Felt.empty
+          | 3 -> let a = apv + off2 in if a >= 0 && a < len then sget mem a else Felt.empty
           | _ ->
-              if op0 land 3 = 2 then begin
+              if is_reloc op0 then begin
                 let sg = rseg op0 and a = roff op0 + off2 in
                 if sg >= 0 && sg < vm.nsegs && a >= 0 then begin
                   let sm = Array.unsafe_get vm.segs sg in
-                  let v = if a < slen sm then sget sm a else 0 in
+                  let v = if a < slen sm then sget sm a else Felt.empty in
                   (* op1 deduction for `[ptr + k] = dst` into a non-deducing segment *)
-                  if v = 0 && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
+                  if v = Felt.empty && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
                      && not (is_deducing (Array.unsafe_get vm.seg_flag sg)) then begin
                     let dv = sget mem dst_addr in
-                    if dv <> 0 then (write vm sg a dv; dv) else 0
+                    if dv <> Felt.empty then (write vm sg a dv; dv) else Felt.empty
                   end
-                  else if v = 0 && is_deducing (Array.unsafe_get vm.seg_flag sg) then begin
+                  else if v = Felt.empty && is_deducing (Array.unsafe_get vm.seg_flag sg) then begin
                     (* builtin auto-deduction of the op1 cell, as cairo-vm does first *)
                     let b = deduce_cell vm sg a in
-                    if b <> 0 then (write vm sg a b; b) else 0
+                    if b <> Felt.empty then (write vm sg a b; b) else Felt.empty
                   end
                   else v
                 end
-                else 0
+                else Felt.empty
               end
-              else 0
+              else Felt.empty
         in
         let size = if src = 1 then 2 else 1 in
         let opcode = (d lsr 58) land 3 in
         let dst = sget mem dst_addr in
-        if op1 <> 0 then begin
+        if op1 <> Felt.empty then begin
           (* ---- result ---- *)
           let res_kind = (d lsr 52) land 3 in
           let res =
             match res_kind with
             | 0 -> op1
             | 1 ->
-                if op0 = 0 then 0
+                if op0 = Felt.empty then Felt.empty
                 else if both_small op0 op1 then begin
-                  let s = (op0 asr 2) + (op1 asr 2) in
+                  let s = small_val op0 + small_val op1 in
                   if fits_small s then small s else Felt.add op0 op1
                 end
                 else if is_reloc op0 && is_small op1 then begin
                   let o = roff op0 + small_val op1 in
-                  if o >= 0 && o <= max_off then reloc (rseg op0) o else 0
+                  if o >= 0 && o <= max_off then reloc (rseg op0) o else Felt.empty
                 end
                 else if is_felt op0 && is_felt op1 then Felt.add op0 op1
-                else 0
-            | 2 -> if op0 <> 0 && is_felt op0 && is_felt op1 then Felt.mul op0 op1 else 0
-            | _ -> -1 (* unconstrained *)
+                else Felt.empty
+            | 2 -> if op0 <> Felt.empty && is_felt op0 && is_felt op1 then Felt.mul op0 op1 else Felt.empty
+            | _ -> unconstrained
           in
           let ok =
             match opcode with
             | 3 ->
-                if res = 0 || res = -1 || op0 = 0 then false
-                else if dst = 0 then begin
+                if res = Felt.empty || res = unconstrained || op0 = Felt.empty then false
+                else if dst = Felt.empty then begin
                   sset mem dst_addr res;
                   if dst_addr >= !hi1 then hi1 := dst_addr + 1;
                   true
@@ -413,22 +417,22 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
             | 1 ->
                 (* call: [ap] = fp, [ap+1] = return pc *)
                 let ret = reloc 0 (pcv + size) and fpr = reloc 1 fpv in
-                if !pc_seg <> 0 || res = 0 then false
+                if !pc_seg <> 0 || res = Felt.empty then false
                 else begin
                   let o0 = op0 in
-                  if (dst = 0 || dst = fpr) && (o0 = 0 || o0 = ret) then begin
-                    if dst = 0 then sset mem dst_addr fpr;
-                    if o0 = 0 then sset mem op0_addr ret;
+                  if (dst = Felt.empty || dst = fpr) && (o0 = Felt.empty || o0 = ret) then begin
+                    if dst = Felt.empty then sset mem dst_addr fpr;
+                    if o0 = Felt.empty then sset mem op0_addr ret;
                     if op0_addr >= !hi1 then hi1 := op0_addr + 1;
                     true
                   end
                   else false
                 end
-            | _ -> dst <> 0 && op0 <> 0 (* NOP/RET: cairo-vm requires dst and op0 *)
+            | _ -> dst <> Felt.empty && op0 <> Felt.empty (* NOP/RET: cairo-vm requires dst and op0 *)
           in
           if ok then begin
             (* ---- register updates ---- *)
-            let dstv = if opcode = 3 && dst = 0 then res else if opcode = 1 && dst = 0 then reloc 1 fpv else dst in
+            let dstv = if opcode = 3 && dst = Felt.empty then res else if opcode = 1 && dst = Felt.empty then reloc 1 fpv else dst in
             let new_fp =
               match opcode with
               | 1 -> apv + 2
@@ -446,7 +450,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
             let new_pc, new_seg =
               match pcu with
               | 0 -> (pcv + size, !pc_seg)
-              | 1 -> if res > 0 && is_reloc res then (roff res, rseg res) else (-1, 0)
+              | 1 -> if (res :> int) > 0 && is_reloc res then (roff res, rseg res) else (-1, 0)
               | 2 -> if is_small res then (pcv + small_val res, !pc_seg) else (-1, 0)
               | _ ->
                   if dstv = zero then (pcv + size, !pc_seg)
@@ -462,7 +466,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
               incr steps;
               fast := true
             end
-            else if opcode = 3 && dst = 0 then
+            else if opcode = 3 && dst = Felt.empty then
               (* we already wrote dst; generic step will see it assigned and recompute identically *)
               ()
           end

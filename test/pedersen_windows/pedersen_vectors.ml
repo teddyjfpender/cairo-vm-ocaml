@@ -4,9 +4,7 @@ open Cairovm
 let check x y expected =
   let felt s = Felt.of_z (Z.of_string s) in
   let x = felt x and y = felt y in
-  Felt.reserve 1;
-  let result = Felt.c_pedersen !Felt.pool x y !Felt.pool_n in
-  Felt.commit result;
+  let result = Felt.pedersen x y in
   assert (Z.equal (Felt.to_z result) (Z.of_string expected))
 
 let () =

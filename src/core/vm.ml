@@ -37,7 +37,7 @@ type vm = {
   mutable tsegs : seg array;
   mutable thi : int array;
   mutable ntsegs : int;
-  mutable rules : (int * int) list; (* temp index -> destination relocatable *)
+  mutable rules : (int * Felt.t) list; (* temp index -> destination relocatable *)
   mutable relocating : bool;
   mutable had_temp : bool;
 }
@@ -86,7 +86,7 @@ let[@inline] seg_ok vm seg = seg >= 0 && seg < vm.nsegs
 
 let[@inline] read vm seg off =
   let a = Array.unsafe_get vm.segs seg in
-  if off < slen a then sget a off else 0
+  if off < slen a then sget a off else Felt.empty
 
 (* ---- temporary segments (cairo-vm MemorySegmentManager.add_temp_segment) ---- *)
 
@@ -111,7 +111,7 @@ let temp_ok vm seg = seg < 0 && temp_index seg < vm.ntsegs
 let[@inline never] temp_read vm seg off =
   if not (temp_ok vm seg) then fail "Unknown memory segment %d" seg;
   let a = vm.tsegs.(temp_index seg) in
-  if off >= 0 && off < slen a then sget a off else 0
+  if off >= 0 && off < slen a then sget a off else Felt.empty
 
 (* Memory.relocate_value: one application of the current rules *)
 let[@inline never] relocate_temp_value vm v =
@@ -129,7 +129,7 @@ let get vm seg off =
     if seg < 0 then temp_read vm seg off
     else begin
       if not (seg_ok vm seg) then fail "Unknown memory segment %d" seg;
-      if off < 0 then 0 else read vm seg off
+      if off < 0 then Felt.empty else read vm seg off
     end
   in
   if vm.relocating then relocate_temp_value vm v else v
@@ -143,7 +143,7 @@ let[@inline never] grow_seg vm seg off =
   vm.segs.(seg) <- seg_grow a !n
 
 let value_to_string v =
-  if v = 0 then "<empty>"
+  if v = Felt.empty then "<empty>"
   else if is_reloc v then Printf.sprintf "%d:%d" (rseg v) (roff v)
   else Felt.to_string v
 
@@ -174,7 +174,7 @@ let[@inline] write vm seg off v =
   if off >= slen a then grow_seg vm seg off;
   let a = Array.unsafe_get vm.segs seg in
   let cur = sget a off in
-  if cur = 0 then begin
+  if cur = Felt.empty then begin
     sset a off v;
     if off >= Array.unsafe_get vm.hi seg then Array.unsafe_set vm.hi seg (off + 1);
     if Array.unsafe_get vm.seg_flag seg <> 0 then validate vm seg off v
@@ -195,7 +195,7 @@ let[@inline never] temp_write vm seg off v =
   end;
   let a = vm.tsegs.(k) in
   let cur = sget a off in
-  if cur = 0 then begin
+  if cur = Felt.empty then begin
     sset a off v;
     if off >= vm.thi.(k) then vm.thi.(k) <- off + 1
   end
@@ -261,7 +261,7 @@ let relocate_temp_memory vm =
     let rewrite a n =
       for i = 0 to n - 1 do
         let v = sget a i in
-        if v land 3 = 2 && rseg v < 0 then sset a i (relocate v)
+        if is_reloc v && rseg v < 0 then sset a i (relocate v)
       done
     in
     for s = 0 to vm.nsegs - 1 do rewrite vm.segs.(s) (min vm.hi.(s) (slen vm.segs.(s))) done;
@@ -273,7 +273,7 @@ let relocate_temp_memory vm =
           let a = vm.tsegs.(k) in
           for i = 0 to vm.thi.(k) - 1 do
             let v = sget a i in
-            if v <> 0 then begin
+            if v <> Felt.empty then begin
               let o = roff dst + i in
               if o > off_mask then fail "Offset exceeds range when relocating memory";
               write_checked vm (rseg dst) o v

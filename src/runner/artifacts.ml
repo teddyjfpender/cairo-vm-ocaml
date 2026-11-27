@@ -63,7 +63,7 @@ let output_segment r =
 
 let output_line vm seg i =
   let v = read vm seg i in
-  if v = 0 then "<missing>"
+  if v = Felt.empty then "<missing>"
   else if Felt.is_small v then string_of_int (Felt.small_val v)
   else if Felt.is_reloc v then Printf.sprintf "%d:%d" (Felt.rseg v) (Felt.roff v)
   else Z.to_string (Felt.to_signed_z v)
@@ -93,6 +93,6 @@ let pedersen_verified ~secure r b =
     if o >= limit then List.rev acc
     else
       let a = read vm b.base (o - 1) and c = read vm b.base (o - 2) in
-      go (o + 3) (if a <> 0 && c <> 0 && Felt.is_felt a && Felt.is_felt c then o :: acc else acc)
+      go (o + 3) (if a <> Felt.empty && c <> Felt.empty && Felt.is_felt a && Felt.is_felt c then o :: acc else acc)
   in
   go 2 []

@@ -25,17 +25,9 @@ let rec reference acc q m =
                  (plus q q) (Z.shift_right m 1)
 
 let execute (px, py) (qx, qy) m =
-  List.iteri (fun i z ->
-      let c = Felt.of_z z in Felt.c_load_slot !Felt.pool c i)
-    [px; py; qx; qy; m];
-  let status = Felt.c_ec_op !Felt.pool 0 5 in
-  let read i =
-    Felt.reserve 1;
-    let c = Felt.c_code_of_slot !Felt.pool i !Felt.pool_n in
-    Felt.commit c;
-    Felt.to_z c
-  in
-  if status <> 0 then Error status else Ok (read 5, read 6)
+  match Felt.ec_op (Array.map Felt.of_z [| px; py; qx; qy; m |]) with
+  | Ok out -> Ok (Felt.to_z out.(0), Felt.to_z out.(1))
+  | Error status -> Error status
 
 let check a b m = assert (execute a b m = reference a b m)
 

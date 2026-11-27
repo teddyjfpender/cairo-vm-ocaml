@@ -111,7 +111,7 @@ let ecdsa_validate vm seg off =
   if idx = 1 && off < 1 then ()
   else begin
     let pubkey = read vm seg pk_off and msg = read vm seg (pk_off + 1) in
-    let pubkey_ok = pubkey <> 0 && Felt.is_felt pubkey and msg_ok = msg <> 0 && Felt.is_felt msg in
+    let pubkey_ok = pubkey <> Felt.empty && Felt.is_felt pubkey and msg_ok = msg <> Felt.empty && Felt.is_felt msg in
     let proceed =
       if not pubkey_ok then (if idx = 1 then false else fail "Signature builtin: public key at %d:%d is not an integer" seg pk_off)
       else if not msg_ok then (if idx = 0 then false else fail "Signature builtin: message at %d:%d is not an integer" seg off)
@@ -151,17 +151,17 @@ let addr_add (seg, off) k =
   if o < 0 || o > max_off then fail "Offset exceeds range";
   (seg, o)
 
-let cell vm (seg, off) = if seg_ok vm seg && off >= 0 then read vm seg off else 0
+let cell vm (seg, off) = if seg_ok vm seg && off >= 0 then read vm seg off else Felt.empty
 
 let get_reloc vm a =
   let v = cell vm a in
-  if v = 0 then fail "Unknown memory cell %d:%d" (fst a) (snd a);
+  if v = Felt.empty then fail "Unknown memory cell %d:%d" (fst a) (snd a);
   if not (Felt.is_reloc v) then fail "Expected relocatable at %d:%d" (fst a) (snd a);
   (Felt.rseg v, Felt.roff v)
 
 let get_int vm a =
   let v = cell vm a in
-  if v = 0 then fail "Unknown memory cell %d:%d" (fst a) (snd a);
+  if v = Felt.empty then fail "Unknown memory cell %d:%d" (fst a) (snd a);
   if not (Felt.is_felt v) then fail "Expected integer at %d:%d" (fst a) (snd a);
   v
 
@@ -180,13 +180,13 @@ let insert vm (seg, off) v =
 
 (* words and value; None if a word is missing *)
 let read_n_words vm b a =
-  let words = Array.make n_words 0 in
+  let words = Array.make n_words Felt.empty in
   let rec go i acc =
     if i = n_words then Some (words, acc)
     else begin
       let ai = addr_add a i in
       let v = cell vm ai in
-      if v = 0 then None
+      if v = Felt.empty then None
       else if Felt.is_reloc v then fail "Expected integer at %d:%d" (fst ai) (snd ai)
       else begin
         let w = Felt.to_z v in
@@ -200,7 +200,7 @@ let read_n_words vm b a =
   in
   go 0 Z.zero
 
-type inputs = { pv : Z.t; p_words : int array; values_ptr : int * int; offsets_ptr : int * int; n : int }
+type inputs = { pv : Z.t; p_words : Felt.t array; values_ptr : int * int; offsets_ptr : int * int; n : int }
 
 let read_inputs vm b a =
   let values_ptr = get_reloc vm (addr_add a values_ptr_offset) in
@@ -260,7 +260,7 @@ let fill_offsets vm offsets_ptr index n_copies =
     for i = 0 to 2 do
       let a = addr_add offsets_ptr i in
       let off = cell vm a in
-      if off = 0 then fail "Unknown memory cell %d:%d" (fst a) (snd a);
+      if off = Felt.empty then fail "Unknown memory cell %d:%d" (fst a) (snd a);
       for copy_i = 0 to n_copies - 1 do
         insert vm (addr_add offsets_ptr ((3 * (index + copy_i)) + i)) off
       done

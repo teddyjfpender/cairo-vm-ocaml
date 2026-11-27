@@ -116,7 +116,7 @@ let keccak_input vm data ~first length ~check_width =
       if not (Felt.is_felt word) then fail "unsafe_keccak: expected an integer";
       let count = min 16 (length - offset) in
       if check_width && Felt.bits word > 8 * count then fail "unsafe_keccak: word out of range";
-      Felt.c_put_code !Felt.pool word scratch 0;
+      Felt.c_put_code !Felt.pool (word :> int) scratch 0;
       if count = 16 then begin
         Bytes.set_int64_be bytes offset (Bytes.get_int64_le scratch 8);
         Bytes.set_int64_be bytes (offset + 8) (Bytes.get_int64_le scratch 0)
@@ -134,7 +134,7 @@ external absorb_keccak : bytes -> int -> bytes -> int = "cvm_keccak_absorb"
 external snapshot_keccak : bytes -> int -> bytes -> unit = "cvm_keccak_snapshot"
 
 type keccak_prefix = {
-  start : int; checked : bool; state : bytes;
+  start : Felt.t; checked : bool; state : bytes;
   mutable words : int; mutable used : int;
 }
 
@@ -211,7 +211,7 @@ let () =
   reg H.assert_nn (fun c ->
       let read = bound_felt c "a" in fun vm ->
       let a = read vm in
-      if not (Felt.is_small a && a > 0) && Felt.bits a > 128 then
+      if not (Felt.is_small a && a > Felt.empty) && Felt.bits a > 128 then
         fail "a = %s is out of range." (Z.to_string (Felt.to_z a)));
   (* assert_le_felt *)
   reg H.assert_le_felt (fun c vm ->
@@ -253,7 +253,7 @@ let () =
   reg H.is_nn (fun c ->
       let read = bound_felt c "a" in fun vm ->
       let a = read vm in
-      write_ap vm (of_bool (if Felt.is_small a then a < 0 else Felt.bits a > 128)));
+      write_ap vm (of_bool (if Felt.is_small a then a < Felt.empty else Felt.bits a > 128)));
   reg H.is_nn_out_of_range (fun c vm ->
       let a = felt_z vm c "a" in
       write_ap vm (if Z.lt (Z.erem (Z.sub (Z.neg a) Z.one) pz) rc_bound then Felt.zero else Felt.one));
@@ -413,12 +413,17 @@ let () =
       set c.scopes "keys" (Values rest);
       set c.scopes "key" (Value first);
       set_val vm c "first_key" first);
-  let pop_next name scopes =
+  let pop_value name scopes =
     match var scopes name with
     | Values (x :: xs) -> set scopes name (Values xs); x
+    | Values [] -> fail "pop from empty list"
+    | _ -> fail "%s is not a list of values" name
+  in
+  let pop_index name scopes =
+    match var scopes name with
     | Ints (x :: xs) -> set scopes name (Ints xs); x
-    | Ints [] | Values [] -> fail "pop from empty list"
-    | _ -> fail "%s is not a list" name
+    | Ints [] -> fail "pop from empty list"
+    | _ -> fail "%s is not a list of indices" name
   in
   let access_list scopes =
     match (var scopes "access_indices", var scopes "key") with
@@ -428,14 +433,14 @@ let () =
   reg H.squash_dict_inner_first_iteration (fun c vm ->
       (* The collection loop already restores increasing access order. *)
       set c.scopes "current_access_indices" (Ints (access_list c.scopes));
-      let cur = pop_next "current_access_indices" c.scopes in
+      let cur = pop_index "current_access_indices" c.scopes in
       set c.scopes "current_access_index" (Int (z cur));
       let rc = get_ptr vm c "range_check_ptr" in
       write_checked vm (Felt.rseg rc) (Felt.roff rc) (Felt.small cur));
-  let nonempty scopes name = match var scopes name with Ints l | Values l -> l <> [] | _ -> fail "not a list" in
+  let nonempty scopes name = match var scopes name with Ints l -> l <> [] | Values l -> l <> [] | _ -> fail "not a list" in
   reg H.squash_dict_inner_skip_loop (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
   reg H.squash_dict_inner_check_access_index (fun c vm ->
-      let nw = pop_next "current_access_indices" c.scopes in
+      let nw = pop_index "current_access_indices" c.scopes in
       let cur = Z.to_int (var_z c.scopes "current_access_index") in
       set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (nw - cur - 1));
       set c.scopes "current_access_index" (Int (z nw)));
@@ -446,7 +451,7 @@ let () =
   reg H.squash_dict_inner_assert_len_keys (fun c _ -> check (not (nonempty c.scopes "keys")) "assert len(keys) == 0");
   reg H.squash_dict_inner_next_key (fun c vm ->
       if not (nonempty c.scopes "keys") then fail "No keys left but remaining_accesses > 0.";
-      let k = pop_next "keys" c.scopes in
+      let k = pop_value "keys" c.scopes in
       set c.scopes "key" (Value k);
       set_val vm c "next_key" k);
   (* dict_new *)
@@ -495,10 +500,10 @@ let () =
 (* A completed block records the maximum seen since row zero. These maxima
    are ordered even when the input is unsorted. A relocatable terminates any
    scan, so it never needs to be inserted into the index. *)
-type lower_index = { mutable maxima : int array; mutable blocks : int }
+type lower_index = { mutable maxima : Felt.t array; mutable blocks : int }
 type lower_cursor = {
-  owner : vm; base : int; stride : int;
-  mutable last_key : int; mutable last_index : int;
+  owner : vm; base : Felt.t; stride : int;
+  mutable last_key : Felt.t; mutable last_index : int;
   mutable index : lower_index option;
 }
 
@@ -716,13 +721,13 @@ let () =
 let set_word_hash v = if Felt.is_big v then Z.hash (Felt.to_z v) else Hashtbl.hash v
 
 module Set_words = Hashtbl.Make (struct
-  type t = int
+  type t = Felt.t
   let equal = Felt.equal
   let hash = set_word_hash
 end)
 
 module Set_rows = Hashtbl.Make (struct
-  type t = int array
+  type t = Felt.t array
   let equal a b = Array.length a = Array.length b && Array.for_all2 Felt.equal a b
   let hash = Array.fold_left (fun h v -> (h * 65599) lxor set_word_hash v) 0
 end)
@@ -731,7 +736,7 @@ type complete_rows = { rows : int Set_rows.t; mutable next : int }
 
 type set_index = {
   owner : vm;
-  base : int;
+  base : Felt.t;
   width : int;
   first : int Set_words.t;
   mutable composite : complete_rows option;
@@ -745,7 +750,7 @@ let find_set_element cache vm base total elm =
   let capacity = slen mem in
   let cell off =
     let v = sget mem off in
-    if v = 0 then fail "Unknown memory cell %d:%d" seg off;
+    if v = Felt.empty then fail "Unknown memory cell %d:%d" seg off;
     v
   in
   let index =
@@ -798,7 +803,7 @@ let find_set_element cache vm base total elm =
                let off = start + i in
                (* A hole in an unexamined suffix is not necessarily an error.
                   Resume the ordinary short-circuit comparison at this row. *)
-               let rec complete j = j = es || (sget mem (off+j) <> 0 && complete (j+1)) in
+               let rec complete j = j = es || (sget mem (off+j) <> Felt.empty && complete (j+1)) in
                if es > capacity - off || not (complete 0) then search 0 (max i from)
                else begin
                  let row = Array.init es (fun j -> sget mem (off+j)) in

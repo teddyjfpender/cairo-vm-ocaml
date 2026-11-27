@@ -15,10 +15,5 @@ let () =
     "1603826836212970325138872328357199913552440906838477977392066201135652874471";
     "3088490997232510509292976764898145315928397103844479806610460482157694621314";
   |] in
-  Array.iteri (fun i x -> Felt.c_load_slot !Felt.pool (Felt.of_z x) i) input;
-  Felt.c_poseidon !Felt.pool 0 3;
-  Array.iteri (fun i want ->
-    Felt.reserve 1;
-    let result = Felt.c_code_of_slot !Felt.pool (Stdlib.(+) 3 i) !Felt.pool_n in
-    Felt.commit result;
-    assert (equal (Felt.to_z result) (of_string want))) expected
+  let output = Felt.poseidon (Array.map Felt.of_z input) in
+  Array.iteri (fun i want -> assert (equal (Felt.to_z output.(i)) (of_string want))) expected

@@ -247,3 +247,47 @@ let compare a b =
 let bits c = c_bits !pool c
 
 let to_string c = Z.to_string (to_z c)
+
+type t = int
+let[@inline] unsafe_of_int x = x
+let empty = 0
+
+(* ---- typed entry points to the C hash/EC kernels ----
+   Inputs are loaded into reserved, uncommitted pool slots; outputs are
+   canonicalized forward from the same base (the write cursor never overtakes
+   an unread output), and only big results advance [pool_n]. *)
+
+let pedersen a b =
+  reserve 1;
+  let r = c_pedersen !pool a b !pool_n in
+  commit r;
+  r
+
+(* op 0 and, 1 xor, 2 or; [empty] when an input exceeds 2^251 *)
+let bitwise op x y =
+  if both_small x y && x >= 0 && y >= 0 then
+    match op with 0 -> x land y | 1 -> (x lxor y) lor 1 | _ -> x lor y
+  else begin
+    reserve 1;
+    let r = c_bitwise !pool op x y !pool_n in
+    commit r;
+    r
+  end
+
+let kernel (k : int -> int -> int) (inp : t array) n_out =
+  let n_in = Array.length inp in
+  reserve (n_in + n_out);
+  let s = !pool_n in
+  Array.iteri (fun i v -> c_load_slot !pool v (s + i)) inp;
+  let rc = k s (s + n_in) in
+  if rc <> 0 then Error rc
+  else
+    Ok (Array.init n_out (fun i ->
+        let r = c_code_of_slot !pool (s + n_in + i) !pool_n in
+        commit r;
+        r))
+
+let infallible = function Ok out -> out | Error _ -> assert false
+let poseidon inp = infallible (kernel (fun i o -> c_poseidon !pool i o; 0) inp 3)
+let keccak inp = infallible (kernel (fun i o -> c_keccak !pool i o; 0) inp 8)
+let ec_op inp = kernel (fun i o -> c_ec_op !pool i o) inp 2

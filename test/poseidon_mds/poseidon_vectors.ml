@@ -1,13 +1,6 @@
 open Cairovm
 
-let permute input =
-  Array.iteri (fun i z ->
-    let value = Felt.of_z z in Felt.c_load_slot !Felt.pool value i) input;
-  Felt.c_poseidon !Felt.pool 0 3;
-  Array.init 3 (fun i ->
-    Felt.reserve 1;
-    let code = Felt.c_code_of_slot !Felt.pool (3+i) !Felt.pool_n in
-    Felt.commit code; Felt.to_z code)
+let permute input = Array.map Felt.to_z (Felt.poseidon (Array.map Felt.of_z input))
 
 (* Expected results from cairo-lang 0.13.5 poseidon_perm. *)
 let check input expected =

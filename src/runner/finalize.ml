@@ -34,7 +34,7 @@ let read_return_values r ~allow_missing =
           pointer := max 0 (!pointer - 1);
           if r.proof then begin
             let v = read vm 1 !pointer in
-            if v = 0 || not (Felt.is_felt v) then fail "Expected integer at address 1:%d" !pointer;
+            if v = Felt.empty || not (Felt.is_felt v) then fail "Expected integer at address 1:%d" !pointer;
             if not (Felt.equal v Felt.zero) then fail "Missing builtin %s: stop pointer is not zero" (bname k)
           end)
     (List.rev r.prog_builtins);
@@ -83,18 +83,18 @@ let verify_secure_runner r =
             let cpi = cells_per_instance k and nin = n_input_cells k in
             let filled = ref 0 in
             for i = 0 to n - 1 do
-              if read vm b.base i <> 0 then incr filled
+              if read vm b.base i <> Felt.empty then incr filled
             done;
             let ninst = ((n - 1) / cpi) + 1 in
             if ninst > !filled / nin then fail "Missing memory cells for builtin %s" (bname k);
             for i = 0 to ninst - 1 do
               for j = 0 to nin - 1 do
-                if read vm b.base ((cpi * i) + j) = 0 then
+                if read vm b.base ((cpi * i) + j) = Felt.empty then
                   fail "Missing memory cells for builtin %s at offset %d" (bname k) ((cpi * i) + j)
               done;
               for j = nin to cpi - 1 do
                 let off = (cpi * i) + j in
-                if read vm b.base off = 0 && is_deducing vm.seg_flag.(b.base) then
+                if read vm b.base off = Felt.empty && is_deducing vm.seg_flag.(b.base) then
                   ignore (deduce_builtin vm b b.base off)
               done
             done
@@ -103,7 +103,7 @@ let verify_secure_runner r =
   if r.proof then begin
     (* canonical proof mode: [initial_fp - 2] must be the final fp *)
     let v = read vm 1 (r.initial_fp - 2) in
-    if v = 0 then fail "Missing return fp at 1:%d" (r.initial_fp - 2);
+    if v = Felt.empty then fail "Missing return fp at 1:%d" (r.initial_fp - 2);
     if Felt.is_reloc v then begin
       if v <> Felt.reloc 1 vm.fp then
         fail "Return fp %d:%d does not match final fp 1:%d" (Felt.rseg v) (Felt.roff v) vm.fp
