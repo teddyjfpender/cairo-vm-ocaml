@@ -14,7 +14,7 @@ let () =
   let bases = [| 1; 70200; 9000000 |] in
   let path = Filename.temp_file "cairo-trace" ".bin" in
   Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
-    Runner.c_write_trace path vm.trace vm.tlen bases;
+    Artifacts.c_write_trace path vm.trace vm.tlen bases;
     let raw = In_channel.with_open_bin path In_channel.input_all in
     assert (String.length raw = List.length rows * 24);
     List.iteri (fun i (seg, pc, ap, fp) ->

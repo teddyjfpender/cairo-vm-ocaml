@@ -10,9 +10,9 @@ let runner builtins =
 
 let check r expected =
   let lines = ref [] in
-  Runner.iter_output_lines r (fun s -> lines := s :: !lines);
+  Artifacts.iter_output_lines r (fun s -> lines := s :: !lines);
   assert (List.rev !lines = expected);
-  assert (Runner.output_lines r = expected)
+  assert (Artifacts.output_lines r = expected)
 
 let () =
   check (runner []) [];

@@ -9,7 +9,7 @@ let default_config = {
 let run ?(config=default_config) ?(fill_holes=false) program =
   let runner = Runner.initialize config program in
   Runner.run_until_end runner;
-  Runner.end_run ~fill_holes runner ~secure:config.secure_run
+  Finalize.end_run ~fill_holes runner ~secure:config.secure_run
     ~allow_missing:config.allow_missing_builtins;
   runner
 

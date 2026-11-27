@@ -17,7 +17,7 @@ let () =
   List.iter (fun run ->
     assert (run.Runner.vm.steps = 1);
     assert (run.vm.tlen = 1);
-    assert (Runner.output_lines run = [])) [first; second];
+    assert (Artifacts.output_lines run = [])) [first; second];
   assert (first.vm != second.vm);
   match Cairo_run.run program with
   | exception Errors.Vm_error _ -> ()

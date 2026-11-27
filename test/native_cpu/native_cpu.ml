@@ -110,10 +110,10 @@ let () =
     let deduced = deduce_builtin vm b 2 2 in
     Option.iter (fun n -> assert (Felt.equal deduced (Felt.small n))) expected;
     write vm 2 2 deduced;
-    Runner.verify_auto_deductions vm;
+    Resources.verify_auto_deductions vm;
     (* Simulate a program-supplied output with both warm and cold caches. *)
     sset vm.segs.(2) 2 (Felt.small 123);
-    let reject () = match Runner.verify_auto_deductions vm with
+    let reject () = match Resources.verify_auto_deductions vm with
       | exception Vm_error _ -> () | () -> failwith "accepted incorrect builtin output"
     in
     reject (); b.cache <- [||]; reject ())

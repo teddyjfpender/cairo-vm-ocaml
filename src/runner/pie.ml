@@ -189,7 +189,7 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
            ( suffix k,
              match k with
              | Output -> Obj [ ("pages", Obj []); ("attributes", Obj []) ]
-             | Pedersen -> Arr (List.map (fun o -> Arr [ int b.base; int o ]) (Runner.pedersen_verified ~secure r b))
+             | Pedersen -> Arr (List.map (fun o -> Arr [ int b.base; int o ]) (Artifacts.pedersen_verified ~secure r b))
              | Ecdsa ->
                  let sigs = List.sort compare (Hashtbl.fold (fun o rs acc -> (o, rs) :: acc) Builtins_ext.signatures []) in
                  let num z = Num (Z.to_string (Z.erem z Felt.p)) in
@@ -201,9 +201,9 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
     Obj
       [
         ("n_steps", int vm.steps);
-        ("n_memory_holes", int (Runner.memory_holes r));
+        ("n_memory_holes", int (Resources.memory_holes r));
         ( "builtin_instance_counter",
-          Obj (List.map (fun (k, b) -> (suffix k, int (Runner.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
+          Obj (List.map (fun (k, b) -> (suffix k, int (Resources.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
       ]
   in
   write_zip path

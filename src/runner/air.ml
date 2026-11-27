@@ -81,7 +81,7 @@ let relocated_value table v =
 let public_input (r : Runner.t) =
   if not r.proof then fail "AIR public input requires proof mode";
   let vm = r.vm in
-  let table = Runner.relocation_table r in
+  let table = Artifacts.relocation_table r in
   (* cairo-vm's relocated memory: length grows by one per empty cell and to
      cover every assigned relocated address *)
   let mem_len = ref 1 in
@@ -108,9 +108,9 @@ let public_input (r : Runner.t) =
                  offs))
   in
   let rc_min, rc_max =
-    match Runner.perm_range_check_limits r with Some x -> x | None -> fail "Range check values are missing"
+    match Resources.perm_range_check_limits r with Some x -> x | None -> fail "Range check values are missing"
   in
-  let first, last = match Runner.trace_bounds r with Some x -> x | None -> fail "The trace slice provided is empty" in
+  let first, last = match Artifacts.trace_bounds r with Some x -> x | None -> fail "The trace slice provided is empty" in
   let reloc_pc (s, pc, _, _) = table.(s) + pc and reloc_ap (_, _, ap, _) = table.(1) + ap in
   let seg_addr name a b = (name, Obj [ ("begin_addr", Int a); ("stop_ptr", Int b) ]) in
   let builtin_segs =
@@ -132,7 +132,7 @@ let public_input (r : Runner.t) =
   in
   Obj
     [
-      ("layout", Str (Runner.the_layout r).name);
+      ("layout", Str (Resources.the_layout r).name);
       ("rc_min", Int rc_min);
       ("rc_max", Int rc_max);
       ("n_steps", Int vm.steps);
@@ -166,7 +166,7 @@ let instances vm b fields =
 (* ModBuiltinRunner::air_private_input: missing values default to 0 *)
 let mod_private_input (r : Runner.t) b =
   let vm = r.vm in
-  let table = Runner.relocation_table r in
+  let table = Artifacts.relocation_table r in
   let cell (sg, o) = if sg >= 0 && sg < vm.nsegs && o >= 0 then read vm sg o else 0 in
   let int_or0 a = let v = cell a in if v <> 0 && Felt.is_felt v then v else Felt.zero in
   let reloc_or0 a = let v = cell a in if v <> 0 && Felt.is_reloc v then (Felt.rseg v, Felt.roff v) else (0, 0) in

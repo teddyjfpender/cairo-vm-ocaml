@@ -111,17 +111,17 @@ let () =
       let t1 = Unix.gettimeofday () in
       Runner.run_until_end r;
       let t2 = Unix.gettimeofday () in
-      Runner.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
+      Finalize.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
     with Errors.Vm_error msg when rust <> None && not !stats -> delegate msg in
     if !print_output then begin
       print_string "Program Output:\n";
-      Runner.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
+      Artifacts.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
       flush stdout
     end;
-    Option.iter (Runner.write_trace r) !trace;
-    Option.iter (Runner.write_memory r) !memory;
+    Option.iter (Artifacts.write_trace r) !trace;
+    Option.iter (Artifacts.write_memory r) !memory;
     Option.iter (Air.write_public_input r) !air_public;
     (match !air_private, !trace, !memory with
      | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
