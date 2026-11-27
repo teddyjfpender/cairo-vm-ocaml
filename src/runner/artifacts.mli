@@ -16,6 +16,13 @@ val write_trace : Runner.t -> string -> unit
 val write_memory : Runner.t -> string -> unit
 (** Write the relocated binary memory file. *)
 
+val with_artifacts : Runner.t -> trace:string option -> memory:string option -> (unit -> 'a) -> 'a
+(** [with_artifacts r ~trace ~memory k] opens the requested files (trace
+    first), writes them on background threads while [k ()] runs, then joins
+    both. Errors keep the sequential order: open and temporary-value failures
+    raise before [k] runs, and a write failure takes precedence over [k]'s
+    result or exception. [k] must not modify the VM's memory or trace. *)
+
 val trace_bounds : Runner.t -> ((int * int * int * int) * (int * int * int * int)) option
 (** First and last trace entries as [(pc_seg, pc, ap, fp)]. *)
 

@@ -26,19 +26,49 @@ let relocation_table r =
 
 external c_write_trace : string -> seg -> int -> int array -> unit = "cvm_write_trace"
 
-external c_write_memory : string -> seg array -> int array -> int array -> int -> Felt.pool -> unit
-  = "cvm_write_memory_byte" "cvm_write_memory"
+(* A trace or memory file being produced by a background C thread. The job
+   reads only bigarray data (trace, segments, felt pool), which neither moves
+   nor changes after the run; [finish] joins it, closes the file and raises
+   its first error. *)
+type pending = nativeint
 
-let write_trace r path =
+external c_start_trace : string -> seg -> int -> int array -> pending = "cvm_start_trace"
+
+external c_start_memory : string -> seg array -> int array -> int array -> int -> Felt.pool -> pending
+  = "cvm_start_memory_byte" "cvm_start_memory"
+
+external finish : pending -> unit = "cvm_finish_artifact"
+
+let start_trace r path =
   let vm = r.vm in
-  c_write_trace path vm.trace vm.tlen (relocation_table r)
+  c_start_trace path vm.trace vm.tlen (relocation_table r)
 
-let write_memory r path =
+let start_memory r path =
   let vm = r.vm in
   (* relocate_value rejects temporary segments (TemporarySegmentInRelocation) *)
   if vm.had_temp then check_no_temp_values vm;
   let sizes = Array.init vm.nsegs (used_size vm) in
-  c_write_memory path vm.segs sizes (relocation_table r) vm.nsegs Felt.pool
+  c_start_memory path vm.segs sizes (relocation_table r) vm.nsegs Felt.pool
+
+let write_trace r path = finish (start_trace r path)
+let write_memory r path = finish (start_memory r path)
+
+let finish_all jobs =
+  let first = List.fold_left (fun err j -> match finish j with () -> err | exception e -> if err = None then Some e else err) None jobs in
+  Option.iter raise first
+
+let with_artifacts r ~trace ~memory k =
+  match trace, memory with
+  | Some t, Some m when t = m ->
+      (* one file named twice: keep the sequential overwrite order *)
+      write_trace r t; write_memory r m; k ()
+  | _ ->
+      let jt = Option.map (start_trace r) trace in
+      let jm = try Option.map (start_memory r) memory with e -> finish_all (Option.to_list jt); raise e in
+      let jobs = Option.to_list jt @ Option.to_list jm in
+      (match k () with
+       | v -> finish_all jobs; v
+       | exception e -> finish_all jobs; raise e)
 
 (* first and last trace entries as (pc_seg, pc, ap, fp) *)
 let trace_bounds r =

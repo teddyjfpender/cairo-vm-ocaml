@@ -916,31 +916,72 @@ value cvm_zalloc(value vn) {
   return caml_ba_alloc_dims(CAML_BA_CAML_INT | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1, p, n);
 }
 
-/* ---------- binary trace / memory writers (cairo-vm format) ---------- */
-#include <stdio.h>
+/* ---------- binary trace / memory writers (cairo-vm format) ----------
+
+   Each artifact is produced by a background job: the caller opens the file
+   (so open errors surface immediately and in order) and snapshots every input
+   into C memory; a POSIX thread then relocates into a buffer and write(2)s it.
+   The job touches no OCaml value, so the caller may keep running OCaml code
+   (the AIR inputs, the other artifact) until it joins. Writing is bound by
+   the SSD (~13-14 GB/s on an M5 Max, the same for buffered, F_NOCACHE, mmap
+   and concurrent writers), so the gain is overlap, not a faster write.
+
+   The job reads the trace/segment/pool bigarray *data*, which are malloc/mmap
+   allocations that do not move; the caller must keep them alive and
+   unmodified until the join. */
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <caml/signals.h>
 #define OFF_MASK ((1LL << 40) - 1)
 static inline intnat rel_seg(intnat c) { return c >> 42; }
 static inline intnat rel_off(intnat c) { return (c >> 2) & OFF_MASK; }
 
-static void write_chunk(FILE *f, const char *buf, size_t len) {
-  if (fwrite(buf, 1, len, f) != len) {
-    fclose(f);
-    caml_failwith("cannot write Cairo artifact");
+#define ART_BUF (4u << 20)
+
+typedef struct {
+  int fd;
+  int is_trace;
+  const char *err;     /* first failure, reported by the join */
+  char *buf;
+  intnat *table;       /* relocation table copy (nsegs + 1 entries) */
+  intnat ntable;
+  /* trace */
+  const intnat *trace;
+  intnat tlen;
+  /* memory */
+  intnat nsegs;
+  const intnat **seg_data;
+  intnat *seg_size;
+  const u64 *pool;
+  pthread_t th;
+  int threaded;
+} art_job;
+
+static int art_flush(art_job *j, size_t len) {
+  const char *p = j->buf;
+  while (len > 0) {
+    ssize_t w = write(j->fd, p, len);
+    if (w < 0) {
+      if (errno == EINTR) continue;
+      j->err = "cannot write Cairo artifact";
+      return -1;
+    }
+    p += w;
+    len -= (size_t)w;
   }
+  return 0;
 }
 
 /* Decode Vm.record_trace entries to ordinary relocated (ap, fp, pc) triples. */
-value cvm_write_trace(value path, value trace, value vlen, value table) {
-  FILE *f = fopen(String_val(path), "wb");
-  if (!f) caml_failwith("cannot open trace file");
-  static char buf[1 << 22];
-  setvbuf(f, NULL, _IONBF, 0);
-  intnat *t = (intnat *)Caml_ba_data_val(trace);
-  intnat n = Long_val(vlen);
-  intnat base1 = Long_val(Field(table, 1));
-  size_t pos = 0;
+static void art_trace(art_job *j) {
+  const intnat *t = j->trace, *table = j->table;
+  intnat n = j->tlen;
   const u64 offset_mask = (1ULL << 23) - 1;
-  const u64 base0 = Long_val(Field(table, 0));
+  const u64 base0 = (u64)table[0];
+  const intnat base1 = table[1];
+  size_t pos = 0;
   for (intnat i = 0; i < n;) {
     intnat word = t[i++];
     u64 e[3];
@@ -950,52 +991,120 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
       e[1] = base1 + ((packed >> 1) & offset_mask);
       e[2] = base0 + ((packed >> 47) & 0xffff);
     } else {
-      intnat pc = word;
+      intnat pc = word, s = rel_seg(pc);
       e[0] = (u64)(base1 + t[i++]);
       e[1] = (u64)(base1 + t[i++]);
-      e[2] = (u64)(Long_val(Field(table, rel_seg(pc))) + rel_off(pc));
+      if (s < 0 || s >= j->ntable) { j->err = "cannot relocate value"; return; }
+      e[2] = (u64)(table[s] + rel_off(pc));
     }
-    memcpy(buf + pos, e, 24);
+    memcpy(j->buf + pos, e, 24);
     pos += 24;
-    if (pos + 24 > sizeof buf) { write_chunk(f, buf, pos); pos = 0; }
+    if (pos + 24 > ART_BUF) { if (art_flush(j, pos)) return; pos = 0; }
   }
-  write_chunk(f, buf, pos);
-  if (fclose(f) != 0) caml_failwith("cannot close Cairo artifact");
-  return Val_unit;
+  art_flush(j, pos);
 }
 
-/* memory: segs is an OCaml array of segment bigarrays, sizes an int array */
-value cvm_write_memory(value path, value segs, value sizes, value table, value vnsegs, value pool) {
-  FILE *f = fopen(String_val(path), "wb");
-  if (!f) caml_failwith("cannot open memory file");
-  setvbuf(f, NULL, _IONBF, 0);
-  static char buf[40 * 100000];
+/* Per assigned cell: 8-byte address, 32-byte little-endian value. */
+static void art_memory(art_job *j) {
   size_t pos = 0;
-  intnat nsegs = Long_val(vnsegs);
-  for (intnat s = 0; s < nsegs; s++) {
-    intnat *a = (intnat *)Caml_ba_data_val(Field(segs, s));
-    intnat n = Long_val(Field(sizes, s));
-    u64 base = (u64)Long_val(Field(table, s));
+  for (intnat s = 0; s < j->nsegs; s++) {
+    const intnat *a = j->seg_data[s];
+    intnat n = j->seg_size[s];
+    u64 base = (u64)j->table[s];
     for (intnat off = 0; off < n; off++) {
       intnat v = a[off];
       if (v == 0) continue;
       u64 w[5] = {base + (u64)off, 0, 0, 0, 0};
       if ((v & 3) == 2) {
         intnat sg = rel_seg(v);
-        if (sg < 0 || sg >= nsegs) { fclose(f); caml_failwith("cannot relocate value"); }
-        w[1] = (u64)Long_val(Field(table, sg)) + (u64)rel_off(v);
+        if (sg < 0 || sg >= j->nsegs) { j->err = "cannot relocate value"; return; }
+        w[1] = (u64)j->table[sg] + (u64)rel_off(v);
+      } else if ((v & 3) == 3) {
+        memcpy(&w[1], j->pool + ((size_t)(v >> 2) << 2), 32);
       } else {
-        load(pool, v, &w[1]);
+        i64 x = (i64)v >> 2;
+        if (x >= 0) w[1] = (u64)x;
+        else { u64 neg[4] = {(u64)(-x), 0, 0, 0}; sub4(&w[1], P, neg); }
       }
-      memcpy(buf + pos, w, 40);
+      memcpy(j->buf + pos, w, 40);
       pos += 40;
-      if (pos + 40 > sizeof buf) { write_chunk(f, buf, pos); pos = 0; }
+      if (pos + 40 > ART_BUF) { if (art_flush(j, pos)) return; pos = 0; }
     }
   }
-  write_chunk(f, buf, pos);
-  if (fclose(f) != 0) caml_failwith("cannot close Cairo artifact");
+  art_flush(j, pos);
+}
+
+static void *art_run(void *arg) {
+  art_job *j = arg;
+  if (j->is_trace) art_trace(j); else art_memory(j);
+  return NULL;
+}
+
+static void art_free(art_job *j) {
+  free(j->buf); free(j->table); free(j->seg_data); free(j->seg_size); free(j);
+}
+
+static art_job *art_new(value path, value table, int is_trace, const char *open_err) {
+  art_job *j = calloc(1, sizeof *j);
+  if (!j) caml_raise_out_of_memory();
+  j->is_trace = is_trace;
+  j->ntable = Wosize_val(table);
+  j->table = malloc(sizeof(intnat) * (size_t)(j->ntable ? j->ntable : 1));
+  j->buf = malloc(ART_BUF);
+  if (!j->table || !j->buf) { art_free(j); caml_raise_out_of_memory(); }
+  for (intnat i = 0; i < j->ntable; i++) j->table[i] = Long_val(Field(table, i));
+  j->fd = open(String_val(path), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (j->fd < 0) { art_free(j); caml_failwith(open_err); }
+  return j;
+}
+
+static value art_start(art_job *j) {
+  j->threaded = pthread_create(&j->th, NULL, art_run, j) == 0;
+  if (!j->threaded) art_run(j); /* no thread: produce it on the caller's thread */
+  return caml_copy_nativeint((intnat)j);
+}
+
+value cvm_start_trace(value path, value trace, value vlen, value table) {
+  art_job *j = art_new(path, table, 1, "cannot open trace file");
+  j->trace = (const intnat *)Caml_ba_data_val(trace);
+  j->tlen = Long_val(vlen);
+  return art_start(j);
+}
+
+value cvm_start_memory(value path, value segs, value sizes, value table, value vnsegs, value pool) {
+  art_job *j = art_new(path, table, 0, "cannot open memory file");
+  intnat nsegs = Long_val(vnsegs);
+  j->nsegs = nsegs;
+  j->seg_data = malloc(sizeof(intnat *) * (size_t)(nsegs ? nsegs : 1));
+  j->seg_size = malloc(sizeof(intnat) * (size_t)(nsegs ? nsegs : 1));
+  if (!j->seg_data || !j->seg_size) { close(j->fd); art_free(j); caml_raise_out_of_memory(); }
+  for (intnat s = 0; s < nsegs; s++) {
+    j->seg_data[s] = (const intnat *)Caml_ba_data_val(Field(segs, s));
+    j->seg_size[s] = Long_val(Field(sizes, s));
+  }
+  j->pool = (const u64 *)Caml_ba_data_val(pool);
+  return art_start(j);
+}
+value cvm_start_memory_byte(value *argv, int argc) {
+  return cvm_start_memory(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+}
+
+/* Wait for the job, close the file and raise its first failure. */
+value cvm_finish_artifact(value job) {
+  art_job *j = (art_job *)Nativeint_val(job);
+  caml_enter_blocking_section();
+  if (j->threaded) pthread_join(j->th, NULL);
+  int closed = close(j->fd);
+  caml_leave_blocking_section();
+  const char *err = j->err;
+  if (!err && closed != 0) err = "cannot close Cairo artifact";
+  art_free(j);
+  if (err) caml_failwith(err);
   return Val_unit;
 }
-value cvm_write_memory_byte(value *argv, int argc) {
-  return cvm_write_memory(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
+
+/* Synchronous forms. */
+value cvm_write_trace(value path, value trace, value vlen, value table) {
+  return cvm_finish_artifact(cvm_start_trace(path, trace, vlen, table));
 }
+
