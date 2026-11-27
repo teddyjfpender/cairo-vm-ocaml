@@ -729,6 +729,11 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
                     let dv = sget mem dst_addr in
                     if dv <> 0 then (write vm sg a dv; dv) else 0
                   end
+                  else if v = 0 && Array.unsafe_get vm.seg_flag sg = k_deduce then begin
+                    (* builtin auto-deduction of the op1 cell, as cairo-vm does first *)
+                    let b = deduce_cell vm sg a in
+                    if b <> 0 then (write vm sg a b; b) else 0
+                  end
                   else v
                 end
                 else 0
