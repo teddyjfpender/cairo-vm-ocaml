@@ -197,4 +197,24 @@ static inline intnat arith(value pool, intnat op, intnat a, intnat b, intnat dst
   else fmul(r, x, y);
   return store(pool, r, dst);
 }
+
+/* Limb of a bitwise builtin output: op 0 and, 1 xor, 2 or. */
+static inline u64 bit_op(intnat op, u64 x, u64 y) {
+  return op == 0 ? x & y : op == 1 ? x ^ y : x | y;
+}
+
+/* Bitwise builtin output of two felt codes; 0 when an input is at least
+   2^251. Nonnegative small inputs stay immediate, and a result equal to an
+   input reuses its code, so only a new big value takes the slot [dst]. */
+static inline intnat bitwise(value pool, intnat op, intnat a, intnat b, intnat dst) {
+  if ((a & 3) == 1 && (b & 3) == 1 && (a | b) >= 0) return bit_op(op, a, b) | 1;
+  u64 x[4], y[4], r[4];
+  load(pool, a, x);
+  load(pool, b, y);
+  if ((x[3] | y[3]) >> 59) return 0;
+  for (int i = 0; i < 4; i++) r[i] = bit_op(op, x[i], y[i]);
+  if (eq4(r, x)) return a;
+  if (eq4(r, y)) return b;
+  return store(pool, r, dst);
+}
 #endif

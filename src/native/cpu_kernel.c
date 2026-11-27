@@ -4,7 +4,6 @@
 #include "field.h"
 
 extern intnat cvm_binop(value, intnat, intnat, intnat, intnat);
-extern intnat cvm_bitwise(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_pedersen(value, intnat, intnat, intnat);
 extern intnat cvm_bits(value, intnat);
 
@@ -198,9 +197,7 @@ general:;
             if (idx < 2 || slot >= slots || dst || result) break;
             intnat x = cells[at-idx], y = cells[at-idx+1];
             if (!(x & y & 1)) break;
-            if ((x & 3) == 1 && (y & 3) == 1 && (x | y) >= 0)
-              b = idx == 2 ? x & y : idx == 3 ? (x ^ y) | 1 : x | y;
-            else b = cvm_bitwise(pool, idx-2, x, y, slot);
+            b = bitwise(pool, idx-2, x, y, slot);
             if (!b) break;
           } else {
             if (kind && kind != 1 && kind != 2) break;
