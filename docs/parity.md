@@ -41,10 +41,12 @@ The experimental `--os_hints` option accepts a serialized `OsHints` object and a
 `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`, the genesis, single-empty-block and
 11-empty-block tests produced matching metadata, memory, builtin additional data, resource
 counts and version bytes. These runs executed 7,007, 40,597 and 113,706 steps respectively.
-Transaction and syscall coverage is in development.
+The four-block storage test also matched all five PIE members after 196,893 steps.
+It exercises funded Invoke transactions, modern account validation, nested Cairo 0 contract
+execution, storage writes and fee transfer. Other transaction and syscall paths remain experimental.
 
-The saved genesis input and Rust archive member digests come from
-`starknet_os_flow_tests::tests::test_initial_empty_block`, with the chain ID encoded as
+The saved inputs and Rust archive member digests come from the upstream flow tests
+`test_initial_empty_block` and `test_load_bottom`, with the chain ID encoded as
 hex as required by the sequencer's input deserializer. To check the fixture, compile the
 pinned checkout's `starkware/starknet/core/os/os.cairo` with cairo-lang 0.14.3a3, then run
 `python3 test/fixtures/os/check.py _build/default/bin/main.exe /path/to/os.json`.

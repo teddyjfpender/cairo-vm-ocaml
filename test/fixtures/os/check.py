@@ -1,5 +1,6 @@
-"""Compare a native genesis run against the upstream sequencer's saved PIE member hashes."""
+"""Compare native OS runs against the upstream sequencer's saved PIE member hashes."""
 import argparse
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -14,16 +15,21 @@ def main():
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
-    expected = json.loads((fixture / "genesis.sha256.json").read_text())
-    with tempfile.TemporaryDirectory() as directory:
-        pie = Path(directory) / "genesis.zip"
-        subprocess.run([args.binary.resolve(), args.program, "--os_hints", fixture / "genesis.json",
-                        "--layout", "all_cairo", "--cairo_pie_output", pie], check=True)
-        with zipfile.ZipFile(pie) as z:
-            hashes = {name: hashlib.sha256(z.read(name)).hexdigest() for name in z.namelist()}
-        if hashes != expected:
-            raise SystemExit("Sequencer PIE member mismatch")
-        print("Native genesis matches all sequencer PIE members")
+    for name in ("genesis", "storage"):
+        expected = json.loads((fixture / f"{name}.sha256.json").read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            source = fixture / f"{name}.json"
+            if not source.exists():
+                source = Path(directory) / source.name
+                source.write_bytes(gzip.decompress((fixture / f"{name}.json.gz").read_bytes()))
+            pie = Path(directory) / f"{name}.zip"
+            subprocess.run([args.binary.resolve(), args.program, "--os_hints", source,
+                            "--layout", "all_cairo", "--cairo_pie_output", pie], check=True)
+            with zipfile.ZipFile(pie) as z:
+                hashes = {n: hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist()}
+            if hashes != expected:
+                raise SystemExit(f"{name}: sequencer PIE member mismatch")
+            print(f"Native {name} matches all sequencer PIE members")
 
 
 if __name__ == "__main__":

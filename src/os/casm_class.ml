@@ -6,7 +6,7 @@ module U = Yojson.Safe.Util
 let segment vm = Felt.reloc (Vm.add_segment vm) 0
 let at ptr offset = Vm.reloc_add_felt ptr (Felt.small offset)
 
-let load vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
+let load ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let compiled = segment vm in
   let entry_points = U.member "entry_points_by_type" j in
   let load_entries kind =
@@ -40,6 +40,6 @@ let load vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
         let offset = Pie_file.int_of_json pc in
         if offset >= length then fail "CASM hint beyond class bytecode";
         Cpu.register_runtime_hints vm ~segment:(Felt.rseg code) ~pc:offset
-          (Array.of_list (List.map (Casm_hints.compile ctx.scopes) hints))
+          (Array.of_list (List.map (Casm_hints.compile ~syscall ctx.scopes) hints))
     | _ -> fail "Invalid CASM hint table") (U.to_list (U.member "hints" j));
   Casm_segments.of_json words (U.member "bytecode_segment_lengths" j)

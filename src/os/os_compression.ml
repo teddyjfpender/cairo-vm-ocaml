@@ -22,7 +22,7 @@ let register ~block ~felt ~state_initialized reg =
     | None -> let t = Felt_tbl.create 8 in Felt_tbl.add storage address t; t in
   let read address key =
     match Felt_tbl.find_opt (cells address) key with
-    | Some v -> v | None -> fail "Missing initial alias storage at %s" (Felt.to_string key) in
+    | Some v -> v | None -> fail "Missing initial storage at %s" (Felt.to_string key) in
   let put address key v = Felt_tbl.replace (cells address) key v in
   let get_ptrs vm addr =
     (* Rust's entry.or_insert allocates both default segments even on a hit. *)
@@ -39,6 +39,22 @@ let register ~block ~felt ~state_initialized reg =
   let set_pointers c vm addr entry_name storage_name =
     if state_initialized () then
       Felt_tbl.replace pointers addr (get_ptr vm c entry_name, get_ptr vm c storage_name) in
+  let storage_key c vm id path =
+    let key = get_member vm c id path in
+    if not (Felt.is_felt key) || Felt.bits key > 251 then fail "Invalid storage key";
+    key in
+  let write c vm id key_path =
+    let address = get_felt vm c "contract_address" and key = storage_key c vm id key_path in
+    set_val vm c "prev_value" (read address key);
+    put address key (Felt.of_z (get_member_z vm c id ["value"]));
+    Os_state.state_entry c vm address in
+  let check c vm id path =
+    let value = read (get_felt vm c "contract_address") (storage_key c vm id path) in
+    if not (Felt.equal value (get_felt vm c "value")) then fail "Inconsistent contract storage read" in
+  reg "WriteSyscallResultDeprecated" (fun c vm -> write c vm "syscall_ptr" ["address"]);
+  reg "WriteSyscallResult" (fun c vm -> write c vm "request" ["key"]);
+  reg "CacheContractStorageRequestKey" (fun c vm -> check c vm "request" ["key"]);
+  reg "CacheContractStorageSyscallRequestAddress" (fun c vm -> check c vm "syscall_ptr" ["request";"address"]);
   reg "WriteOldBlockToStorage" (fun c vm ->
       put (const c "BLOCK_HASH_CONTRACT_ADDRESS") (get_felt vm c "old_block_number") (get_felt vm c "old_block_hash"));
   reg "EnterScopeWithAliases" (fun c _ ->

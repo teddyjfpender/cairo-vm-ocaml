@@ -3,6 +3,10 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
+let state_entry c vm key =
+    let tracker = Dict.get_tracker c.scopes (get_ptr vm c "contract_state_changes") in
+    set_val vm c "state_entry" (Dict.dict_lookup tracker (canon key))
+
 let register ~block ~felt reg =
   let initial () = U.member "initial_reads" (block ()) in
   let mapping reads field =
@@ -14,9 +18,6 @@ let register ~block ~felt reg =
     match Felt_tbl.find_opt table addr with
     | Some v -> v
     | None -> fail "Missing initial %s for contract %s" field (Felt.to_string addr) in
-  let state_entry c vm key =
-    let tracker = Dict.get_tracker c.scopes (get_ptr vm c "contract_state_changes") in
-    set_val vm c "state_entry" (Dict.dict_lookup tracker (canon key)) in
   reg "GetBlockHashMapping" (fun c vm -> state_entry c vm (Felt.of_z (const_z c "BLOCK_HASH_CONTRACT_ADDRESS")));
   reg "GetContractAddressStateEntry" (fun c vm -> state_entry c vm (get_felt vm c "contract_address"));
   reg "SetStateEntryToAccountContractAddress" (fun c vm ->

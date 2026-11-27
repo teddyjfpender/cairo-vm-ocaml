@@ -37,7 +37,7 @@ let rec operand j =
       (fun vm -> op (require_felt (Vm.get vm 1 (left vm))) (right vm))
   | name, _ -> fail "Unknown CASM operand %s" name
 
-let compile scopes j =
+let compile ~syscall scopes j =
   let name, fields = variant j in
   let arg k = operand (U.member k fields) in
   let put k =
@@ -45,6 +45,17 @@ let compile scopes j =
     fun vm v -> Vm.write vm 1 (at vm) v
   in
   match name with
+  | "SystemCall" ->
+      let base, delta = match variant (U.member "system" fields) with
+        | "Deref", r -> cell r, Felt.zero
+        | "BinOp", b when U.member "op" b = `String "Add" ->
+            (match variant (U.member "b" b) with
+             | "Immediate", offset -> cell (U.member "a" b), Felt.of_z (Pie_file.z_of_json offset)
+             | _ -> fail "Expected syscall pointer offset")
+        | _ -> fail "Expected CASM syscall pointer" in
+      (fun vm -> let ptr = Vm.get vm 1 (base vm) in
+        if not (Felt.is_reloc ptr) then fail "Expected syscall segment";
+        syscall vm (Vm.reloc_add_felt ptr delta))
   | "AllocSegment" ->
       let dst = put "dst" in
       (fun vm -> dst vm (Felt.reloc (Vm.add_segment vm) 0))
