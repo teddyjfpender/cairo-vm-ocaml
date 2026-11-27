@@ -83,7 +83,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
   for (; completed < 8192 && fits(pc, cache_size); ++completed) {
     uint64_t d = Long_val(Field(cache, pc));
     /* The caller runs the hints of the first pc only. */
-    if (completed && d >> 61) break;
+    if (d >> 61 && completed) break;
     d &= ~(UINT64_C(1) << 61);
     if (!d || (tracing && used > trace_length - 3)) break;
     intnat next_pc = pc + 1, next_ap = ap, next_fp = fp;
