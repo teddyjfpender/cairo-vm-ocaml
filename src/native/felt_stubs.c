@@ -75,84 +75,91 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
 static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
-/* For T = high * R + low, REDC(T) = high + REDC(low) before
-   the final conditional subtraction. Reduce only the low half in the four
-   cancellation rounds, then add high once. Since p = 1 + P3 * 2^192,
-   m = -x0 cancels the bottom word, carrying (x0 != 0) into x1. */
-static inline void mont_reduce(u64 r[4], u64 x0, u64 x1, u64 x2, u64 x3,
-                               u64 h0, u64 h1, u64 h2, u64 h3) {
-  u128 c;
-#define CANCEL(a, b, d, e) do {                                  \
-    u64 m = -(a);                                                 \
-    c = (u128)(b) + ((a) != 0); (b) = (u64)c;                    \
-    c = (u128)(d) + (u64)(c >> 64); (d) = (u64)c;                \
-    c = (u128)m * P[3] + (e) + (u64)(c >> 64);                    \
-    (e) = (u64)c; (a) = (u64)(c >> 64);                          \
-  } while (0)
-  CANCEL(x0, x1, x2, x3);
-  CANCEL(x1, x2, x3, x0);
-  CANCEL(x2, x3, x0, x1);
-  CANCEL(x3, x0, x1, x2);
-#undef CANCEL
-  const u64 low[4] = {x0, x1, x2, x3}, high[4] = {h0, h1, h2, h3};
-  add4(r, low, high);
-  /* T < p^2 and p < R, so the unreduced result is below 2p < R. */
+#define ALWAYS_INLINE static inline __attribute__((always_inline))
+#define ADC(r, a, b, cin, cout) r = __builtin_addcll(a, b, cin, &cout)
+
+/* REDC(T) for T = high * R + low, without the final subtraction: the result
+   is congruent to T/R and below high + p + 1. Since p^-1 = 1 - P3*2^192
+   (mod R), m = q*2^192 - low with q = low0*P3 gives low + m*p = 0 (mod R);
+   the borrow k of that subtraction is (low + m) / R, so
+   (low + m*p) / R = k + (q + m*P3) / 2^64. */
+ALWAYS_INLINE void redc(u64 r[4], u64 t0, u64 t1, u64 t2, u64 t3,
+                        u64 t4, u64 t5, u64 t6, u64 t7) {
+  u64 q = t0 * P[3];
+  u128 d = (u128)0 - t0;               u64 m0 = (u64)d;
+  d = (u128)0 - t1 - (u64)(d >> 127);  u64 m1 = (u64)d;
+  d = (u128)0 - t2 - (u64)(d >> 127);  u64 m2 = (u64)d;
+  d = (u128)q - t3 - (u64)(d >> 127);  u64 m3 = (u64)d;
+  u64 k = (u64)(d >> 127);
+  u128 c = (u128)m0 * P[3] + q;
+  c = (u128)m1 * P[3] + (u64)(c >> 64) + t4 + k; r[0] = (u64)c;
+  c = (u128)m2 * P[3] + (u64)(c >> 64) + t5;     r[1] = (u64)c;
+  c = (u128)m3 * P[3] + (u64)(c >> 64) + t6;     r[2] = (u64)c;
+  r[3] = (u64)(c >> 64) + t7;
+}
+
+/* r = a * b (5 limbs) */
+ALWAYS_INLINE void mul_row(u64 r[5], const u64 a[4], u64 b) {
+  u128 p0 = (u128)a[0] * b, p1 = (u128)a[1] * b, p2 = (u128)a[2] * b, p3 = (u128)a[3] * b;
+  unsigned long long c;
+  r[0] = (u64)p0;
+  ADC(r[1], (u64)(p0 >> 64), (u64)p1, 0, c);
+  ADC(r[2], (u64)(p1 >> 64), (u64)p2, c, c);
+  ADC(r[3], (u64)(p2 >> 64), (u64)p3, c, c);
+  r[4] = (u64)(p3 >> 64) + c;
+}
+
+/* Lazy Montgomery product: for a, b < 2^255 the result is congruent to
+   a*b/R and below a*b/R + p + 1 < 2^255. The four rows are summed as a
+   tree, which shortens the carry chains on the latency-bound Hades path. */
+ALWAYS_INLINE void lazy_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
+  u64 x[5], y[5], z[5], w[5], s1, s2, s3, s4, s5, u1, u2, u3, u4, u5;
+  u64 t2, t3, t4, t5, t6;
+  unsigned long long c, e;
+  mul_row(x, a, b[0]); mul_row(y, a, b[1]); mul_row(z, a, b[2]); mul_row(w, a, b[3]);
+  ADC(s1, x[1], y[0], 0, c); ADC(s2, x[2], y[1], c, c); ADC(s3, x[3], y[2], c, c);
+  ADC(s4, x[4], y[3], c, c); s5 = y[4] + c;
+  ADC(u1, z[1], w[0], 0, e); ADC(u2, z[2], w[1], e, e); ADC(u3, z[3], w[2], e, e);
+  ADC(u4, z[4], w[3], e, e); u5 = w[4] + e;
+  ADC(t2, s2, z[0], 0, c); ADC(t3, s3, u1, c, c); ADC(t4, s4, u2, c, c);
+  ADC(t5, s5, u3, c, c); ADC(t6, 0, u4, c, c);
+  redc(r, x[0], s1, t2, t3, t4, t5, t6, u5 + c);
+}
+
+/* Lazy squaring, same bounds: doubled cross products plus the squares. */
+ALWAYS_INLINE void lazy_sqr(u64 r[4], const u64 a[4]) {
+  u128 p01 = (u128)a[0] * a[1], p02 = (u128)a[0] * a[2], p03 = (u128)a[0] * a[3];
+  u128 p12 = (u128)a[1] * a[2], p13 = (u128)a[1] * a[3], p23 = (u128)a[2] * a[3];
+  u128 q0 = (u128)a[0] * a[0], q1 = (u128)a[1] * a[1];
+  u128 q2 = (u128)a[2] * a[2], q3 = (u128)a[3] * a[3];
+  u64 x1 = (u64)p01, x2, x3, x4, x5, x6, x7, t1, t2, t3, t4, t5, t6;
+  unsigned long long c;
+  ADC(x2, (u64)(p01 >> 64), (u64)p02, 0, c);
+  ADC(x3, (u64)(p02 >> 64), (u64)p03, c, c);
+  ADC(x4, (u64)(p03 >> 64), (u64)p13, c, c);
+  ADC(x5, (u64)(p13 >> 64), (u64)p23, c, c);
+  x6 = (u64)(p23 >> 64) + c;
+  ADC(x3, x3, (u64)p12, 0, c); ADC(x4, x4, (u64)(p12 >> 64), c, c);
+  ADC(x5, x5, 0, c, c); x6 += c;
+  x7 = x6 >> 63;
+  x6 = (x6 << 1) | (x5 >> 63); x5 = (x5 << 1) | (x4 >> 63); x4 = (x4 << 1) | (x3 >> 63);
+  x3 = (x3 << 1) | (x2 >> 63); x2 = (x2 << 1) | (x1 >> 63); x1 <<= 1;
+  ADC(t1, x1, (u64)(q0 >> 64), 0, c); ADC(t2, x2, (u64)q1, c, c);
+  ADC(t3, x3, (u64)(q1 >> 64), c, c); ADC(t4, x4, (u64)q2, c, c);
+  ADC(t5, x5, (u64)(q2 >> 64), c, c); ADC(t6, x6, (u64)q3, c, c);
+  redc(r, (u64)q0, t1, t2, t3, t4, t5, t6, x7 + (u64)(q3 >> 64) + c);
+}
+
+/* One subtraction canonicalises when a*b/R < p - 1: canonical inputs,
+   or a Hades output below 2p times one in from_mont. */
+static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
+  lazy_mul(r, a, b);
   if (geq_p(r)) sub4(r, r, P);
 }
 
-static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
-  /* 512-bit product, then four reduction rounds exploiting p = 1 + P3*2^192:
-     adding m*p with m = -t[i] clears limb i (carry = t[i] != 0) and adds
-     m*P3 at limb i+3 - one multiplication per round. */
-  u64 t0, t1, t2, t3, t4, t5, t6, t7;
-  u128 c;
-  u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-#define ROW(bi, x0, x1, x2, x3, x4)                                   \
-  c = (u128)a0 * (bi) + x0; x0 = (u64)c;                              \
-  c = (u128)a1 * (bi) + x1 + (u64)(c >> 64); x1 = (u64)c;             \
-  c = (u128)a2 * (bi) + x2 + (u64)(c >> 64); x2 = (u64)c;             \
-  c = (u128)a3 * (bi) + x3 + (u64)(c >> 64); x3 = (u64)c;             \
-  x4 = (u64)(c >> 64);
-  t0 = t1 = t2 = t3 = 0;
-  ROW(b[0], t0, t1, t2, t3, t4)
-  ROW(b[1], t1, t2, t3, t4, t5)
-  ROW(b[2], t2, t3, t4, t5, t6)
-  ROW(b[3], t3, t4, t5, t6, t7)
-#undef ROW
-  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
-}
-
-/* Montgomery squaring: 6 cross products doubled + 4 squares, then the same
-   specialised reduction as mont_mul. */
 static inline void mont_sqr(u64 r[4], const u64 a[4]) {
-  u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
-  u64 t0, t1, t2, t3, t4, t5, t6, t7;
-  u128 c;
-  c = (u128)a0 * a1; t1 = (u64)c;
-  c = (u128)a0 * a2 + (u64)(c >> 64); t2 = (u64)c;
-  c = (u128)a0 * a3 + (u64)(c >> 64); t3 = (u64)c; t4 = (u64)(c >> 64);
-  c = (u128)a1 * a2 + t3; t3 = (u64)c;
-  c = (u128)a1 * a3 + t4 + (u64)(c >> 64); t4 = (u64)c; t5 = (u64)(c >> 64);
-  c = (u128)a2 * a3 + t5; t5 = (u64)c; t6 = (u64)(c >> 64);
-  t7 = t6 >> 63;
-  t6 = (t6 << 1) | (t5 >> 63);
-  t5 = (t5 << 1) | (t4 >> 63);
-  t4 = (t4 << 1) | (t3 >> 63);
-  t3 = (t3 << 1) | (t2 >> 63);
-  t2 = (t2 << 1) | (t1 >> 63);
-  t1 = t1 << 1;
-  c = (u128)a0 * a0; t0 = (u64)c;
-  c = (u128)t1 + (u64)(c >> 64); t1 = (u64)c;
-  u128 s1 = (u128)a1 * a1;
-  c = (u128)t2 + (u64)s1 + (u64)(c >> 64); t2 = (u64)c;
-  c = (u128)t3 + (u64)(s1 >> 64) + (u64)(c >> 64); t3 = (u64)c;
-  u128 s2 = (u128)a2 * a2;
-  c = (u128)t4 + (u64)s2 + (u64)(c >> 64); t4 = (u64)c;
-  c = (u128)t5 + (u64)(s2 >> 64) + (u64)(c >> 64); t5 = (u64)c;
-  u128 s3 = (u128)a3 * a3;
-  c = (u128)t6 + (u64)s3 + (u64)(c >> 64); t6 = (u64)c;
-  c = (u128)t7 + (u64)(s3 >> 64) + (u64)(c >> 64); t7 = (u64)c;
-  mont_reduce(r, t0, t1, t2, t3, t4, t5, t6, t7);
+  lazy_sqr(r, a);
+  if (geq_p(r)) sub4(r, r, P);
 }
 
 static void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
@@ -719,75 +726,72 @@ value cvm_pedersen_byte(value pool, value a, value b, value d) {
 
 /* ---------- Poseidon (Hades, 8 full + 83 partial rounds) ---------- */
 /* Optimized constants (lambdaworks / Appendix B of the Poseidon paper):
-   12 for the first 4 full rounds, 1 per partial round, 12 for the last 4. */
+   12 for the first 4 full rounds, 1 per partial round, 12 for the last 4.
+   The state stays lazily reduced (below a small multiple of p) and only
+   the outputs are canonicalised. kp = k*p is a nonnegative offset. */
+#define KP(k) {k, 0, 0, k * 0x0800000000000011ULL}
+static const u64 P4[4] = KP(4), P6[4] = KP(6);
 static u64 PRC[107][4];
 static int prc_init = 0;
 static void poseidon_init(void) {
   if (prc_init) return;
   init_consts();
   for (int i = 0; i < 107; i++) to_mont(PRC[i], POSEIDON_ORC[i]);
+  /* Partial-round constants carry the 4p offset of the next c below. */
+  for (int i = 12; i < 95; i++) add4(PRC[i], PRC[i], P4);
   prc_init = 1;
 }
 
-static inline void cube(u64 x[4]) {
+/* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
+   (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
+ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
+  typedef __int128 wide;
+  wide s = 1 - (wide)(x[3] >> 59);
+  wide d = (wide)x[0] + s;     x[0] = (u64)d;
+  d = (wide)x[1] + (d >> 64);  x[1] = (u64)d;
+  d = (wide)x[2] + (d >> 64);  x[2] = (u64)d;
+  x[3] = (u64)((wide)x[3] + s * (wide)P[3] + (d >> 64));
+}
+
+/* Below 9p (R > 31.99p), the cube is below 2p. */
+ALWAYS_INLINE void cube(u64 x[4]) {
   u64 t[4];
-  mont_sqr(t, x);
-  mont_mul(x, t, x);
+  lazy_sqr(t, x);
+  lazy_mul(x, t, x);
 }
 
-/* Reduce a linear combination smaller than 7p. Its top five bits
-   estimate floor(x/p), with at most one unit of overestimation because
-   p = 2^251 + 17*2^192 + 1. */
-static inline void reduce_mix(u64 x[4]) {
-  u64 q = x[3] >> 59;
-  u64 multiple[4] = {q, 0, 0, q * P[3]};
-  if (sub4(x, x, multiple)) add4(x, x, P);
+/* Lanes below 2p stay below 3p with their constant and 2p once cubed, so
+   the MDS mix t=s0+s1+s2, (t+2s0, t-2s1, t-3s2) needs offsets 4p and 6p. */
+ALWAYS_INLINE void full_round(u64 s[3][4], const u64 rc[3][4]) {
+  u64 sum[4], t[4];
+  for (int i = 0; i < 3; i++) { add4(s[i], s[i], rc[i]); cube(s[i]); }
+  add4(sum, s[0], s[1]); add4(sum, sum, s[2]);
+  add4(t, s[0], s[0]); add4(s[0], sum, t);
+  add4(t, s[1], s[1]); add4(s[1], sum, P4); sub4(s[1], s[1], t);
+  add4(t, s[2], s[2]); add4(t, t, s[2]); add4(s[2], sum, P6); sub4(s[2], s[2], t);
+  for (int i = 0; i < 3; i++) reduce_lazy(s[i]);
 }
 
-static inline void mix(u64 s0[4], u64 s1[4], u64 s2[4]) {
-  u64 sum[4], tmp[4];
-  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
-  add4(sum, s0, s1); add4(sum, sum, s2);
-  /* sum+2a, sum+p-2b, sum+2p-3c are nonnegative and fit in 256 bits. */
-  add4(tmp, s0, s0); add4(s0, sum, tmp);
-  add4(tmp, s1, s1); add4(s1, sum, P); sub4(s1, s1, tmp);
-  add4(tmp, s2, s2); add4(tmp, tmp, s2);
-  add4(s2, sum, two_p); sub4(s2, s2, tmp);
-  reduce_mix(s0); reduce_mix(s1); reduce_mix(s2);
-}
-
-static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
-  poseidon_init();
-  int k = 0;
-  for (int r = 0; r < 4; r++, k += 3) {
-    madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
-    cube(s0); cube(s1); cube(s2);
-    mix(s0, s1, s2);
+static void hades(u64 s[3][4]) {
+  const u64 (*rc)[4] = (const u64 (*)[4])PRC;
+  for (int r = 0; r < 4; r++, rc += 3) full_round(s, rc);
+  /* Partial rounds cube only c = s2. Track a = s0 and l = s0 + s1: for
+     t = 2a + c the next (a, l, c) is (t + l, 2t, l - 2c + constant).
+     Invariants a < 6p, l < 4p, c < 9p; the cube of c is below 2p. */
+  u64 *a = s[0], *c = s[2], l[4], t[4], twice[4];
+  add4(l, a, s[1]);
+  add4(c, c, rc[0]);
+  for (int r = 0; r < 83; r++, rc++) {
+    cube(c);
+    add4(t, a, a); add4(t, t, c); reduce_lazy(t);
+    add4(a, t, l);
+    add4(l, l, r < 82 ? rc[1] : P4);
+    add4(twice, c, c); sub4(c, l, twice);
+    add4(l, t, t);
   }
-  /* During partial rounds only c is cubed. Track a and l=a+b.
-     For t=(2a+c) mod p after the cube, the next (a,l,c) is
-     (t+l, 2t, l+2p-2c). This maintains a<3p, l<2p and c<4p.
-     Thus c+constant <5p. Even its square is below R*p (25p<R),
-     so ordinary Montgomery reduction still returns a canonical result. */
-  u64 sum[4], t[4], twice[4];
-  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
-  madd(sum, s0, s1);
-  for (int r = 0; r < 83; r++, k++) {
-    add4(s2, s2, PRC[k]);
-    cube(s2);
-    add4(t, s0, s0); add4(t, t, s2);
-    reduce_mix(t);
-    add4(s0, t, sum);
-    add4(twice, s2, s2); add4(s2, sum, two_p); sub4(s2, s2, twice);
-    add4(sum, t, t);
-  }
-  reduce_mix(s0); reduce_mix(sum); reduce_mix(s2);
-  msub(s1, sum, s0);
-  for (int r = 0; r < 4; r++, k += 3) {
-    madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
-    cube(s0); cube(s1); cube(s2);
-    mix(s0, s1, s2);
-  }
+  add4(s[1], l, P6); sub4(s[1], s[1], a);
+  for (int i = 0; i < 3; i++) reduce_lazy(s[i]);
+  for (int r = 0; r < 4; r++, rc += 3) full_round(s, rc);
 }
 
 /* inputs/outputs: pool slots in canonical form */
@@ -810,8 +814,9 @@ void cvm_poseidon(value pool, intnat i0, intnat o0) {
   struct entry *e = &recent[index].ways[recent[index].next++ & 3];
   memcpy(e->input, input, sizeof e->input);
   u64 s[3][4];
+  poseidon_init();
   for (int k = 0; k < 3; k++) to_mont(s[k], SLOT(pool, i0 + k));
-  hades(s[0], s[1], s[2]);
+  hades(s);
   for (int k = 0; k < 3; k++) from_mont(e->output[k], s[k]);
   e->valid = 1;
   memcpy(SLOT(pool, o0), e->output, sizeof e->output);
