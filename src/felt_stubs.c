@@ -272,8 +272,16 @@ intnat cvm_binop(value pool, intnat op, intnat a, intnat b, intnat dst) {
   case 2: fmul(r, x, y); break;
   default:
     if (is_zero(y)) return 0;
-    finv(y, y);
-    fmul(r, x, y);
+    /* A zero key is initially invalid because divisors are nonzero.
+       Store limbs, never a pool pointer or OCaml value. */
+    static _Thread_local u64 last_divisor[4], inverse_mont[4];
+    if (!eq4(last_divisor, y)) {
+      u64 inverse[4];
+      finv(inverse, y);
+      to_mont(inverse_mont, inverse);
+      memcpy(last_divisor, y, sizeof last_divisor);
+    }
+    mont_mul(r, x, inverse_mont);
   }
   return store(pool, r, dst);
 }
