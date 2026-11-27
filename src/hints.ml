@@ -520,11 +520,17 @@ let () =
       set c.scopes "last_pos" (Int Z.zero);
       let pos = match var c.scopes "positions_dict" with Positions p -> p | _ -> fail "positions_dict missing" in
       let l = match Hashtbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
-      set c.scopes "positions" (Ints (List.rev l)));
+      (* h57 stores positions in increasing order. Consume that immutable list
+         from the head, preserving positions_dict for subsequent lookups. *)
+      set c.scopes "positions" (Ints l));
   reg H.h59 (fun c _ -> match var c.scopes "positions" with Ints [] -> () | _ -> fail "assert len(positions) == 0");
   reg H.h60 (fun c vm ->
-      let rec split = function [ x ] -> ([], x) | x :: r -> let r', l = split r in (x :: r', l) | [] -> fail "pop from empty list" in
-      let rest, cur = match var c.scopes "positions" with Ints l -> split l | _ -> fail "positions" in
+      let cur, rest =
+        match var c.scopes "positions" with
+        | Ints (cur :: rest) -> (cur, rest)
+        | Ints [] -> fail "pop from empty list"
+        | _ -> fail "positions"
+      in
       set c.scopes "positions" (Ints rest);
       let last = Z.to_int (var_z c.scopes "last_pos") in
       set_val vm c "next_item_index" (Felt.small (cur - last));
