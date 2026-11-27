@@ -104,15 +104,15 @@ static u64 ONE_M[4];/* R mod p   */
    (mod R), m = q*2^192 - low with q = low0*P3 gives low + m*p = 0 (mod R);
    the borrow k of that subtraction is (low + m) / R, so
    (low + m*p) / R = k + (q + m*P3) / 2^64. The low word of q + m0*P3 is
-   zero, so its carry is q != 0. m3 waits for the whole borrow chain, so
-   its product is added last. */
+   zero, so its carry is q != 0, i.e. t0 != 0: the first borrow. m3 waits
+   for the whole borrow chain, so its product is added last. */
 ALWAYS_INLINE void redc(u64 r[4], u64 t0, u64 t1, u64 t2, u64 t3,
                         u64 t4, u64 t5, u64 t6, u64 t7) {
   u64 q = t0 * P[3], m0, m1, m2, m3, g0, g1, g2;
-  unsigned long long k, c;
-  SBB(m0, 0, t0, 0, k); SBB(m1, 0, t1, k, k); SBB(m2, 0, t2, k, k); SBB(m3, q, t3, k, k);
+  unsigned long long k, nz, c;
+  SBB(m0, 0, t0, 0, nz); SBB(m1, 0, t1, nz, k); SBB(m2, 0, t2, k, k); SBB(m3, q, t3, k, k);
   u128 p0 = (u128)m0 * P[3], p1 = (u128)m1 * P[3], p2 = (u128)m2 * P[3], p3 = (u128)m3 * P[3];
-  ADC(g0, (u64)(p0 >> 64), (u64)p1, q != 0, c);
+  ADC(g0, (u64)(p0 >> 64), (u64)p1, nz, c);
   ADC(g1, (u64)(p1 >> 64), (u64)p2, c, c);
   ADC(g2, (u64)(p2 >> 64), t6, c, c);
   t7 += c;
@@ -174,8 +174,7 @@ ALWAYS_INLINE void lazy_sqr(u64 r[4], const u64 a[4]) {
   redc(r, (u64)q0, t1, t2, t3, t4, t5, t6, x7 + (u64)(q3 >> 64) + c);
 }
 
-/* One subtraction canonicalises when a*b/R < p - 1: canonical inputs,
-   or a Hades output below 2p times one in from_mont. */
+/* One subtraction canonicalises when a*b/R < p - 1, e.g. canonical inputs. */
 static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
   lazy_mul(r, a, b);
   if (geq_p(r)) sub4(r, r, P);
@@ -187,9 +186,10 @@ static inline void mont_sqr(u64 r[4], const u64 a[4]) {
 }
 
 static void to_mont(u64 r[4], const u64 a[4]) { mont_mul(r, a, R2); }
+/* A bare REDC: a/R is below p + 1 for any a. */
 static void from_mont(u64 r[4], const u64 a[4]) {
-  static const u64 one[4] = {1, 0, 0, 0};
-  mont_mul(r, a, one);
+  redc(r, a[0], a[1], a[2], a[3], 0, 0, 0, 0);
+  if (geq_p(r)) sub4(r, r, P);
 }
 
 /* Reduce a canonical product without entering Montgomery form.
