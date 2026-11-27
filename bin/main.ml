@@ -120,12 +120,11 @@ let () =
       Artifacts.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
       flush stdout
     end;
-    Option.iter (Artifacts.write_trace r) !trace;
-    Option.iter (Artifacts.write_memory r) !memory;
-    Option.iter (Air.write_public_input r) !air_public;
-    (match !air_private, !trace, !memory with
-     | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
-     | _ -> ());
+    Artifacts.with_artifacts r ~trace:!trace ~memory:!memory (fun () ->
+        Option.iter (Air.write_public_input r) !air_public;
+        match !air_private, !trace, !memory with
+        | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
+        | _ -> ());
     Option.iter
       (Pie.write r ~main:(Runner.entry_pc cfg prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra) !pie_out;
     if !stats then
