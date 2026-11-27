@@ -3,7 +3,7 @@
 A fast CairoZero virtual machine written in OCaml, built with [OxCaml](https://oxcaml.org/).
 It produces **byte-identical** trace and memory files to
 [lambdaclass/cairo-vm](https://github.com/lambdaclass/cairo-vm) v3.2.0 and runs
-the cairo-vm benchmark suite **~2.2x faster end to end** (up to ~3x on CPU-bound programs).
+the cairo-vm benchmark suite **~2.4x faster end to end** (up to ~3.2x on CPU-bound programs).
 
 ## Results
 
@@ -12,24 +12,24 @@ for both binaries. Every row's stdout, trace file and memory file were compared 
 
 | program | rust (s) | ocaml (s) | speedup |
 | --- | ---: | ---: | ---: |
-| big_factorial | 0.773 | 0.295 | 2.62x |
-| big_fibonacci | 0.681 | 0.217 | 3.13x |
-| blake2s_integration_benchmark | 0.606 | 0.296 | 2.04x |
-| compare_arrays_200000 | 0.736 | 0.248 | 2.96x |
-| dict_integration_benchmark | 0.552 | 0.310 | 1.78x |
-| integration_builtins | 0.809 | 0.327 | 2.47x |
-| keccak_integration_benchmark | 0.750 | 0.461 | 1.62x |
-| linear_search | 0.786 | 0.266 | 2.95x |
-| math_cmp_and_pow_integration_benchmark | 0.679 | 0.260 | 2.62x |
-| math_integration_benchmark | 0.615 | 0.235 | 2.62x |
-| memory_integration_benchmark | 0.496 | 0.214 | 2.32x |
-| operations_with_data_structures_benchmarks | 0.591 | 0.207 | 2.85x |
-| pedersen | 0.203 | 0.135 | 1.50x |
-| poseidon_integration_benchmark | 0.290 | 0.248 | 1.17x |
-| secp_integration_benchmark | 0.641 | 0.385 | 1.66x |
-| set_integration_benchmark | 0.318 | 0.221 | 1.44x |
-| uint256_integration_benchmark | 0.952 | 0.461 | 2.07x |
-| **total** | **10.476** | **4.787** | **2.19x** |
+| big_factorial | 1.000 | 0.364 | 2.74x |
+| big_fibonacci | 0.850 | 0.281 | 3.03x |
+| blake2s_integration_benchmark | 0.738 | 0.354 | 2.09x |
+| compare_arrays_200000 | 0.916 | 0.287 | 3.20x |
+| dict_integration_benchmark | 0.684 | 0.379 | 1.80x |
+| integration_builtins | 0.997 | 0.413 | 2.41x |
+| keccak_integration_benchmark | 0.884 | 0.471 | 1.88x |
+| linear_search | 0.924 | 0.310 | 2.98x |
+| math_cmp_and_pow_integration_benchmark | 0.808 | 0.279 | 2.90x |
+| math_integration_benchmark | 0.723 | 0.255 | 2.83x |
+| memory_integration_benchmark | 0.562 | 0.228 | 2.47x |
+| operations_with_data_structures_benchmarks | 0.741 | 0.240 | 3.09x |
+| pedersen | 0.233 | 0.155 | 1.50x |
+| poseidon_integration_benchmark | 0.337 | 0.262 | 1.29x |
+| secp_integration_benchmark | 0.883 | 0.390 | 2.27x |
+| set_integration_benchmark | 0.306 | 0.224 | 1.36x |
+| uint256_integration_benchmark | 0.983 | 0.421 | 2.34x |
+| **total** | **12.571** | **5.312** | **2.37x** |
 
 Programs are cairo-vm's `cairo_programs/benchmarks/*.cairo`, compiled with cairo-lang 0.13.5.
 Reproduce with `bench/compare.py RUST_CLI _build/default/bin/main.exe progs/*.json --trace`.
