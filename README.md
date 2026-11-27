@@ -188,15 +188,41 @@ dune runtest --profile release
 python test/cli/compare.py /path/to/rust/cairo-vm-cli /path/to/ocaml/cairo-vm-cli
 ```
 
-## Scope and limitations
+## Parity
 
-- Native execution supports non-proof mode. Proof mode requires the configured Rust CLI.
-- Builtins: output, pedersen, range_check, range_check96, bitwise, ec_op, keccak, poseidon.
-  ecdsa, add_mod and mul_mod are rejected explicitly, as are the Blake and QM31 opcode extensions.
-- The native hint processor recognizes the 86 cairo-lang hints used by the benchmark suite
-  and the Uint256 multiply/divide-with-remainder hint. It matches exact code strings, as cairo-vm does.
-- Big-felt intermediates are kept in an append-only pool for the life of the process.
-- Passing differential tests is evidence of compatibility, not a proof of refinement.
+`test/parity.py RUST_CLI OCAML_CLI DIR [--proof] [--pie]` runs both CLIs on every compiled
+program of a corpus and compares stdout, trace, memory, AIR public/private inputs and PIE
+archives byte-for-byte. Against starkware-libs/cairo-vm **v4.0.0** on its own
+`cairo_programs` corpus (compiled with cairo-lang 0.13.5):
+
+| Mode | Pass | Fail in both | OCaml-only failures |
+| --- | ---: | ---: | ---: |
+| Execution, 165 programs | 155 | 10 | 0 |
+| Proof mode (`starknet_with_keccak`), 155 programs | 155 | 0 | 0 |
+| Cairo PIE output, 148 programs | 138 | 10 | 0 |
+| Stwo opcode programs (Blake2s, QM31) | 2 | 0 | 0 |
+
+Supported: execution and proof mode, AIR public/private inputs, Cairo PIE output, all
+v4.0.0 layouts including `dynamic`, every builtin (output, pedersen, range_check,
+range_check96, ecdsa, bitwise, ec_op, keccak, poseidon, add_mod, mul_mod), the Blake,
+BlakeFinalize and QM31 opcode extensions, v4.0.0's rejection of instructions without a Stwo
+opcode component, temporary segments and relocation rules, and the hint processor's code
+table (`src/hints/hint_codes.ml`, generated from upstream by `scripts/gen_hint_codes.py`).
+
+Not implemented: the dex `EXCESS_BALANCE` hint (decimal rounding) and the `test_utils`-only
+hints, which fail explicitly. Passing differential tests is evidence of compatibility, not
+a proof of refinement.
+
+## Layout
+
+| Directory | Contents |
+| --- | --- |
+| `src/core` | `Felt` (values as `private int`), `Segment`, `Builtin`, `Instruction`, `Vm` (memory, value arithmetic), `Deduce` (builtin auto-deduction), `Cpu` (step, fast loop) |
+| `src/native` | C: Stark-field Montgomery kernel, Pedersen/Poseidon/Keccak/EC op, the batched CPU kernel, artifact writers |
+| `src/extensions` | ecdsa and mod builtins, Blake/QM31 opcode extensions |
+| `src/hints` | hint runtime (`Hintrt`), code table, implementations by family |
+| `src/program` | compiled-program JSON loading |
+| `src/runner` | `Runner`, `Resources` (proof-mode accounting), `Finalize`, `Artifacts`, `Air`, `Pie`, `Layout`, `Cairo_run` |
 
 ## License
 
