@@ -281,10 +281,11 @@ let write_output ~secure ~merge_extra_segments result path =
     ~pedersen_extra:result.pedersen_extra result.runner ~main ~secure ~merge_extra_segments path
 
 let replay_file ?(layout = "all_cairo") ?trace ?memory ?output path =
-  let result = run ~layout ~trace:(Option.is_some trace || Option.is_some output)
-      ~secure:true ~allow_missing_builtins:false ~fill_holes:false (Pie_file.read path) in
-  Artifacts.with_artifacts result.runner ~trace ~memory (fun () ->
-      Option.iter (write_output ~secure:true ~merge_extra_segments:false result) output)
+  Felt.with_temporary_slots (fun () ->
+    let result = run ~layout ~trace:(Option.is_some trace || Option.is_some output)
+        ~secure:true ~allow_missing_builtins:false ~fill_holes:false (Pie_file.read path) in
+    Artifacts.with_artifacts result.runner ~trace ~memory (fun () ->
+        Option.iter (write_output ~secure:true ~merge_extra_segments:false result) output))
 
 (* The bootloader nests the task's segments in the caller's VM. In particular,
    a builtin can start at a nonzero offset or be represented by an integer. *)

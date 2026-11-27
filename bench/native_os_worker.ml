@@ -9,9 +9,7 @@ let () =
   print_endline "READY";
   try while true do
     if read_line () <> "RUN" then invalid_arg "expected RUN";
-    let r = Os_hints.initialize ~proof:false ~record_trace:false ~path cfg program in
-    Runner.run_until_end r;
-    Finalize.end_run r ~secure:true ~allow_missing:false;
-    Artifacts.iter_output_lines r (fun line -> print_string line; print_char '\n');
+    Os_hints.run_output_file ~path cfg program
+    |> List.iter (fun line -> print_string line; print_char '\n');
     print_endline "DONE"
   done with End_of_file -> ()

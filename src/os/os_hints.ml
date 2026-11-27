@@ -131,3 +131,10 @@ let initialize ?layout_def ?(record_trace=true) ~proof ~path cfg prog =
   let r = Runner.initialize ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
   runner := Some r;
   r
+
+let run_output_file ~path cfg prog =
+  Felt.with_temporary_slots (fun () ->
+      let r = initialize ~proof:false ~record_trace:false ~path cfg prog in
+      Runner.run_until_end r;
+      Finalize.end_run r ~secure:cfg.Runner.secure_run ~allow_missing:cfg.allow_missing_builtins;
+      Artifacts.output_lines r)

@@ -95,6 +95,13 @@ let pool = pool_make (1 lsl 28)
 let capacity = Bigarray.Array1.dim pool lsr 5 (* slots actually reserved *)
 let pool_n = ref scratch
 
+(* A standalone run returning only serialized results can reuse its slots.
+   The caller owns the single VM thread and joins all artifact readers before
+   leaving this scope. Values from surrounding live VMs lie below [first]. *)
+let with_temporary_slots f =
+  let first = !pool_n in
+  Fun.protect ~finally:(fun () -> pool_n := first) f
+
 (* Fail unless slots [pool_n .. pool_n + k) exist. *)
 let[@inline] reserve k = if !pool_n + k > capacity then raise Out_of_memory
 
@@ -116,15 +123,6 @@ let zero = small 0
 let one = small 1
 
 let[@inline] fits_small v = v > - small_bound && v < small_bound
-
-let of_int v =
-  if fits_small v then small v
-  else begin
-    reserve 1;
-    let c = c_binop pool 0 (small (v asr 1)) (small (v - (v asr 1))) !pool_n in
-    commit c;
-    c
-  end
 
 (* Field equality for felt codes; relocatables compare structurally. *)
 let[@inline] equal a b =
@@ -233,6 +231,9 @@ let of_z z =
   end
 
 (* Signed representative in (-p/2, p/2], as cairo-vm's signed_felt. *)
+let of_int v =
+  if fits_small v then small v else of_z (Z.of_int v)
+
 let to_signed_z c =
   let z = to_z c in
   if Z.gt z half_p then Z.sub z p else z

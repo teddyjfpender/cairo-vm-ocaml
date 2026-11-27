@@ -80,6 +80,11 @@ val pool : pool
 (** Process-global and non-moving: a slot's address is stable for the run. *)
 
 val pool_n : int ref
+
+val with_temporary_slots : (unit -> 'a) -> 'a
+(** Exclusive serial execution. The callback must return or retain only
+    results independent of the pool, and join readers before it returns.
+    Both successful and failed runs release the slots allocated inside. *)
 (** Next free slot. *)
 
 val reserve : int -> unit

@@ -38,3 +38,8 @@ let () =
   List.iter check_hex [Z.pred Felt.p; Felt.p; Z.succ Felt.p];
   List.iter (fun s -> assert (Felt.of_hex_opt s = None)) [""; "0x"; "00"; "0x10_0"; "0x4g"];
   assert (Option.map Felt.to_z (Felt.of_hex_opt "0X00AF") = Some (Z.of_int 175))
+
+let () =
+  List.iter (fun i ->
+      assert (Z.equal (Felt.to_z (Felt.of_int i)) (Z.erem (Z.of_int i) Felt.p)))
+    [min_int; min_int/2; -Felt.small_bound; Felt.small_bound; max_int/2; max_int]

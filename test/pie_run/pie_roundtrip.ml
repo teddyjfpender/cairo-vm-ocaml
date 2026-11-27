@@ -66,3 +66,16 @@ let () =
       ~allow_missing_builtins:false ~fill_holes:false pie in
   assert (result.runner.vm.steps = pie.n_steps);
   assert (Artifacts.output_lines result.runner = ["0"])
+
+let () =
+  let saved = Felt.of_z (Z.shift_left Z.one 193) in
+  let first = !Felt.pool_n in
+  for _ = 1 to 3 do
+    Pie_run.replay_file "rust4-bitwise.zip";
+    assert (!Felt.pool_n = first);
+    assert (Z.equal (Felt.to_z saved) (Z.shift_left Z.one 193))
+  done;
+  (match Felt.with_temporary_slots (fun () ->
+       ignore (Felt.of_z (Z.shift_left Z.one 200)); raise Exit) with
+   | exception Exit -> () | _ -> assert false);
+  assert (!Felt.pool_n = first)
