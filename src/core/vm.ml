@@ -93,7 +93,7 @@ let watched_range vm ptr length =
   if seg < 2 || seg >= Array.length vm.watched then fail "Untracked bytecode segment";
   let map = vm.watched.(seg) in
   if length < 0 || off > Bytes.length map - length then fail "Invalid bytecode range";
-  match Bytes.index_from_opt map off '\001' with Some i -> i-off < length | None -> false
+  Segment.range_marked map off length
 
 let add_segment vm =
   let n = vm.nsegs in

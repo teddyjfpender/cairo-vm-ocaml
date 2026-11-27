@@ -32,3 +32,6 @@ val seg_grow : seg -> int -> seg
 
 val snapshot : seg -> int -> seg
 (** Copy the first [n] words into independent storage. *)
+
+val range_marked : bytes -> int -> int -> bool
+(** Whether any cell in a marked-address bitmap range is set. *)

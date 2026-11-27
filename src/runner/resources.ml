@@ -120,9 +120,7 @@ let range_accessed r ptr length =
   update_accessed r;
   let seg = Felt.rseg ptr and off = Felt.roff ptr in
   if seg < 0 || seg >= Array.length r.acc.bits then false else
-  let bits = r.acc.bits.(seg) in
-  off < Bytes.length bits && (match Bytes.index_from_opt bits off '\001' with
-    | Some i -> i - off < length | None -> false)
+  Segment.range_marked r.acc.bits.(seg) off length
 
 let accessed_count r seg =
   update_accessed r;

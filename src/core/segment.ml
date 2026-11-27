@@ -13,3 +13,9 @@ let snapshot a n =
   let copy = seg_make n in
   BA.blit (BA.sub a 0 n) copy;
   copy
+
+external contains_mark : bytes -> int -> int -> bool = "cvm_contains_mark" [@@noalloc]
+let range_marked map off length =
+  if off < 0 || off >= Bytes.length map || length <= 0 then false
+  else if length = 1 then Bytes.unsafe_get map off <> '\000'
+  else contains_mark map off (min length (Bytes.length map - off))

@@ -2,8 +2,16 @@
    uncached instruction or bitmap growth to Resources.update_accessed.
    Marking is idempotent, so the fallback can repeat a partial entry. */
 #include <stdint.h>
+#include <string.h>
 #include <caml/mlvalues.h>
 #include <caml/bigarray.h>
+
+value cvm_contains_mark(value bytes, value start, value length) {
+  intnat i = Long_val(start), n = Long_val(length);
+  size_t size = caml_string_length(bytes);
+  if ((uintnat)i > size || (uintnat)n > size-(uintnat)i) return Val_false;
+  return Val_bool(memchr(Bytes_val(bytes)+i, 1, n) != NULL);
+}
 
 static inline int mark(value maps, value counts, intnat seg, intnat off) {
   if (seg < 0 || off < 0) return 1;
