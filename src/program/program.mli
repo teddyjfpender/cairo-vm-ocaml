@@ -50,7 +50,10 @@ type t = {
 exception Parse_error of string
 
 val load_json : Yojson.Safe.t -> t
-(** Read a compiled program. @raise Parse_error on a foreign field prime. *)
+(** Read a compiled program.
+    @raise Parse_error on a malformed or foreign field prime, or a malformed data word. *)
 
 val load_file : string -> t
-(** [load_json] of a file, skipping its [debug_info]. *)
+(** [load_json] of a file read as JSON (without Yojson's comment, tuple and
+    variant extensions), skipping its top-level [debug_info].
+    @raise Yojson.Json_error on malformed JSON. *)
