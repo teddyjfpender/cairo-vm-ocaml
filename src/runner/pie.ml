@@ -130,7 +130,8 @@ let memory_bytes (r : Runner.t) remap =
   done;
   Buffer.contents b
 
-let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
+let write ?(output_pages = []) ?(output_attributes = []) ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
+    ~merge_extra_segments path =
   if r.proof then fail "Cairo PIE output cannot be used in proof mode";
   let vm = r.vm in
   let seg_info i n = Obj [ ("index", int i); ("size", int n) ] in
@@ -147,7 +148,8 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
   check_ret ret_pc "return pc";
   let known = 0 :: 1 :: Felt.rseg ret_fp :: Felt.rseg ret_pc :: List.map (fun b -> b.base) builtins in
   let extra = List.filter (fun s -> not (List.mem s known)) (List.init vm.nsegs Fun.id) in
-  let extra_infos = List.map (fun s -> (s, used_size vm s)) extra in
+  (* finalized sizes win (a run from a PIE finalizes every segment) *)
+  let extra_infos = List.map (fun s -> (s, Resources.segment_size r s)) extra in
   let extra_json, remap =
     match (merge_extra_segments, extra_infos) with
     | true, (first, _) :: _ ->
@@ -183,8 +185,15 @@ let write (r : Runner.t) ~main ~secure ~merge_extra_segments path =
          (fun (k, b) ->
            ( suffix k,
              match k with
-             | Output -> Obj [ ("pages", Obj []); ("attributes", Obj []) ]
-             | Pedersen -> Arr (List.map (fun o -> Arr [ int b.base; int o ]) (Artifacts.pedersen_verified ~secure r b))
+             | Output ->
+                 Obj
+                   [
+                     ("pages", Obj (List.map (fun (id, (start, size)) -> (string_of_int id, Arr [ int start; int size ])) output_pages));
+                     ("attributes", Obj (List.map (fun (k, l) -> (k, Arr (List.map int l))) output_attributes));
+                   ]
+             | Pedersen ->
+                 let verified = List.sort_uniq compare (pedersen_extra @ Artifacts.pedersen_verified ~secure r b) in
+                 Arr (List.map (fun o -> Arr [ int b.base; int o ]) verified)
              | Ecdsa ->
                  let sigs = List.sort compare (Hashtbl.fold (fun o rs acc -> (o, rs) :: acc) Builtins_ext.signatures []) in
                  let num z = Num (Z.to_string (Z.erem z Felt.p)) in

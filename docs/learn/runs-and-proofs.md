@@ -55,7 +55,9 @@ loop at `__end__`, so the trace can be padded:
    plus each builtin's private witness).
 
 A Cairo **PIE** (`Pie`) is a zip of the run's memory, metadata and resource counts. Another VM can
-use it to re-execute or aggregate the run later.
+use it to re-execute or aggregate the run later. `Pie_run` does the re-execution: it loads the
+stripped program and the recorded memory, runs without hints for exactly the recorded number of
+steps, and checks that the run would produce the same PIE.
 
 ## Exercises
 

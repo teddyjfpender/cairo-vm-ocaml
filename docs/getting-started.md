@@ -50,8 +50,17 @@ cairo-vm-cli program_proof.json --layout starknet_with_keccak --proof_mode \
   --trace_file run.trace --memory_file run.mem
 ```
 
-`--cairo_pie_output`, `--layout dynamic --cairo_layout_params_file FILE` and `--fill-holes`
-work as they do in the Rust CLI.
+`--cairo_pie_output`, `--run_from_cairo_pie`, `--layout dynamic --cairo_layout_params_file FILE`
+and `--fill-holes` work as they do in the Rust CLI. To re-execute a Cairo PIE, pass the zip as the
+input file:
+
+```sh
+cairo-vm-cli os_run.pie.zip --run_from_cairo_pie --layout all_cairo --print_output
+```
+
+The PIE's program has no hints, so its recorded memory supplies every hinted value. The run is
+bounded by the PIE's step count, and with the default secure run the PIE it would write must
+match the input.
 
 ## Use it as a library
 

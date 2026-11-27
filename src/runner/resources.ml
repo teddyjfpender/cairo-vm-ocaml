@@ -281,7 +281,8 @@ let memory_holes r =
   for seg = 0 to r.vm.nsegs - 1 do
     if not (is_builtin_seg r seg) then begin
       let a =
-        if seg = r.zero_seg && not (Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
+        (* only proof mode finalizes the zero segment; a run from a PIE sizes it without finalizing *)
+        if seg = r.zero_seg && not (r.proof && Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
       in
       if a > 0 then begin
         let size = segment_size r seg in

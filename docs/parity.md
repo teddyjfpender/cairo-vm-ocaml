@@ -10,8 +10,11 @@ compares stdout, trace, memory, AIR public/private inputs and PIE archives byte 
 program passes when the outputs are identical, or when both VMs reject it.
 
 ```sh
-python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [-j N]
+python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [--from_pie] [-j N]
 ```
+
+`--from_pie` has the Rust CLI write each program's Cairo PIE first, then runs both CLIs with
+`--run_from_cairo_pie` on it and also compares the PIEs they write.
 
 ## Results
 
@@ -23,10 +26,19 @@ Upstream `cairo_programs`, compiled with cairo-lang 0.13.5:
 | Proof mode (`starknet_with_keccak`), 155 programs | 155 | 0 | **0** |
 | Cairo PIE output, 148 programs | 138 | 10 | **0** |
 | Stwo opcode programs (Blake2s, QM31) | 2 | 0 | **0** |
+| Re-execution from a Cairo PIE, 155 PIEs | 151 | 4 | **0** |
+| Starknet OS PIEs (7.7M–14.6M steps), re-executed | 5 | 0 | **0** |
+
+The PIE rows compare stdout, trace, memory and every member of the output PIE. Ten corpus
+programs have no PIE (Rust cannot write one). The Starknet OS PIEs are four OS runs of one
+program (Blake program hash `0xb0134e…cd7`, 15,610 words) and the sequencer's 10-transfer
+virtual-OS PIE (`0x602b02…ccb`, the 0.14.4 virtual OS). See [Benchmarks](benchmarks.md).
 
 ## Supported
 
 - Execution and proof mode, AIR public/private inputs, Cairo PIE output
+- Re-execution from a Cairo PIE (`--run_from_cairo_pie`, `Pie_file` and `Pie_run`), including
+  the secure-run PIE compatibility check
 - All v4.0.0 layouts, including `dynamic`
 - Every builtin: output, pedersen, range_check, range_check96, ecdsa, bitwise, ec_op,
   keccak, poseidon, add_mod, mul_mod

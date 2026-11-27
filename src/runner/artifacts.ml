@@ -19,7 +19,8 @@ let relocation_table r =
   let vm = r.vm in
   let t = Array.make (vm.nsegs + 1) 1 in
   for s = 0 to vm.nsegs - 1 do
-    let size = if r.proof then segment_size r s else used_size vm s in
+    (* proof runs and runs from a PIE finalize their segment sizes *)
+    let size = if r.proof || Hashtbl.length r.seg_sizes > 0 then segment_size r s else used_size vm s in
     t.(s + 1) <- t.(s) + size
   done;
   t

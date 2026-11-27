@@ -27,6 +27,7 @@ let () =
   let secure = ref None and allow_missing = ref None and stats = ref false in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
+  let from_pie = ref false in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
   let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OCaml)"; exit 0 in
@@ -47,15 +48,13 @@ let () =
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
+      ("--run_from_cairo_pie", Arg.Set from_pie, " the input file is a Cairo PIE zip to re-execute");
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
       ("--version", Arg.Unit version, " print version");
       ("--stats", Arg.Set stats, " print step count and timing to stderr");
     ]
   in
-  let require_backend flag = delegate (flag ^ " requires CAIRO_VM_RUST_CLI") in
-  let switches = ["--run_from_cairo_pie"] in
-  let spec = spec @ List.map (fun f -> f, Arg.Unit (fun () -> require_backend f), " use the Rust backend") switches in
   let seen = Hashtbl.create 8 in
   let once flag action value =
     if Hashtbl.mem seen flag then raise (Arg.Bad ("option repeated: " ^ flag));
@@ -87,9 +86,10 @@ let () =
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
+  if !from_pie && (!proof || !air_public <> None || !air_private <> None) then
+    usage_error "--run_from_cairo_pie cannot be used with --proof_mode or the AIR inputs";
   try
     let t0 = Unix.gettimeofday () in
-    let prog = Program.load_file file in
     let proof = !proof in
     let layout_def =
       match !layout_params with
@@ -106,7 +106,19 @@ let () =
         entrypoint = !entry;
       }
     in
+    let pie_input = ref None in
     let r, t1, t2 = try
+      if !from_pie then begin
+        let pie = Pie_file.read file in
+        let t1 = Unix.gettimeofday () in
+        let res =
+          Pie_run.run ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
+            ~allow_missing_builtins:cfg.allow_missing_builtins ~fill_holes:(Option.value !fill_holes ~default:false) pie
+        in
+        pie_input := Some (pie, res);
+        res.runner, t1, Unix.gettimeofday ()
+      end else
+      let prog = Program.load_file file in
       let r = Runner.initialize ?layout_def ~proof cfg prog in
       let t1 = Unix.gettimeofday () in
       Runner.run_until_end r;
@@ -127,7 +139,15 @@ let () =
      | Some p, Some trace_path, Some memory_path -> Air.write_private_input r ~trace_path ~memory_path p
      | _ -> ());
     Option.iter
-      (Pie.write r ~main:(Runner.entry_pc cfg prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra) !pie_out;
+      (fun path ->
+        match !pie_input with
+        | Some (pie, res) ->
+            Pie.write ~output_pages:res.Pie_run.output_pages ~output_attributes:res.output_attributes
+              ~pedersen_extra:res.pedersen_extra r ~main:(Pie_run.main_pc pie) ~secure:cfg.secure_run
+              ~merge_extra_segments:!merge_extra path
+        | None ->
+            Pie.write r ~main:(Runner.entry_pc cfg r.prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra path)
+      !pie_out;
     if !stats then
       Printf.eprintf "generic=%d hint_pcs=%d " !Cpu.generic_steps !Cpu.hint_steps;
     if !stats then

@@ -3,6 +3,26 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Starknet OS PIE re-execution (Apple M5 Max, Rust cairo-vm v4.0.0)
+
+`--run_from_cairo_pie --layout all_cairo` on four Starknet OS Cairo PIEs (one OS program,
+Blake program hash `0xb0134e…cd7`) and the sequencer's `cairo_pie_10_transfers.zip` (0.14.4
+virtual OS). Every row matched Rust byte for byte: stdout, trace, memory and all PIE members.
+"Exec" is `--print_output` only, best of three alternating runs. "Full" also writes the trace,
+memory and an output PIE (one run). RSS is the full run's peak.
+
+| PIE | Steps | memory.bin | Rust exec (s) | OCaml exec (s) | Speedup | Rust full (s) | OCaml full (s) | Rust / OCaml RSS (GB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SN_PIE_1 | 14,645,112 | 602 MB | 6.27 | 1.24 | 5.1× | 16.54 | 4.39 | 8.96 / 2.96 |
+| SN_PIE_2 | 7,706,864 | 331 MB | 2.71 | 0.57 | 4.8× | 7.70 | 2.32 | 4.39 / 1.23 |
+| SN_PIE_3 | 14,075,019 | 586 MB | 5.69 | 1.21 | 4.7× | 14.80 | 4.15 | 8.67 / 2.87 |
+| SN_PIE_4 | 14,058,247 | 594 MB | 4.93 | 0.99 | 5.0× | 13.44 | 4.11 | 8.91 / 2.32 |
+| 10 transfers | 191,408 | 8.8 MB | 0.05 | 0.02 | 2.5× | 0.18 | 0.36 | 0.09 / 0.07 |
+
+Of OCaml's exec time on SN_PIE_1, 0.21 s is reading the zip (inflating 600 MB with zlib); the
+rest is loading 15M cells, 14.6M steps and the end-of-run checks. The full runs spend most of
+their extra time writing the output PIE, whose memory serializer goes through Zarith per cell.
+
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at a70bf22)
 
 After the non-moving felt pool with shared field arithmetic (`field.h`), Poseidon round two,
