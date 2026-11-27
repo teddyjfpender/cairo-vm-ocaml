@@ -89,7 +89,8 @@ value cvm_pie_crc_update(value crc, value bytes, value len) {
    Stop before any exceptional cell: OCaml handles validation, duplicate
    writes, pool exhaustion and segment transitions with the usual VM rules.
    state = [cell index; next pool slot; highest written offset plus one]. */
-value cvm_pie_load_run(value memory, value seg_id, value cells, value pool, value state) {
+static inline value load_run(value memory, value seg_id, value cells, value pool,
+                             value state, value bases, size_t base_offset) {
   const unsigned char *bytes = (const unsigned char *)Bytes_val(memory);
   const size_t count = caml_string_length(memory) / 40;
   const u64 seg = Long_val(seg_id);
@@ -102,13 +103,26 @@ value cvm_pie_load_run(value memory, value seg_id, value cells, value pool, valu
     u64 addr, x[4];
     memcpy(&addr, bytes + 40*i, 8);
     size_t off = addr & ((1ULL << 47) - 1);
+    off += base_offset;
     if (((addr >> 47) & 0xffff) != seg || off < hi || off >= capacity) break;
     memcpy(x, bytes + 40*i + 8, sizeof x);
     intnat code;
     if (x[3] >> 63) {
       u64 offset = x[0] & ((1ULL << 47) - 1);
       if (offset >= (1ULL << 40)) break;
-      code = (((x[0] >> 47) & 0xffff) << 42) | (offset << 2) | 2;
+      size_t target = (x[0] >> 47) & 0xffff;
+      if (bases == Val_unit) {
+        code = (target << 42) | (offset << 2) | 2;
+      } else {
+        if (target >= Wosize_val(bases)) break;
+        code = Long_val(Field(bases, target));
+        if (!code) break;
+        if ((code & 3) == 2) {
+          u64 old_offset = ((u64)code >> 2) & ((1ULL << 40)-1);
+          if (old_offset + offset >= (1ULL << 40)) break;
+          code += offset << 2;
+        }
+      }
     } else {
       while (geq_p(x)) sub4(x, x, P);
       code = store(pool, x, next);
@@ -121,6 +135,22 @@ value cvm_pie_load_run(value memory, value seg_id, value cells, value pool, valu
   Field(state, 1) = Val_long(next);
   Field(state, 2) = Val_long(hi);
   return Val_unit;
+}
+
+value cvm_pie_load_run(value memory, value seg_id, value cells, value pool, value state) {
+  return load_run(memory, seg_id, cells, pool, state, Val_unit, 0);
+}
+
+value cvm_pie_load_nested(value memory, value seg_id, value cells, value pool,
+                          value state, value bases) {
+  intnat base = Long_val(Field(bases, Long_val(seg_id)));
+  size_t offset = ((uintnat)base >> 2) & ((1ULL << 40)-1);
+  return load_run(memory, seg_id, cells, pool, state, bases, offset);
+}
+
+value cvm_pie_load_nested_byte(value *argv, int argc) {
+  (void)argc;
+  return cvm_pie_load_nested(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
 
 /* Merge selected segment offsets before encoding the 16:47 PIE address.

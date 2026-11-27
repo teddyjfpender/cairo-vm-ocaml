@@ -287,6 +287,10 @@ let replay_file ?(layout = "all_cairo") ?trace ?memory ?output path =
     Artifacts.with_artifacts result.runner ~trace ~memory (fun () ->
         Option.iter (write_output ~secure:true ~merge_extra_segments:false result) output))
 
+external load_nested_run :
+  bytes -> int -> Segment.seg -> Felt.pool -> int array -> Felt.t array -> unit
+  = "cvm_pie_load_nested_byte" "cvm_pie_load_nested" [@@noalloc]
+
 (* The bootloader nests the task's segments in the caller's VM. In particular,
    a builtin can start at a nonzero offset or be represented by an integer. *)
 let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
@@ -329,11 +333,29 @@ let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
             | _ -> fail "Task signature address is outside the ECDSA builtin");
            Builtins_ext.add_signature vm ptr rs) (signature_data segment.index j)
    | _ -> ());
-  for i = 0 to n_cells pie - 1 do
+  let state = [|0; !Felt.pool_n; 0|] in
+  while state.(0) < n_cells pie do
+    let i = state.(0) in
     let pos = i * cell_bytes in
     let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le pie.memory pos)) in
-    let dest = relocate seg off and value = decode_value pie.memory (pos + 8) in
+    let dest = relocate seg off in
     if not (Felt.is_reloc dest) then fail "Task memory address is not relocatable";
-    let value = if Felt.is_reloc value then relocate (Felt.rseg value) (Felt.roff value) else value in
-    Vm.write_checked vm (Felt.rseg dest) (Felt.roff dest) value
+    let target = Felt.rseg dest and offset = Felt.roff dest in
+    if Vm.seg_ok vm target && vm.seg_flag.(target) = k_plain && offset >= vm.hi.(target) then begin
+      (* Grow only for addresses actually present in the validated archive. *)
+      let base = Felt.roff bases.(seg) in
+      let last = base + occupied.(seg) - 1 in
+      if last <= Vm.max_off && last >= Segment.slen vm.segs.(target) then Vm.grow_seg vm target last;
+      state.(1) <- !Felt.pool_n;
+      state.(2) <- vm.hi.(target);
+      load_nested_run pie.memory seg vm.segs.(target) Felt.pool state bases;
+      Felt.pool_n := state.(1);
+      vm.hi.(target) <- state.(2)
+    end;
+    if state.(0) = i then begin
+      let value = decode_value pie.memory (pos + 8) in
+      let value = if Felt.is_reloc value then relocate (Felt.rseg value) (Felt.roff value) else value in
+      Vm.write_checked vm target offset value;
+      state.(0) <- i + 1
+    end
   done
