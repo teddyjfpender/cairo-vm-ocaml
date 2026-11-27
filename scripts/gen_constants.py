@@ -5,11 +5,11 @@ import re, sys, glob, os
 reg = glob.glob(os.path.expanduser('~/.cargo/registry/src/*/'))[0]
 curve = open(reg + 'starknet-curve-0.6.0/src/curve_params.rs').read()
 pos = open(reg + 'lambdaworks-crypto-0.13.0/src/hash/poseidon/starknet/parameters.rs').read()
-pts = re.findall(r'/// - x: `0x([0-9a-f]+)`\n/// - y: `0x([0-9a-f]+)`', curve)
+pts = re.findall(r'/// - x: `0x([0-9a-fA-F]+)`\n/// - y: `0x([0-9a-fA-F]+)`', curve)
 names = ['GENERATOR', 'SHIFT_POINT', 'PEDERSEN_P0', 'PEDERSEN_P1', 'PEDERSEN_P2', 'PEDERSEN_P3']
 assert len(pts) >= 6, len(pts)
 i0 = pos.index('UNOPTIMIZED_ROUND_CONSTANTS: ['); un = pos[i0:pos.index('pub const OPTIMIZED_ROUND_CONSTANTS')]
-rc = re.findall(r'from_hex_unchecked\("([0-9a-f]+)"\)', un)
+rc = re.findall(r'from_hex_unchecked\("([0-9a-fA-F]+)"\)', un)
 assert len(rc) == 273, len(rc)
 def limbs(h):
     v = int(h, 16); return '{%s}' % ','.join('0x%016xULL' % ((v >> (64*i)) & (2**64-1)) for i in range(4))
@@ -18,4 +18,8 @@ for n, (x, y) in zip(names, pts):
     out.append(f'static const uint64_t {n}_X[4] = {limbs(x)};')
     out.append(f'static const uint64_t {n}_Y[4] = {limbs(y)};')
 out.append('static const uint64_t POSEIDON_RC[273][4] = {' + ','.join(limbs(h) for h in rc) + '};')
+opt = pos[pos.index('pub const OPTIMIZED_ROUND_CONSTANTS'):]
+opt = re.findall(r'from_hex_unchecked\("([0-9a-fA-F]+)"\)', opt[:opt.index('\n    ];')])
+assert len(opt) == 107, len(opt)
+out.append('static const uint64_t POSEIDON_ORC[107][4] = {' + ','.join(limbs(h) for h in opt) + '};')
 open(sys.argv[1], 'w').write('\n'.join(out) + '\n')

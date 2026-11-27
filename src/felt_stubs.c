@@ -73,26 +73,98 @@ static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
 static inline void mont_mul(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 t0 = 0, t1 = 0, t2 = 0, t3 = 0, t4 = 0;
-  for (int i = 0; i < 4; i++) {
-    u64 bi = b[i];
-    u128 c;
-    c = (u128)a[0] * bi + t0; t0 = (u64)c;
-    c = (u128)a[1] * bi + t1 + (u64)(c >> 64); t1 = (u64)c;
-    c = (u128)a[2] * bi + t2 + (u64)(c >> 64); t2 = (u64)c;
-    c = (u128)a[3] * bi + t3 + (u64)(c >> 64); t3 = (u64)c;
-    c = (u128)t4 + (u64)(c >> 64); t4 = (u64)c; u64 t5 = (u64)(c >> 64);
-    u64 m = -t0; /* m * p0 + t0 == 0 mod 2^64 since p0 == 1 */
-    /* add m*p: p = 1 + p3*2^192 */
-    c = (u128)m + t0; /* low limb vanishes */
-    c = (u128)t1 + (u64)(c >> 64); t0 = (u64)c;
-    c = (u128)t2 + (u64)(c >> 64); t1 = (u64)c;
-    c = (u128)m * P[3] + t3 + (u64)(c >> 64); t2 = (u64)c;
-    c = (u128)t4 + (u64)(c >> 64); t3 = (u64)c;
-    t4 = t5 + (u64)(c >> 64);
+  /* 512-bit product, then four reduction rounds exploiting p = 1 + P3*2^192:
+     adding m*p with m = -t[i] clears limb i (carry = t[i] != 0) and adds
+     m*P3 at limb i+3 - one multiplication per round. */
+  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8;
+  u128 c;
+  u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
+#define ROW(bi, x0, x1, x2, x3, x4)                                   \
+  c = (u128)a0 * (bi) + x0; x0 = (u64)c;                              \
+  c = (u128)a1 * (bi) + x1 + (u64)(c >> 64); x1 = (u64)c;             \
+  c = (u128)a2 * (bi) + x2 + (u64)(c >> 64); x2 = (u64)c;             \
+  c = (u128)a3 * (bi) + x3 + (u64)(c >> 64); x3 = (u64)c;             \
+  x4 = (u64)(c >> 64);
+  t0 = t1 = t2 = t3 = 0;
+  ROW(b[0], t0, t1, t2, t3, t4)
+  ROW(b[1], t1, t2, t3, t4, t5)
+  ROW(b[2], t2, t3, t4, t5, t6)
+  ROW(b[3], t3, t4, t5, t6, t7)
+#undef ROW
+  t8 = 0;
+  const u64 P3 = 0x0800000000000011ULL;
+#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
+  { u64 m = -x0; u64 cy = x0 != 0;                                    \
+    c = (u128)x1 + cy; x1 = (u64)c;                                   \
+    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
+    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
+    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
+    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
+    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
+    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
+    x8 += (u64)(c >> 64); }
+  { u64 d9 = 0;
+    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
+    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
+    { u64 d10 = 0; RED(t2, t3, t4, t5, t6, t7, t8, d9, d10) (void)d10; }
+    { u64 d11 = 0; RED(t3, t4, t5, t6, t7, t8, d9, d9, d11) (void)d11; }
   }
-  u64 t[4] = {t0, t1, t2, t3};
-  if (t4 || geq_p(t)) sub4(t, t, P);
+#undef RED
+  u64 t[4] = {t4, t5, t6, t7}; /* t8 == 0: result < 2p < 2^256 */
+  if (geq_p(t)) sub4(t, t, P);
+  r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
+}
+
+/* Montgomery squaring: 6 cross products doubled + 4 squares, then the same
+   specialised reduction as mont_mul. */
+static inline void mont_sqr(u64 r[4], const u64 a[4]) {
+  u64 a0 = a[0], a1 = a[1], a2 = a[2], a3 = a[3];
+  u64 t0, t1, t2, t3, t4, t5, t6, t7, t8 = 0;
+  u128 c;
+  c = (u128)a0 * a1; t1 = (u64)c;
+  c = (u128)a0 * a2 + (u64)(c >> 64); t2 = (u64)c;
+  c = (u128)a0 * a3 + (u64)(c >> 64); t3 = (u64)c; t4 = (u64)(c >> 64);
+  c = (u128)a1 * a2 + t3; t3 = (u64)c;
+  c = (u128)a1 * a3 + t4 + (u64)(c >> 64); t4 = (u64)c; t5 = (u64)(c >> 64);
+  c = (u128)a2 * a3 + t5; t5 = (u64)c; t6 = (u64)(c >> 64);
+  t7 = t6 >> 63;
+  t6 = (t6 << 1) | (t5 >> 63);
+  t5 = (t5 << 1) | (t4 >> 63);
+  t4 = (t4 << 1) | (t3 >> 63);
+  t3 = (t3 << 1) | (t2 >> 63);
+  t2 = (t2 << 1) | (t1 >> 63);
+  t1 = t1 << 1;
+  c = (u128)a0 * a0; t0 = (u64)c;
+  c = (u128)t1 + (u64)(c >> 64); t1 = (u64)c;
+  u128 s1 = (u128)a1 * a1;
+  c = (u128)t2 + (u64)s1 + (u64)(c >> 64); t2 = (u64)c;
+  c = (u128)t3 + (u64)(s1 >> 64) + (u64)(c >> 64); t3 = (u64)c;
+  u128 s2 = (u128)a2 * a2;
+  c = (u128)t4 + (u64)s2 + (u64)(c >> 64); t4 = (u64)c;
+  c = (u128)t5 + (u64)(s2 >> 64) + (u64)(c >> 64); t5 = (u64)c;
+  u128 s3 = (u128)a3 * a3;
+  c = (u128)t6 + (u64)s3 + (u64)(c >> 64); t6 = (u64)c;
+  c = (u128)t7 + (u64)(s3 >> 64) + (u64)(c >> 64); t7 = (u64)c;
+  const u64 P3 = 0x0800000000000011ULL;
+#define RED(x0, x1, x2, x3, x4, x5, x6, x7, x8)                       \
+  { u64 m = -x0; u64 cy = x0 != 0;                                    \
+    c = (u128)x1 + cy; x1 = (u64)c;                                   \
+    c = (u128)x2 + (u64)(c >> 64); x2 = (u64)c;                       \
+    c = (u128)m * P3 + x3 + (u64)(c >> 64); x3 = (u64)c;              \
+    c = (u128)x4 + (u64)(c >> 64); x4 = (u64)c;                       \
+    c = (u128)x5 + (u64)(c >> 64); x5 = (u64)c;                       \
+    c = (u128)x6 + (u64)(c >> 64); x6 = (u64)c;                       \
+    c = (u128)x7 + (u64)(c >> 64); x7 = (u64)c;                       \
+    x8 += (u64)(c >> 64); }
+  { u64 d9 = 0, d10 = 0, d11 = 0;
+    RED(t0, t1, t2, t3, t4, t5, t6, t7, t8)
+    RED(t1, t2, t3, t4, t5, t6, t7, t8, d9)
+    RED(t2, t3, t4, t5, t6, t7, t8, d9, d10)
+    RED(t3, t4, t5, t6, t7, t8, d9, d10, d11)
+    (void)d11; }
+#undef RED
+  u64 t[4] = {t4, t5, t6, t7};
+  if (geq_p(t)) sub4(t, t, P);
   r[0] = t[0]; r[1] = t[1]; r[2] = t[2]; r[3] = t[3];
 }
 
@@ -287,17 +359,17 @@ static void jac_double(jac *r, const jac *p) {
   if (is_zero(p->z)) { *r = *p; return; }
   /* a = 1: M = 3X^2 + Z^4 */
   u64 xx[4], yy[4], yyyy[4], zz[4], s[4], m[4], t[4], x3[4], y3[4], z3[4];
-  mont_mul(xx, p->x, p->x);
-  mont_mul(yy, p->y, p->y);
-  mont_mul(yyyy, yy, yy);
-  mont_mul(zz, p->z, p->z);
+  mont_sqr(xx, p->x);
+  mont_sqr(yy, p->y);
+  mont_sqr(yyyy, yy);
+  mont_sqr(zz, p->z);
   /* S = 4*X*YY */
   mont_mul(s, p->x, yy); madd(s, s, s); madd(s, s, s);
   /* M = 3XX + ZZ^2 */
-  mont_mul(t, zz, zz);
+  mont_sqr(t, zz);
   madd(m, xx, xx); madd(m, m, xx); madd(m, m, t);
   /* X3 = M^2 - 2S */
-  mont_mul(x3, m, m); msub(x3, x3, s); msub(x3, x3, s);
+  mont_sqr(x3, m); msub(x3, x3, s); msub(x3, x3, s);
   /* Y3 = M(S - X3) - 8 YYYY */
   msub(t, s, x3); mont_mul(y3, m, t);
   madd(t, yyyy, yyyy); madd(t, t, t); madd(t, t, t); msub(y3, y3, t);
@@ -313,7 +385,7 @@ static void jac_add_aff(jac *r, const jac *p, const aff *q) {
     return;
   }
   u64 z1z1[4], u2[4], s2[4], h[4], hh[4], i[4], j[4], rr[4], v[4], t[4], x3[4], y3[4], z3[4];
-  mont_mul(z1z1, p->z, p->z);
+  mont_sqr(z1z1, p->z);
   mont_mul(u2, q->x, z1z1);
   mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
   msub(h, u2, p->x);
@@ -323,21 +395,21 @@ static void jac_add_aff(jac *r, const jac *p, const aff *q) {
     memset(r, 0, sizeof *r); return; /* infinity */
   }
   madd(rr, rr, rr);
-  mont_mul(hh, h, h);
+  mont_sqr(hh, h);
   madd(i, hh, hh); madd(i, i, i);
   mont_mul(j, h, i);
   mont_mul(v, p->x, i);
-  mont_mul(x3, rr, rr); msub(x3, x3, j); msub(x3, x3, v); msub(x3, x3, v);
+  mont_sqr(x3, rr); msub(x3, x3, j); msub(x3, x3, v); msub(x3, x3, v);
   msub(t, v, x3); mont_mul(y3, rr, t);
   mont_mul(t, p->y, j); madd(t, t, t); msub(y3, y3, t);
-  madd(z3, p->z, h); mont_mul(z3, z3, z3); msub(z3, z3, z1z1); msub(z3, z3, hh);
+  madd(z3, p->z, h); mont_sqr(z3, z3); msub(z3, z3, z1z1); msub(z3, z3, hh);
   memcpy(r->x, x3, 32); memcpy(r->y, y3, 32); memcpy(r->z, z3, 32);
 }
 
 static void jac_to_aff(aff *r, const jac *p) {
   u64 zi[4], zi2[4], zi3[4];
   mont_inv(zi, p->z);
-  mont_mul(zi2, zi, zi);
+  mont_sqr(zi2, zi);
   mont_mul(zi3, zi2, zi);
   mont_mul(r->x, p->x, zi2);
   mont_mul(r->y, p->y, zi3);
@@ -363,7 +435,7 @@ static void batch_to_aff(aff *out, jac *in, int n) {
     u64 zi[4], zi2[4], zi3[4];
     mont_mul(zi, inv, acc[k]);
     mont_mul(inv, inv, in[k].z);
-    mont_mul(zi2, zi, zi); mont_mul(zi3, zi2, zi);
+    mont_sqr(zi2, zi); mont_mul(zi3, zi2, zi);
     mont_mul(out[k].x, in[k].x, zi2);
     mont_mul(out[k].y, in[k].y, zi3);
   }
@@ -437,34 +509,48 @@ value cvm_pedersen_byte(value pool, value a, value b, value d) {
 }
 
 /* ---------- Poseidon (Hades, 8 full + 83 partial rounds) ---------- */
-static u64 PRC[273][4];
+/* Optimized constants (lambdaworks / Appendix B of the Poseidon paper):
+   12 for the first 4 full rounds, 1 per partial round, 12 for the last 4. */
+static u64 PRC[107][4];
 static int prc_init = 0;
 static void poseidon_init(void) {
   if (prc_init) return;
   init_consts();
-  for (int i = 0; i < 273; i++) to_mont(PRC[i], POSEIDON_RC[i]);
+  for (int i = 0; i < 107; i++) to_mont(PRC[i], POSEIDON_ORC[i]);
   prc_init = 1;
 }
 
 static inline void cube(u64 x[4]) {
   u64 t[4];
-  mont_mul(t, x, x);
+  mont_sqr(t, x);
   mont_mul(x, t, x);
+}
+
+static inline void mix(u64 s0[4], u64 s1[4], u64 s2[4]) {
+  u64 t[4], d[4];
+  madd(t, s0, s1); madd(t, t, s2);
+  madd(d, s0, s0); madd(s0, t, d);
+  madd(d, s1, s1); msub(s1, t, d);
+  madd(d, s2, s2); madd(d, d, s2); msub(s2, t, d);
 }
 
 static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
   poseidon_init();
-  for (int r = 0; r < 91; r++) {
-    madd(s0, s0, PRC[3 * r]);
-    madd(s1, s1, PRC[3 * r + 1]);
-    madd(s2, s2, PRC[3 * r + 2]);
-    if (r < 4 || r >= 87) { cube(s0); cube(s1); }
+  int k = 0;
+  for (int r = 0; r < 4; r++, k += 3) {
+    madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
+    cube(s0); cube(s1); cube(s2);
+    mix(s0, s1, s2);
+  }
+  for (int r = 0; r < 83; r++, k++) {
+    madd(s2, s2, PRC[k]);
     cube(s2);
-    u64 t[4], d[4];
-    madd(t, s0, s1); madd(t, t, s2);
-    madd(d, s0, s0); madd(s0, t, d);
-    madd(d, s1, s1); msub(s1, t, d);
-    madd(d, s2, s2); madd(d, d, s2); msub(s2, t, d);
+    mix(s0, s1, s2);
+  }
+  for (int r = 0; r < 4; r++, k += 3) {
+    madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
+    cube(s0); cube(s1); cube(s2);
+    mix(s0, s1, s2);
   }
 }
 
@@ -576,8 +662,8 @@ static const u64 BETA_C[4] = {0xf4cdfcb99cee9e89ULL, 0x609ad26c15c915c1ULL, 0x15
 
 static int aff_on_curve(const u64 x[4], const u64 y[4]) { /* Montgomery inputs */
   u64 lhs[4], rhs[4], t[4], b[4];
-  mont_mul(lhs, y, y);
-  mont_mul(t, x, x); mont_mul(rhs, t, x);
+  mont_sqr(lhs, y);
+  mont_sqr(t, x); mont_mul(rhs, t, x);
   madd(rhs, rhs, x);
   to_mont(b, BETA_C);
   madd(rhs, rhs, b);
@@ -589,7 +675,7 @@ static void jac_add(jac *r, const jac *p, const jac *q) {
   if (is_zero(q->z)) { *r = *p; return; }
   u64 z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], rr[4], v[4], t[4];
   jac o;
-  mont_mul(z1z1, p->z, p->z); mont_mul(z2z2, q->z, q->z);
+  mont_sqr(z1z1, p->z); mont_sqr(z2z2, q->z);
   mont_mul(u1, p->x, z2z2); mont_mul(u2, q->x, z1z1);
   mont_mul(s1, p->y, q->z); mont_mul(s1, s1, z2z2);
   mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
@@ -598,14 +684,14 @@ static void jac_add(jac *r, const jac *p, const jac *q) {
     if (is_zero(rr)) { jac_double(r, p); return; }
     memset(r, 0, sizeof *r); return;
   }
-  madd(i, h, h); mont_mul(i, i, i);
+  madd(i, h, h); mont_sqr(i, i);
   mont_mul(j, h, i);
   madd(rr, rr, rr);
   mont_mul(v, u1, i);
-  mont_mul(o.x, rr, rr); msub(o.x, o.x, j); msub(o.x, o.x, v); msub(o.x, o.x, v);
+  mont_sqr(o.x, rr); msub(o.x, o.x, j); msub(o.x, o.x, v); msub(o.x, o.x, v);
   msub(t, v, o.x); mont_mul(o.y, rr, t);
   mont_mul(t, s1, j); madd(t, t, t); msub(o.y, o.y, t);
-  madd(t, p->z, q->z); mont_mul(t, t, t); msub(t, t, z1z1); msub(t, t, z2z2); mont_mul(o.z, t, h);
+  madd(t, p->z, q->z); mont_sqr(t, t); msub(t, t, z1z1); msub(t, t, z2z2); mont_mul(o.z, t, h);
   *r = o;
 }
 
@@ -625,8 +711,8 @@ intnat cvm_ec_op(value pool, intnat i0, intnat o0) {
   for (int b = 0; b < bits; b++) {
     /* projective x comparison as in cairo-vm (Jacobian: X1 Z2^2 == X2 Z1^2) */
     u64 a1[4], a2[4], z[4];
-    mont_mul(z, dp.z, dp.z); mont_mul(a1, ps.x, z);
-    mont_mul(z, ps.z, ps.z); mont_mul(a2, dp.x, z);
+    mont_sqr(z, dp.z); mont_mul(a1, ps.x, z);
+    mont_sqr(z, ps.z); mont_mul(a2, dp.x, z);
     if (eq4(a1, a2)) return 1;
     if ((m[b >> 6] >> (b & 63)) & 1) jac_add(&ps, &ps, &dp);
     jac_double(&dp, &dp);
