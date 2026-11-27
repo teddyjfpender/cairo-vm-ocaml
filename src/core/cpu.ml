@@ -7,6 +7,7 @@ open Vm
 open Deduce
 
 let decode_at vm seg off =
+  if off < 0 then fail "Negative program counter %d:%d" seg off;
   let v = get vm seg off in
   if v = Felt.empty then fail "Instruction at %d:%d is not assigned (UnknownMemoryCell)" seg off;
   if not (is_felt v) then fail "Instruction at %d:%d is a relocatable value" seg off;
@@ -294,7 +295,7 @@ let[@inline never] step_uncached vm =
   if d land ext_mask <> 0 then !ext_step vm d else step_instr vm d
 
 let[@inline] step vm =
-  if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then begin
+  if vm.pc_seg = 0 && vm.pc >= 0 && vm.pc < Array.length vm.icache then begin
     let d = Array.unsafe_get vm.icache vm.pc in
     if d <> 0 then step_instr vm d else step_uncached vm
   end
@@ -350,7 +351,7 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
   let first = vm.steps in
   while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
-    let hinted = vm.pc_seg = 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
+    let hinted = vm.pc_seg = 0 && pc >= 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
     if hinted then begin
       incr hint_steps;
       Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)

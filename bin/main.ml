@@ -14,10 +14,11 @@ let delegate message =
          let current = Unix.stat Sys.executable_name and target = Unix.stat path in
          if current.st_dev = target.st_dev && current.st_ino = target.st_ino then
            failwith "CAIRO_VM_RUST_CLI points to this executable";
-         Unix.putenv "CAIRO_VM_DELEGATED" "1";
+         let env = Unix.environment () |> Array.to_list
+           |> List.filter (fun entry -> not (String.starts_with ~prefix:"CAIRO_VM_DELEGATED=" entry)) in
          let argv = Array.copy Sys.argv in
          argv.(0) <- path;
-         Unix.execv path argv
+         Unix.execve path argv (Array.of_list ("CAIRO_VM_DELEGATED=1" :: env))
        with Failure msg -> prerr_endline msg; exit 2
           | Unix.Unix_error (e, _, _) -> prerr_endline (path ^ ": " ^ Unix.error_message e); exit 2)
 
