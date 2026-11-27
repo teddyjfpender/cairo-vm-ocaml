@@ -37,24 +37,24 @@ for both binaries. Every row's stdout, trace file and memory file were compared 
 
 | program | rust (s) | ocaml (s) | speedup |
 | --- | ---: | ---: | ---: |
-| big_factorial | 1.000 | 0.364 | 2.74x |
-| big_fibonacci | 0.850 | 0.281 | 3.03x |
-| blake2s_integration_benchmark | 0.738 | 0.354 | 2.09x |
-| compare_arrays_200000 | 0.916 | 0.287 | 3.20x |
-| dict_integration_benchmark | 0.684 | 0.379 | 1.80x |
-| integration_builtins | 0.997 | 0.413 | 2.41x |
-| keccak_integration_benchmark | 0.884 | 0.471 | 1.88x |
-| linear_search | 0.924 | 0.310 | 2.98x |
-| math_cmp_and_pow_integration_benchmark | 0.808 | 0.279 | 2.90x |
-| math_integration_benchmark | 0.723 | 0.255 | 2.83x |
-| memory_integration_benchmark | 0.562 | 0.228 | 2.47x |
-| operations_with_data_structures_benchmarks | 0.741 | 0.240 | 3.09x |
-| pedersen | 0.233 | 0.155 | 1.50x |
-| poseidon_integration_benchmark | 0.337 | 0.262 | 1.29x |
-| secp_integration_benchmark | 0.883 | 0.390 | 2.27x |
-| set_integration_benchmark | 0.306 | 0.224 | 1.36x |
-| uint256_integration_benchmark | 0.983 | 0.421 | 2.34x |
-| **total** | **12.571** | **5.312** | **2.37x** |
+| big_factorial | 0.861 | 0.242 | 3.56x |
+| big_fibonacci | 0.725 | 0.319 | 2.28x |
+| blake2s_integration_benchmark | 1.293 | 0.546 | 2.37x |
+| compare_arrays_200000 | 1.690 | 0.498 | 3.40x |
+| dict_integration_benchmark | 2.061 | 0.920 | 2.24x |
+| integration_builtins | 2.916 | 0.809 | 3.60x |
+| keccak_integration_benchmark | 2.178 | 0.911 | 2.39x |
+| linear_search | 1.639 | 0.445 | 3.68x |
+| math_cmp_and_pow_integration_benchmark | 1.427 | 0.494 | 2.89x |
+| math_integration_benchmark | 1.256 | 0.508 | 2.48x |
+| memory_integration_benchmark | 1.183 | 0.466 | 2.54x |
+| operations_with_data_structures_benchmarks | 1.766 | 0.490 | 3.61x |
+| pedersen | 0.599 | 0.109 | 5.50x |
+| poseidon_integration_benchmark | 0.784 | 0.468 | 1.67x |
+| secp_integration_benchmark | 2.169 | 0.621 | 3.49x |
+| set_integration_benchmark | 0.752 | 0.169 | 4.45x |
+| uint256_integration_benchmark | 2.157 | 1.000 | 2.16x |
+| **total** | **25.456** | **9.013** | **2.82x** |
 
 Programs are cairo-vm's `cairo_programs/benchmarks/*.cairo`, compiled with cairo-lang 0.13.5.
 Reproduce with `bench/compare.py RUST_CLI _build/default/bin/main.exe progs/*.json --trace`.
