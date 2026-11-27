@@ -1,10 +1,3 @@
-(* Cairo layouts with the instance parameters proof mode needs, mirroring
-   cairo-vm v4.0.0 vm/src/types/layout.rs and instance_definitions/*.rs.
-
-   In v4 the mod builtins are always compiled in (v3.2.0 gated them behind
-   the [mod_builtin] cargo feature, off in the default cairo-vm-cli build);
-   [with_mod_builtin] selects between the two. *)
-
 open Errors
 open Builtin
 

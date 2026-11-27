@@ -3,21 +3,6 @@
 
 open Errors
 
-
-(* Packed decoded instruction (non-zero):
-   bits 0..15 off0+2^15, 16..31 off1+2^15, 32..47 off2+2^15,
-   48 dst_fp, 49 op0_fp, 50..51 op1 (0 op0,1 imm,2 fp,3 ap),
-   52..53 res (0 op1,1 add,2 mul,3 unconstrained),
-   54..55 pc (0 regular,1 jump,2 jump_rel,3 jnz),
-   56..57 ap (0 regular,1 add,2 add1,3 add2),
-   58..59 opcode (0 nop,1 call,2 ret,3 assert_eq),
-   60 valid,
-   61..62 opcode extension (0 Stone, 1 Blake, 2 BlakeFinalize, 3 QM31Operation).
-   Only on a fresh decode: bit 61 of a cached word is run_fast's hint flag.
-   Words with a non-zero extension are never stored in the decoded
-   instruction cache, so the fast loop never sees them and they always run
-   through [step] / [ext_step]. *)
-
 let ext_shift = 61
 let ext_mask = 3 lsl ext_shift
 let two_128 = Z.shift_left Z.one 128

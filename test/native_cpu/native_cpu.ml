@@ -17,7 +17,7 @@ let make_vm words cells =
   in
   let segs = [|segment words; segment cells; seg_make 8|] in
   let high cells = Array.fold_left (fun (i, n) v -> i+1, (if v = Felt.empty then n else i+1)) (0, 0) cells |> snd in
-  { (create ~trace:false) with segs; nsegs=3; seg_flag=[|0;0;0|];
+  { (create ~trace:false) with segs; nsegs=3; seg_flag=Array.make 3 k_plain;
     seg_builtin=Array.make 3 None; hi=[|high words; high cells; 0|];
     pc=0; ap=8; fp=6; trace_on=true; trace=seg_make 8 }
 
@@ -100,11 +100,11 @@ let () =
   execute ~hint:false ~hole:true
 
 let () =
-  List.iter (fun (kind, flag, width, expected) ->
+  List.iter (fun (kind, width, expected) ->
     let vm = make_vm [|Felt.zero|] (Array.make 16 Felt.empty) in
-    let b = {kind; base=2; included=true; stop_ptr=width; cache=[||]} in
+    let b = {kind; base=2; stop_ptr=width; cache=[||]} in
     vm.builtins <- [b];
-    vm.seg_flag.(2) <- flag;
+    vm.seg_flag.(2) <- flag_of kind;
     write vm 2 0 (Felt.small 7); write vm 2 1 (Felt.small 3);
     let deduced = deduce_builtin vm b 2 2 in
     Option.iter (fun n -> assert (Felt.equal deduced (Felt.small n))) expected;
@@ -116,7 +116,7 @@ let () =
       | exception Vm_error _ -> () | () -> failwith "accepted incorrect builtin output"
     in
     reject (); b.cache <- [||]; reject ())
-    [Bitwise,k_bitwise,5,Some 3; Pedersen,k_pedersen,3,None]
+    [Bitwise,5,Some 3; Pedersen,3,None]
 
 let () =
   (* A low-level caller may use the first program word as its stop address. *)

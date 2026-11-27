@@ -1,6 +1,3 @@
-(* Memory segments and the trace live outside the OCaml heap: every cell is an
-   immediate, so there is nothing for the GC to scan or barrier. Memory cells
-   hold [Felt.t] values; the trace reuses the storage for packed register words. *)
 module BA = Bigarray.Array1
 type seg = (int, Bigarray.int_elt, Bigarray.c_layout) BA.t
 external seg_make : int -> seg = "cvm_zalloc"

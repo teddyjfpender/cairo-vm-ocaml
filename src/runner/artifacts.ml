@@ -1,6 +1,3 @@
-(* Relocation and the run's outputs: binary trace/memory files and the
-   output builtin's printed lines. *)
-
 open Errors
 open Segment
 open Builtin

@@ -1,6 +1,3 @@
-(* The Cairo CPU: instruction fetch, the generic deduction step and the
-   fast interpreter loop (with the native batch kernel). *)
-
 open Felt
 open Errors
 open Segment
@@ -292,7 +289,7 @@ let generic_steps = ref 0
 let hint_steps = ref 0
 
 (* The kernel executes a flagged first instruction: its hints already ran. *)
-external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
+external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
   seg -> bytes -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
 let run_fast vm (hints : (vm -> unit) array array) end_seg =

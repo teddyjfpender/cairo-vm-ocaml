@@ -1,6 +1,3 @@
-(* Builtin kinds, their memory cell layout and per-run builtin state. *)
-
-
 type bkind =
   | Output
   | Pedersen
@@ -57,22 +54,28 @@ let n_input_cells = function
 type builtin = {
   kind : bkind;
   base : int; (* segment index *)
-  included : bool;
   mutable stop_ptr : int;
   mutable cache : Felt.t array; (* deduced outputs by offset, [Felt.empty] = none *)
 }
 
+(* Segment flags. cpu_kernel.c relies on these codes: 1 and 2 are the range
+   checks, 5..9 the deducing builtins. *)
+type flag = int
 
-
-(* segment flags *)
 let k_plain = 0
 let k_rc = 1
 let k_rc96 = 2
-let k_deduce = 3 (* pedersen, bitwise, ec_op, keccak, poseidon *)
-let k_bitwise = 5
-let k_pedersen = 6
-let k_poseidon = 7
-let k_keccak = 8
-let k_ec_op = 9
-let is_deducing k = k = k_deduce || (k >= k_bitwise && k <= k_ec_op)
 let k_ecdsa = 4
+
+let flag_of = function
+  | Range_check -> k_rc
+  | Range_check96 -> k_rc96
+  | Ecdsa -> k_ecdsa
+  | Bitwise -> 5
+  | Pedersen -> 6
+  | Poseidon -> 7
+  | Keccak -> 8
+  | Ec_op -> 9
+  | Output | Add_mod | Mul_mod -> k_plain
+
+let[@inline] is_deducing k = k >= 5 && k <= 9

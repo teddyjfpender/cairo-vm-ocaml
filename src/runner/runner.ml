@@ -1,14 +1,3 @@
-(* Runner mirroring cairo-vm v4.0.0's cairo_run: execution mode and canonical
-   (Cairo 0) proof mode.
-
-   Proof mode follows vm/src/vm/runners/cairo_runner.rs: every layout builtin
-   gets a runner and a segment (only program builtins are "included"), the
-   run starts at __start__ with the stack [exec+2, 0, builtin bases...],
-   stops at __end__ plus one step, and end_run pads the trace to a power of
-   two until every layout resource check (builtin cells, range-check units,
-   memory units, diluted units) passes. finalize_segments fixes builtin
-   segment sizes to their allocated sizes and records the public memory. *)
-
 open Errors
 open Builtin
 open Vm
@@ -77,17 +66,6 @@ let rec is_subsequence xs ys =
   | _, [] -> false
   | x :: xs', y :: ys' -> if x = y then is_subsequence xs' ys' else is_subsequence xs ys'
 
-let seg_flag_of = function
-  | Range_check -> k_rc
-  | Range_check96 -> k_rc96
-  | Bitwise -> k_bitwise
-  | Pedersen -> k_pedersen
-  | Poseidon -> k_poseidon
-  | Keccak -> k_keccak
-  | Ec_op -> k_ec_op
-  | Ecdsa -> k_ecdsa
-  | _ -> k_plain
-
 let compile_hints prog =
   let scopes = Hintrt.new_scopes () in
   Hints_registry.init ();
@@ -151,11 +129,10 @@ let initialize ?layout_def ?(proof = false) (cfg : config) (prog : Program.t) : 
   let builtins =
     List.map
       (fun k ->
-        let included = List.mem k prog_builtins in
         let seg = add_segment vm in
-        let b = { kind = k; base = seg; included; stop_ptr = -1; cache = [||] } in
+        let b = { kind = k; base = seg; stop_ptr = -1; cache = [||] } in
         vm.seg_builtin.(seg) <- Some b;
-        vm.seg_flag.(seg) <- seg_flag_of k;
+        vm.seg_flag.(seg) <- flag_of k;
         b)
       active
   in
@@ -244,5 +221,3 @@ let run_until_end r =
     run_for_steps r 1
   end
   else run r.vm r.hints r.end_seg
-
-(* ---- accessed addresses and instruction offset limits, from the trace ---- *)
