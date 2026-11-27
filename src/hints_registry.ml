@@ -6,5 +6,6 @@ let initialized = ref false
 let init () =
   if not !initialized then begin
     initialized := true;
+    Hints_misc.register ();
     ()
   end

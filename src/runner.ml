@@ -121,7 +121,7 @@ let initialize (cfg : config) (prog : Program.t) : t =
     prog.hints;
   { vm; prog; end_seg; hints; prog_builtins; scopes }
 
-let run_until_end r = run_fast r.vm r.hints r.end_seg
+let run_until_end r = run r.vm r.hints r.end_seg
 
 (* ---- end of run ---- *)
 
@@ -185,6 +185,16 @@ let read_return_values r ~allow_missing =
           pointer := max 0 (!pointer - 1))
     (List.rev r.prog_builtins)
 
+let check_no_temp_values vm =
+  for s = 0 to vm.nsegs - 1 do
+    let a = vm.segs.(s) in
+    for i = 0 to min (used_size vm s) (slen a) - 1 do
+      let v = sget a i in
+      if Felt.is_reloc v && Felt.rseg v < 0 then
+        fail "Invalid memory value at %d:%d: temporary address %d:%d" s i (Felt.rseg v) (Felt.roff v)
+    done
+  done
+
 let verify_secure_runner r =
   let vm = r.vm in
   List.iter
@@ -193,6 +203,8 @@ let verify_secure_runner r =
       if n >= b.stop_ptr + 1 then fail "Out of bounds access to builtin segment %s" (bname b.kind))
     vm.builtins;
   if used_size vm 0 > Array.length r.prog.data then fail "Out of bounds access to program segment";
+  (* every temporary address must have been relocated to a real one *)
+  if vm.ntsegs > 0 then check_no_temp_values vm;
   (* builtin security checks: inputs of every instance must be present *)
   List.iter
     (fun b ->
@@ -223,6 +235,7 @@ let verify_secure_runner r =
     vm.builtins
 
 let end_run ?(fill_holes=false) r ~secure ~allow_missing =
+  relocate_temp_memory r.vm;
   if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";
   verify_auto_deductions ~fill_holes r.vm;
   read_return_values r ~allow_missing;
@@ -248,6 +261,8 @@ let write_trace r path =
 
 let write_memory r path =
   let vm = r.vm in
+  (* relocate_value rejects temporary segments (TemporarySegmentInRelocation) *)
+  if vm.had_temp then check_no_temp_values vm;
   let sizes = Array.init vm.nsegs (used_size vm) in
   c_write_memory path vm.segs sizes (relocation_table vm) vm.nsegs !Felt.pool
 
