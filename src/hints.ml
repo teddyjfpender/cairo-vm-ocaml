@@ -265,17 +265,39 @@ let get_tracker scopes ptr =
       t
 
 let dict_lookup t key =
-  match Hashtbl.find_opt t.data key with
+  let change = match t.changes with None -> None | Some m -> Dict_changes.find_opt key m in
+  match change with
   | Some v -> v
-  | None -> ( match t.default with Some d -> d | None -> fail "Dict Error: no value found for key %s" (value_to_string key))
+  | None ->
+      (match Hashtbl.find_opt t.data key with
+       | Some v -> v
+       | None -> match t.default with Some d -> d | None -> fail "Dict Error: no value found for key %s" (value_to_string key))
 
-let new_dict vm scopes initial default =
+let dict_set t key value =
+  match t.changes with
+  | None -> Hashtbl.replace t.data key value
+  | Some m -> t.changes <- Some (Dict_changes.add key value m)
+
+let snapshot t =
+  let changes = match t.changes with
+    | Some m -> m
+    | None -> t.changes <- Some Dict_changes.empty; Dict_changes.empty
+  in
+  t.data, changes
+
+let add_tracker vm scopes data changes default =
   let m = dict_manager scopes in
   let s = add_segment vm in
+  let ptr = Felt.reloc s 0 in
+  Hashtbl.replace m s { data; changes; default; current_ptr = ptr };
+  ptr
+
+let new_dict vm scopes initial default =
   let data = Hashtbl.create 16 in
   (match initial with Some h -> Hashtbl.iter (fun k v -> Hashtbl.replace data k v) h | None -> ());
-  Hashtbl.replace m s { data; default; current_ptr = Felt.reloc s 0 };
-  Felt.reloc s 0
+  add_tracker vm scopes data None default
+
+let from_snapshot vm scopes (data, changes) = add_tracker vm scopes data (Some changes) None
 
 let incr_ptr t = t.current_ptr <- value_add t.current_ptr (Felt.small 3)
 
@@ -346,8 +368,12 @@ let () =
       set_val vm c "next_key" k);
   (* dict_new *)
   reg H.h33 (fun c vm ->
-      let init = match var c.scopes "initial_dict" with Initial_dict h -> h | _ -> fail "initial_dict has wrong type" in
-      write_ap vm (new_dict vm c.scopes (Some init) None);
+      let ptr = match var c.scopes "initial_dict" with
+        | Initial_dict h -> new_dict vm c.scopes (Some h) None
+        | Dict_snapshot frozen -> from_snapshot vm c.scopes frozen
+        | _ -> fail "initial_dict has wrong type"
+      in
+      write_ap vm ptr;
       del c.scopes "initial_dict");
   (* dict_read *)
   reg H.h34 (fun c vm ->
@@ -362,7 +388,7 @@ let () =
       let key = canon (get_val vm c "key") in
       let prev = dict_lookup t key in
       write_checked vm (Felt.rseg dp) (Felt.roff dp + 1) prev;
-      Hashtbl.replace t.data key (get_val vm c "new_value"));
+      dict_set t key (get_val vm c "new_value"));
   (* dict_update *)
   reg H.h36 (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "dict_ptr") in
@@ -371,13 +397,13 @@ let () =
       let prev = get_val vm c "prev_value" in
       if not (Felt.equal cur prev) then
         fail "Wrong previous value in dict. Got %s, expected %s." (value_to_string prev) (value_to_string cur);
-      Hashtbl.replace t.data key (get_val vm c "new_value");
+      dict_set t key (get_val vm c "new_value");
       incr_ptr t);
   (* dict_squash: copy dict *)
   reg H.h37 (fun c vm ->
       let m = match var c.scopes "__dict_manager" with Dict_manager m -> m | _ -> fail "no dict manager" in
       let t = get_tracker c.scopes (get_ptr vm c "dict_accesses_end") in
-      enter c.scopes [ ("__dict_manager", Dict_manager m); ("initial_dict", Initial_dict (Hashtbl.copy t.data)) ]);
+      enter c.scopes [ ("__dict_manager", Dict_manager m); ("initial_dict", Dict_snapshot (snapshot t)) ]);
   reg H.h38 (fun c vm ->
       let t = get_tracker c.scopes (get_ptr vm c "squashed_dict_start") in
       t.current_ptr <- get_ptr vm c "squashed_dict_end");

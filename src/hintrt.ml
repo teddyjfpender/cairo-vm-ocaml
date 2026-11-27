@@ -6,8 +6,12 @@
 open Vm
 module P = Program
 
+module Dict_changes = Map.Make (Int)
+type snapshot = (int, int) Hashtbl.t * int Dict_changes.t
+
 type dict_tracker = {
   data : (int, int) Hashtbl.t; (* canonical key code -> value code *)
+  mutable changes : int Dict_changes.t option; (* Some freezes data for snapshots *)
   default : int option;
   mutable current_ptr : int; (* relocatable code *)
 }
@@ -20,6 +24,7 @@ type dyn =
   | Dict_manager of (int, dict_tracker) Hashtbl.t
   | Access_indices of (int, int list) Hashtbl.t
   | Positions of (int, int list) Hashtbl.t
+  | Dict_snapshot of snapshot
   | Initial_dict of (int, int) Hashtbl.t
   | Nothing
 
