@@ -80,12 +80,10 @@ value batch(value state, value cache, value segs, value flags, value highs,
   const intnat trace_length = CAPACITY(trace);
   if (used < 0 || used > trace_length || slot < 0 || slot > slots ||
       high < 0 || high > length || ap < 0 || fp < 0) return Val_int(0);
-  /* A step records at most three trace words. */
-  const intnat budget = tracing && trace_length - used < 3*8192 ? (trace_length - used) / 3 : 8192;
-  intnat completed = 0;
-  for (; completed < budget && fits(pc, cache_size); ++completed) {
+  int completed = 0;
+  for (; completed < 8192 && fits(pc, cache_size); ++completed) {
     uint64_t d = Long_val(Field(cache, pc));
-    if (!d || d >> 61) break;
+    if (!d || d >> 61 || (tracing && used > trace_length - 3)) break;
     intnat next_pc = pc + 1, next_ap = ap, next_fp = fp;
     /* decode_word admits only the Stwo shapes, so flags alone identify the
        canonical RET and CALL rel, whose offsets are fixed. */
@@ -108,8 +106,8 @@ value batch(value state, value cache, value segs, value flags, value highs,
           if (n > 1 || (pc+1 < cache_size && Long_val(Field(cache, pc+1)) != 0))
             Field(spans, pc) = Val_int(n);
         }
-        if (n > 1 && completed+n <= budget && from >= 0 && from+n <= ap && ap <= length-n &&
-            (!tracing || (pc+n <= 65536 && (ap+n) < (1<<23) && fp < (1<<23)))) {
+        if (n > 1 && completed+n <= 8192 && from >= 0 && from+n <= ap && ap <= length-n &&
+            (!tracing || (pc+n <= 65536 && (ap+n) < (1<<23) && fp < (1<<23) && used+n <= trace_length))) {
           int ready = 1;
           for (int k=0; k<n; ++k) if (!stack[from+k] || stack[ap+k]) { ready=0; break; }
           if (ready) {
