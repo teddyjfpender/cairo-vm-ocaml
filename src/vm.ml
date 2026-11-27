@@ -412,6 +412,7 @@ let[@inline never] deduce_cell vm seg off =
    58..59 opcode (0 nop,1 call,2 ret,3 assert_eq),
    60 valid,
    61..62 opcode extension (0 Stone, 1 Blake, 2 BlakeFinalize, 3 QM31Operation).
+   Only on a fresh decode: bit 61 of a cached word is run_fast's hint flag.
    Words with a non-zero extension are never stored in the decoded
    instruction cache, so the fast loop never sees them and they always run
    through [step] / [ext_step]. *)
@@ -702,14 +703,19 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
   vm.ap <- new_ap;
   vm.steps <- vm.steps + 1
 
-let[@inline] step vm =
-  let d =
-    if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then
-      let d = Array.unsafe_get vm.icache vm.pc in
-      if d <> 0 then d else fetch_slow vm
-    else fetch_slow vm
-  in
+(* Cached words are always Stone instructions (their bit 61 may carry
+   run_fast's hint flag); extension bits are only meaningful on a fresh
+   decode, since extension words are never cached. *)
+let[@inline never] step_uncached vm =
+  let d = fetch_slow vm in
   if d land ext_mask <> 0 then !ext_step vm d else step_instr vm d
+
+let[@inline] step vm =
+  if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then begin
+    let d = Array.unsafe_get vm.icache vm.pc in
+    if d <> 0 then step_instr vm d else step_uncached vm
+  end
+  else step_uncached vm
 
 (* ---------------- fast interpreter loop ----------------
 
