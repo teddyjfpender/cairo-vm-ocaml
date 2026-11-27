@@ -25,3 +25,16 @@ let () =
   Felt.reserve 1;
   Bigarray.Array1.(fill (sub Felt.pool (!Felt.pool_n * 32) 32) '\255');
   check (pow2 64)
+
+let () =
+  let check_hex x =
+    let s = "0x" ^ Z.format "%x" x in
+    let expected = if Z.lt x Felt.p then Some x else None in
+    assert (Option.map Felt.to_z (Felt.of_hex_opt s) = expected)
+  in
+  List.iter (fun n ->
+      let x = Z.shift_left Z.one n in
+      List.iter check_hex [Z.pred x; x; Z.succ x]) [0; 59; 63; 64; 127; 192; 251; 255];
+  List.iter check_hex [Z.pred Felt.p; Felt.p; Z.succ Felt.p];
+  List.iter (fun s -> assert (Felt.of_hex_opt s = None)) [""; "0x"; "00"; "0x10_0"; "0x4g"];
+  assert (Option.map Felt.to_z (Felt.of_hex_opt "0X00AF") = Some (Z.of_int 175))

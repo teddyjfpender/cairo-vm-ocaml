@@ -2,10 +2,25 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
-let felt j =
+(* Large block witnesses create many short-lived transaction and call records.
+   Dedicated runner processes can increase the nursery without changing the
+   GC settings of applications embedding the VM. *)
+let configure_batch_gc () =
+  if Sys.getenv_opt "OCAMLRUNPARAM" = None && Sys.getenv_opt "CAMLRUNPARAM" = None then begin
+    let gc = Gc.get () in
+    Gc.set {gc with minor_heap_size = max gc.minor_heap_size (4 lsl 20);
+                    space_overhead = max gc.space_overhead 250}
+  end
+
+let felt_slow j =
   let z = Pie_file.z_of_json j in
   if Z.sign z < 0 || Z.geq z Felt.p then fail "OS input field element out of range";
   Felt.of_z z
+
+let felt = function
+  | `Int i when i >= 0 -> Felt.of_int i
+  | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
+  | j -> felt_slow j
 
 let from_file ~watch ~accessed ~set_pages path =
   (* Keep each transaction and its witnesses as validated JSON until the OS

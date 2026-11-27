@@ -214,6 +214,14 @@ let to_z c =
     Z.of_bits (Bytes.unsafe_to_string b)
   end
 
+external c_parse_hex : pool -> string -> (int[@untagged]) -> (int[@untagged])
+  = "cvm_parse_hex_byte" "cvm_parse_hex" [@@noalloc]
+
+let of_hex_opt s =
+  reserve 1;
+  let result = c_parse_hex pool s !pool_n in
+  if result = 0 then None else begin commit result; Some result end
+
 let of_z z =
   if Z.fits_int z && fits_small (Z.to_int z) then small (Z.to_int z)
   else begin

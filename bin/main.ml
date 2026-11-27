@@ -123,6 +123,7 @@ let () =
         pie_input := Some res;
         res.runner, t1, Unix.gettimeofday ()
       end else
+      let () = if Option.is_some !os_hints then Os_hints.configure_batch_gc () in
       let prog = Program.load_file file in
       let r = match !bootloader_input, !os_hints with
         | Some path, _ -> Bootloader.initialize ?layout_def ~proof ~path cfg prog

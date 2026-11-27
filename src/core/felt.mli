@@ -116,6 +116,9 @@ val div : t -> t -> t option
 val neg : t -> t
 val split_at_limb : two_limbs:bool -> t -> t * t
 val to_z : t -> Z.t
+val of_hex_opt : string -> t option
+(** Read one to 64 hexadecimal digits prefixed by 0x. Values must be below the field prime. *)
+
 val of_z : Z.t -> t
 val to_signed_z : t -> Z.t
 val to_nat : t -> int

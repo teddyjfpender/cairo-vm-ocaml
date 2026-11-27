@@ -197,6 +197,31 @@ value cvm_binop_byte(value pool, value op, value a, value b, value dst) {
 }
 
 /* Materialize code into slot [dst] (canonical limbs). */
+/* Parse a canonical hex field element from the sequencer JSON. Zero is
+   the empty-cell sentinel, distinct from the field element 0. */
+intnat cvm_parse_hex(value pool, value text, intnat slot) {
+  const unsigned char *s = (const unsigned char *)String_val(text);
+  size_t n = caml_string_length(text);
+  if (n <= 2 || n > 66 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return 0;
+  u64 limbs[4] = {0};
+  for (size_t i = 2; i < n; i++) {
+    unsigned c = s[i], digit = c - '0';
+    if (digit > 9) {
+      digit = (c | 32) - 'a';
+      if (digit > 5) return 0;
+      digit += 10;
+    }
+    size_t place = n-i-1;
+    limbs[place / 16] |= (u64)digit << (4 * (place % 16));
+  }
+  if (geq_p(limbs)) return 0;
+  return store(pool, limbs, slot);
+}
+
+value cvm_parse_hex_byte(value pool, value text, value slot) {
+  return Val_long(cvm_parse_hex(pool, text, Long_val(slot)));
+}
+
 void cvm_load_slot(value pool, intnat code, intnat dst) {
   u64 x[4];
   load(pool, code, x);
