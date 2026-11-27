@@ -17,8 +17,8 @@ v4.0.0: same flags, byte-identical outputs, more than five times faster.
 
 ## At a glance
 
-- **Speed:** 6.0× the Rust CLI on its 17 benchmarks (5.5× with trace and memory files);
-  up to 10× on single programs.
+- **Speed:** 6.8× the Rust CLI on its 17 benchmarks (6.7× with trace and memory files);
+  up to 11× on single programs.
 - **Parity:** across the upstream test corpus, every output (stdout, trace, memory, AIR
   inputs, PIE archives) is identical, in execution and proof mode.
 - **Coverage:** every builtin, every v4.0.0 layout including `dynamic`, and the Blake and

@@ -9,7 +9,7 @@
 [![OxCaml](https://img.shields.io/badge/built%20with-OxCaml%205.2-ee6a1a?logo=ocaml&logoColor=white)](https://oxcaml.org/)
 [![cairo-vm](https://img.shields.io/badge/parity-cairo--vm%20v4.0.0-6b46c1)](docs/parity.md)
 [![Corpus](https://img.shields.io/badge/corpus-0%20mismatches-2ea44f)](docs/parity.md)
-[![Speed](https://img.shields.io/badge/speed-6.0%C3%97%20vs%20Rust-ff69b4)](docs/benchmarks.md)
+[![Speed](https://img.shields.io/badge/speed-6.8%C3%97%20vs%20Rust-ff69b4)](docs/benchmarks.md)
 [![Docs](https://img.shields.io/badge/docs-site-ee6a1a)](https://teddyjfpender.github.io/cairo-vm-ocaml/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
@@ -17,9 +17,9 @@
 
 A drop-in replacement for the `cairo-vm-cli` of
 [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm): same flags,
-byte-identical outputs, about **6× faster**.
+byte-identical outputs, about **7× faster**.
 
-- **Fast:** 6.0× the Rust CLI across its 17 benchmarks, up to 10× on single programs
+- **Fast:** 6.8× the Rust CLI across its 17 benchmarks, up to 11× on single programs
 - **Exact:** identical trace, memory, AIR inputs and PIE archives on the upstream corpus
 - **Complete:** execution and proof mode, every builtin, dynamic layouts, Stwo opcodes
 

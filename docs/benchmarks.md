@@ -3,6 +3,61 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Apple M5 Max, Rust cairo-vm v4.0.0 (main at 2b07b77)
+
+After wave 3: a word-at-a-time program loader (load time about halved), cheaper end-of-run
+checks (keccak and blake2s 1.2–1.3× faster end to end), trace and memory files written on
+background threads, and the hints regrouped by family. Best of three wall-clock runs per
+program, `--layout all_cairo --print_output`; every row matched Rust byte for byte. The machine
+was busier than for the previous section, so absolute times are higher on both sides; compare
+the ratios.
+
+**Execution and printed output** (mean of per-program speedups: 7.4×)
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 0.540 | 0.085 | 6.38× |
+| big_fibonacci | 0.473 | 0.060 | 7.92× |
+| blake2s_integration_benchmark | 0.580 | 0.086 | 6.74× |
+| compare_arrays_200000 | 0.533 | 0.055 | 9.72× |
+| dict_integration_benchmark | 0.474 | 0.101 | 4.70× |
+| integration_builtins | 0.760 | 0.072 | 10.49× |
+| keccak_integration_benchmark | 0.753 | 0.105 | 7.14× |
+| linear_search | 0.506 | 0.061 | 8.28× |
+| math_cmp_and_pow_integration_benchmark | 0.576 | 0.080 | 7.18× |
+| math_integration_benchmark | 0.525 | 0.074 | 7.05× |
+| memory_integration_benchmark | 0.386 | 0.067 | 5.77× |
+| operations_with_data_structures_benchmarks | 0.549 | 0.068 | 8.11× |
+| pedersen | 0.227 | 0.020 | 11.12× |
+| poseidon_integration_benchmark | 0.325 | 0.108 | 3.01× |
+| secp_integration_benchmark | 0.695 | 0.123 | 5.66× |
+| set_integration_benchmark | 0.300 | 0.030 | 10.06× |
+| uint256_integration_benchmark | 0.706 | 0.112 | 6.29× |
+| **Total** | **8.905** | **1.307** | **6.81×** |
+
+**Execution, printed output, trace and memory files** (mean: 7.0×)
+
+| Program | Rust (s) | OCaml (s) | Speedup |
+| --- | ---: | ---: | ---: |
+| big_factorial | 1.014 | 0.155 | 6.56× |
+| big_fibonacci | 0.925 | 0.146 | 6.32× |
+| blake2s_integration_benchmark | 0.863 | 0.141 | 6.13× |
+| compare_arrays_200000 | 1.027 | 0.130 | 7.89× |
+| dict_integration_benchmark | 0.760 | 0.156 | 4.89× |
+| integration_builtins | 1.138 | 0.130 | 8.77× |
+| keccak_integration_benchmark | 1.041 | 0.148 | 7.04× |
+| linear_search | 1.033 | 0.122 | 8.48× |
+| math_cmp_and_pow_integration_benchmark | 0.926 | 0.136 | 6.83× |
+| math_integration_benchmark | 0.835 | 0.118 | 7.07× |
+| memory_integration_benchmark | 0.667 | 0.108 | 6.18× |
+| operations_with_data_structures_benchmarks | 0.814 | 0.107 | 7.59× |
+| pedersen | 0.287 | 0.027 | 10.50× |
+| poseidon_integration_benchmark | 0.398 | 0.133 | 2.99× |
+| secp_integration_benchmark | 0.899 | 0.153 | 5.89× |
+| set_integration_benchmark | 0.365 | 0.041 | 8.80× |
+| uint256_integration_benchmark | 1.148 | 0.169 | 6.79× |
+| **Total** | **14.139** | **2.119** | **6.67×** |
+
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at a70bf22)
 
 After the non-moving felt pool with shared field arithmetic (`field.h`), Poseidon round two,
