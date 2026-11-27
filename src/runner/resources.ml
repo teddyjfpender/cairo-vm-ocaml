@@ -266,50 +266,13 @@ let used_and_allocated r b =
       end;
       (used, size)
 
-let u64_mask = Z.of_string "18446744073709551615"
+external rc_limits : Felt.pool -> seg -> int -> int -> int = "cvm_builtin_rc_limits" [@@noalloc]
 
-(* min/max over the 16-bit parts of the range-check segment, in cairo-vm's
-   order (each little-endian u64 digit read high part first, first n_parts
-   parts). None on an empty segment, a hole or a relocatable value. *)
 let builtin_rc_usage vm b =
-  let np = Layout.n_parts b.kind in
-  let n = used_size vm b.base in
-  if np = 0 || n = 0 then None
-  else
-    try
-      let lo = ref max_int and hi = ref min_int in
-      let add x =
-        if x < !lo then lo := x;
-        if x > !hi then hi := x
-      in
-      for i = 0 to n - 1 do
-        let v = read vm b.base i in
-        if v = Felt.empty || not (Felt.is_felt v) then raise Exit;
-        let taken = ref 0 in
-        if Felt.is_small v && Felt.small_val v >= 0 then begin
-          let d0 = Felt.small_val v in
-          for p = 3 downto 0 do
-            if !taken < np then (add ((d0 lsr (16 * p)) land 0xffff); incr taken)
-          done;
-          if !taken < np then add 0
-        end
-        else begin
-          let z = Felt.to_z v in
-          let k = ref 0 in
-          while !taken < np do
-            let d = Z.logand (Z.shift_right z (64 * !k)) u64_mask in
-            for p = 3 downto 0 do
-              if !taken < np then begin
-                add (Z.to_int (Z.logand (Z.shift_right d (16 * p)) (Z.of_int 0xffff)));
-                incr taken
-              end
-            done;
-            incr k
-          done
-        end
-      done;
-      Some (!lo, !hi)
-    with Exit -> None
+  let parts = Layout.n_parts b.kind in
+  if parts = 0 then None else
+    let limits = rc_limits Felt.pool vm.segs.(b.base) (used_size vm b.base) parts in
+    if limits < 0 then None else Some (limits lsr 16, limits land 0xffff)
 
 let perm_range_check_limits r =
   update_accessed r;

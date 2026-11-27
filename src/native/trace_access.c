@@ -3,6 +3,7 @@
    Marking is idempotent, so the fallback can repeat a partial entry. */
 #include <stdint.h>
 #include "trace_encoding.h"
+#include "field.h"
 #include <string.h>
 #include <caml/mlvalues.h>
 #include <caml/bigarray.h>
@@ -119,4 +120,26 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
 value cvm_trace_access_byte(value *argv, int argc) {
   (void)argc;
   return cvm_trace_access(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6], argv[7]);
+}
+
+/* Cairo visits each little-endian limb from its most significant 16-bit
+   part down. The 96-bit builtin takes only the first two parts of limb 1. */
+value cvm_builtin_rc_limits(value pool, value segment, value size, value parts) {
+  intnat n = Long_val(size), np = Long_val(parts);
+  if (n <= 0 || n > Caml_ba_array_val(segment)->dim[0] || (np != 6 && np != 8))
+    return Val_long(-1);
+  const intnat *cells = Caml_ba_data_val(segment);
+  unsigned lo = UINT16_MAX, hi = 0;
+  for (intnat i = 0; i < n; ++i) {
+    intnat code = cells[i];
+    if (!(code & 1)) return Val_long(-1);
+    u64 words[4];
+    load(pool, code, words);
+    for (int j = 0; j < np; ++j) {
+      unsigned v = (words[j/4] >> (48-16*(j%4))) & UINT16_MAX;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  return Val_long(((intnat)lo << 16) | hi);
 }
