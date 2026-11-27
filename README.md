@@ -1,7 +1,6 @@
 <div align="center">
 
-<!-- Logo slot: drop an original design at assets/logo.svg and uncomment the next line. -->
-<!-- <img src="assets/logo.svg" alt="OxCairo" width="220"> -->
+<img src="docs/assets/logo.png" alt="OxCairo" width="200">
 
 # OxCairo
 
@@ -11,6 +10,7 @@
 [![cairo-vm](https://img.shields.io/badge/parity-cairo--vm%20v4.0.0-6b46c1)](docs/parity.md)
 [![Corpus](https://img.shields.io/badge/corpus-0%20mismatches-2ea44f)](docs/parity.md)
 [![Speed](https://img.shields.io/badge/speed-6.0%C3%97%20vs%20Rust-ff69b4)](docs/benchmarks.md)
+[![Docs](https://img.shields.io/badge/docs-site-ee6a1a)](https://teddyjfpender.github.io/cairo-vm-ocaml/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 </div>
@@ -34,6 +34,8 @@ _build/default/bin/main.exe program.json --layout all_cairo --print_output
 
 ## Documentation
 
+The docs are published at **[teddyjfpender.github.io/cairo-vm-ocaml](https://teddyjfpender.github.io/cairo-vm-ocaml/)**.
+
 | | |
 | --- | --- |
 | [Getting started](docs/getting-started.md) | install, run, proof mode, library use |
@@ -42,7 +44,7 @@ _build/default/bin/main.exe program.json --layout all_cairo --print_output
 | [Parity](docs/parity.md) · [Benchmarks](docs/benchmarks.md) | what matches Rust, and how fast |
 | [Contributing](docs/contributing.md) | checks a change must pass |
 
-Browse it as a site with `scripts/docs.sh` (needs [uv](https://docs.astral.sh/uv/)), then
+Preview them locally with `scripts/docs.sh` (needs [uv](https://docs.astral.sh/uv/)), then
 open http://127.0.0.1:8000.
 
 ## License

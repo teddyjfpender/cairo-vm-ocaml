@@ -1,8 +1,11 @@
 site_name: OxCairo
 site_description: A fast Cairo VM written in OCaml
+site_url: https://teddyjfpender.github.io/cairo-vm-ocaml/
 repo_url: https://github.com/teddyjfpender/cairo-vm-ocaml
 theme:
   name: material
+  logo: assets/logo.png
+  favicon: assets/favicon.png
   palette:
     - scheme: default
       primary: deep orange
