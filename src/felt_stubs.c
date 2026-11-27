@@ -526,12 +526,25 @@ static inline void cube(u64 x[4]) {
   mont_mul(x, t, x);
 }
 
+/* Reduce a linear combination smaller than 7p. Its top five bits
+   estimate floor(x/p), with at most one unit of overestimation because
+   p = 2^251 + 17*2^192 + 1. */
+static inline void reduce_mix(u64 x[4]) {
+  u64 q = x[3] >> 59;
+  u64 multiple[4] = {q, 0, 0, q * P[3]};
+  if (sub4(x, x, multiple)) add4(x, x, P);
+}
+
 static inline void mix(u64 s0[4], u64 s1[4], u64 s2[4]) {
-  u64 t[4], d[4];
-  madd(t, s0, s1); madd(t, t, s2);
-  madd(d, s0, s0); madd(s0, t, d);
-  madd(d, s1, s1); msub(s1, t, d);
-  madd(d, s2, s2); madd(d, d, s2); msub(s2, t, d);
+  u64 sum[4], tmp[4];
+  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
+  add4(sum, s0, s1); add4(sum, sum, s2);
+  /* sum+2a, sum+p-2b, sum+2p-3c are nonnegative and fit in 256 bits. */
+  add4(tmp, s0, s0); add4(s0, sum, tmp);
+  add4(tmp, s1, s1); add4(s1, sum, P); sub4(s1, s1, tmp);
+  add4(tmp, s2, s2); add4(tmp, tmp, s2);
+  add4(s2, sum, two_p); sub4(s2, s2, tmp);
+  reduce_mix(s0); reduce_mix(s1); reduce_mix(s2);
 }
 
 static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
@@ -542,11 +555,25 @@ static void hades(u64 s0[4], u64 s1[4], u64 s2[4]) {
     cube(s0); cube(s1); cube(s2);
     mix(s0, s1, s2);
   }
+  /* During partial rounds only c is cubed. Track a and l=a+b.
+     For t=(2a+c) mod p after the cube, the next (a,l,c) is
+     (t+l, 2t, l+2p-2c). This maintains a<3p, l<2p and c<4p.
+     Thus c+constant <5p. Even its square is below R*p (25p<R),
+     so ordinary Montgomery reduction still returns a canonical result. */
+  u64 sum[4], t[4], twice[4];
+  static const u64 two_p[4] = {2, 0, 0, 0x1000000000000022ULL};
+  madd(sum, s0, s1);
   for (int r = 0; r < 83; r++, k++) {
-    madd(s2, s2, PRC[k]);
+    add4(s2, s2, PRC[k]);
     cube(s2);
-    mix(s0, s1, s2);
+    add4(t, s0, s0); add4(t, t, s2);
+    reduce_mix(t);
+    add4(s0, t, sum);
+    add4(twice, s2, s2); add4(s2, sum, two_p); sub4(s2, s2, twice);
+    add4(sum, t, t);
   }
+  reduce_mix(s0); reduce_mix(sum); reduce_mix(s2);
+  msub(s1, sum, s0);
   for (int r = 0; r < 4; r++, k += 3) {
     madd(s0, s0, PRC[k]); madd(s1, s1, PRC[k + 1]); madd(s2, s2, PRC[k + 2]);
     cube(s0); cube(s1); cube(s2);
