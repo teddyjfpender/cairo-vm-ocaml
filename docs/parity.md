@@ -43,10 +43,13 @@ The experimental `--os_hints` option accepts a serialized `OsHints` object and a
 counts and version bytes. These runs executed 7,007, 40,597 and 113,706 steps respectively.
 The four-block storage test also matched all five PIE members after 196,893 steps.
 It exercises funded Invoke transactions, modern account validation, nested Cairo 0 contract
-execution, storage writes and fee transfer. Other transaction and syscall paths remain experimental.
+execution, storage writes and fee transfer. The account flow covers Declare, DeployAccount and Invoke, including an L2-to-L1 message.
+A four-block variant of the storage flow ran 512 funded Invoke transactions in 3,417,265 steps.
+Both fixtures matched all five Rust PIE members. Other transaction and syscall paths remain experimental.
 
 The saved inputs and Rust archive member digests come from the upstream flow tests
-`test_initial_empty_block` and `test_load_bottom`, with the chain ID encoded as
+`test_initial_empty_block`, `test_load_bottom`, `test_new_account_flow` (calldata DA), and
+a 512-transaction variant of `test_load_bottom`, with the chain ID encoded as
 hex as required by the sequencer's input deserializer. To check the fixture, compile the
 pinned checkout's `starkware/starknet/core/os/os.cairo` with cairo-lang 0.14.3a3, then run
 `python3 test/fixtures/os/check.py _build/default/bin/main.exe /path/to/os.json`.

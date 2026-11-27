@@ -15,7 +15,7 @@ def main():
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
-    for name in ("genesis", "storage"):
+    for name in ("genesis", "storage", "account", "storage-512"):
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"
@@ -26,7 +26,13 @@ def main():
             subprocess.run([args.binary.resolve(), args.program, "--os_hints", source,
                             "--layout", "all_cairo", "--cairo_pie_output", pie], check=True)
             with zipfile.ZipFile(pie) as z:
-                hashes = {n: hashlib.sha256(z.read(n)).hexdigest() for n in z.namelist()}
+                hashes = {}
+                for member in z.namelist():
+                    with z.open(member) as stream:
+                        digest = hashlib.sha256()
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                        hashes[member] = digest.hexdigest()
             if hashes != expected:
                 raise SystemExit(f"{name}: sequencer PIE member mismatch")
             print(f"Native {name} matches all sequencer PIE members")
