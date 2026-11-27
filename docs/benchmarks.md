@@ -5,6 +5,23 @@ and the method. Raw paired timings live in [`bench/results/`](https://github.com
 
 ## Native Starknet OS on Apple M4 Max
 
+Revision `a6b5c3a` also measures sustained execution. The workers perform one
+warmup, then alternate five pairs. Each request rereads the witness and runs a
+fresh VM. Rust retains its initialized KZG setup, and OCaml retains its decoded
+program. Each cold process ran once per invocation, alternating three pairs.
+The table gives median paired Rust/OCaml wall-time ratios.
+
+| OS witness | Cold output | Cold output and PIE | Persistent output |
+| --- | ---: | ---: | ---: |
+| Alternating inner calls, 2 transactions | 20.24× | 18.84× | 2.73× |
+| Syscalls, 27 transactions in five blocks | 14.23× | 14.50× | 4.25× |
+| Storage, 512 transactions | 4.60× | 9.62× | 5.67× |
+| Storage, 2,048 transactions in four blocks | 6.14× | 11.43× | 7.16× |
+
+Initializing the KZG setup contributes to the cold Rust times on the first two
+rows. Every measured output matched. [Persistent pairs](../bench/results/native-os-persistent-m4-max.csv),
+[cold pairs](../bench/results/native-os-cold-m4-max.csv), [2,048-transaction cold pairs](../bench/results/native-os-cold-storage-m4-max.csv).
+
 On the saved four-block, 2,048-Invoke workload, both runners executed 13,101,755 Cairo
 steps from sequencer block inputs. Each row gives the median wall time for each binary
 and the median of three alternating speedup ratios. OCaml revision `5fee19a` ran on
