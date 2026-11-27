@@ -1,0 +1,3 @@
+(test
+ (name excess_balance)
+ (libraries cairovm))
