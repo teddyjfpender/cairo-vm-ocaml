@@ -8,5 +8,6 @@ let init () =
     initialized := true;
     Hints_secp.register ();
     Hints_misc.register ();
+    Hints_builtins.register ();
     ()
   end

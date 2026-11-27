@@ -236,6 +236,17 @@ let value_to_string v =
   else if is_reloc v then Printf.sprintf "%d:%d" (rseg v) (roff v)
   else Felt.to_string v
 
+(* Hooks for logic that lives in later modules (which depend on this one).
+   [ecdsa_validate vm seg off] is the signature builtin's validation rule for
+   a newly written cell; [ext_step vm d] executes one instruction carrying an
+   opcode extension (Blake, BlakeFinalize, QM31Operation).  Both fail
+   explicitly until installed. *)
+let ecdsa_validate : (vm -> int -> int -> unit) ref =
+  ref (fun _ seg off -> fail "ecdsa builtin is not supported by this VM (write at %d:%d)" seg off)
+
+let ext_step : (vm -> int -> unit) ref =
+  ref (fun _ d -> fail "Unsupported opcode extension %d" ((d lsr 61) land 3))
+
 let[@inline never] validate vm seg off v =
   let f = vm.seg_flag.(seg) in
   if f = k_rc || f = k_rc96 then begin
@@ -244,7 +255,7 @@ let[@inline never] validate vm seg off v =
     if not (is_small v && small_val v >= 0) && Felt.bits v > bound then
       fail "Range-check builtin: value %s at %d:%d is out of range [0, 2^%d)" (Felt.to_string v) seg off bound
   end
-  else if f = k_ecdsa then fail "ecdsa builtin is not supported by this VM (write at %d:%d)" seg off
+  else if f = k_ecdsa then !ecdsa_validate vm seg off
 
 let[@inline] write vm seg off v =
   if off < 0 then fail "Negative memory offset %d:%d" seg off;
@@ -560,15 +571,26 @@ let[@inline never] deduce_cell vm seg off =
    54..55 pc (0 regular,1 jump,2 jump_rel,3 jnz),
    56..57 ap (0 regular,1 add,2 add1,3 add2),
    58..59 opcode (0 nop,1 call,2 ret,3 assert_eq),
-   60 valid *)
+   60 valid,
+   61..62 opcode extension (0 Stone, 1 Blake, 2 BlakeFinalize, 3 QM31Operation).
+   Only on a fresh decode: bit 61 of a cached word is run_fast's hint flag.
+   Words with a non-zero extension are never stored in the decoded
+   instruction cache, so the fast loop never sees them and they always run
+   through [step] / [ext_step]. *)
+
+let ext_shift = 61
+let ext_mask = 3 lsl ext_shift
+let two_128 = Z.shift_left Z.one 128
+let low_63 = Z.pred (Z.shift_left Z.one 63)
 
 let decode_word (w : Z.t) =
-  if Z.geq w (Z.shift_left Z.one 63) then begin
-    let ext = Z.shift_right w 63 in
-    if Z.lt ext (Z.of_int 4) then
-      fail "Unsupported opcode extension %s (Blake/QM31 are not implemented)" (Z.to_string ext)
-    else fail "Invalid opcode extension %s" (Z.to_string ext)
-  end;
+  if Z.geq w two_128 then fail "Invalid instruction encoding (does not fit in 128 bits)";
+  let ext =
+    let e = Z.shift_right w 63 in
+    if Z.geq e (Z.of_int 4) then fail "Invalid opcode extension %s" (Z.to_string e);
+    Z.to_int e
+  in
+  let w = Z.logand w low_63 in
   let w = Z.to_int64_unsigned w in
   let f k n = Int64.to_int (Int64.logand (Int64.shift_right_logical w k) (Int64.of_int ((1 lsl n) - 1))) in
   let off0 = f 0 16 and off1 = f 16 16 and off2 = f 32 16 in
@@ -590,8 +612,15 @@ let decode_word (w : Z.t) =
   let pcc = match pcu with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
   let apc = if apu = 0 then (if opc = 1 then 3 else 0) else if apu = 1 then 1 else 2 in
   let opcc = match opc with 0 -> 0 | 1 -> 1 | 2 -> 2 | _ -> 3 in
+  (* cairo-vm v3.2.0 decoder: flag restrictions of the Stwo extensions *)
+  if (ext = 1 || ext = 2)
+     && not (opc = 0 && (op1 = 2 || op1 = 4) && res = 0 && pcu = 0 && (apu = 0 || apu = 2)) then
+    fail "Invalid Blake2s flags: %d" flags;
+  if ext = 3
+     && not ((res = 1 || res = 2) && op1 <> 0 && pcu = 0 && opc = 4 && (apu = 0 || apu = 2)) then
+    fail "Invalid QM31 add/mul flags: %d" flags;
   if op1c = 1 && off2 <> 0x8001 then fail "Invalid immediate offset (op1 immediate requires off2 = 1)";
-  off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
+  (ext lsl ext_shift) lor off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
   lor (pcc lsl 54) lor (apc lsl 56) lor (opcc lsl 58) lor (1 lsl 60)
 
 let decode_at vm seg off =
@@ -612,7 +641,7 @@ let[@inline never] fetch_slow vm =
       vm.icache <- na
     end;
     let d = decode_at vm 0 vm.pc in
-    vm.icache.(vm.pc) <- d;
+    if d land ext_mask = 0 then vm.icache.(vm.pc) <- d;
     d
   end
   else decode_at vm vm.pc_seg vm.pc
@@ -842,14 +871,19 @@ and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
   vm.ap <- new_ap;
   vm.steps <- vm.steps + 1
 
+(* Cached words are always Stone instructions (their bit 61 may carry
+   run_fast's hint flag); extension bits are only meaningful on a fresh
+   decode, since extension words are never cached. *)
+let[@inline never] step_uncached vm =
+  let d = fetch_slow vm in
+  if d land ext_mask <> 0 then !ext_step vm d else step_instr vm d
+
 let[@inline] step vm =
-  let d =
-    if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then
-      let d = Array.unsafe_get vm.icache vm.pc in
-      if d <> 0 then d else fetch_slow vm
-    else fetch_slow vm
-  in
-  step_instr vm d
+  if vm.pc_seg = 0 && vm.pc < Array.length vm.icache then begin
+    let d = Array.unsafe_get vm.icache vm.pc in
+    if d <> 0 then step_instr vm d else step_uncached vm
+  end
+  else step_uncached vm
 
 (* ---------------- fast interpreter loop ----------------
 

@@ -52,6 +52,9 @@ let initialize (cfg : config) (prog : Program.t) : t =
       if (not (List.mem b layout)) && not cfg.allow_missing_builtins then
         fail "Program uses builtin %s, which is not present in layout %s" (bname b) cfg.layout)
     prog_builtins;
+  Builtins_ext.reset ();
+  Builtins_ext.install ();
+  Opcode_ext.install ();
   let vm = create ~trace:cfg.trace in
   let s0 = add_segment vm in
   let s1 = add_segment vm in
@@ -60,9 +63,6 @@ let initialize (cfg : config) (prog : Program.t) : t =
   let builtins =
     List.map
       (fun k ->
-        (match k with
-        | Ecdsa | Add_mod | Mul_mod -> fail "Builtin %s is not supported by this VM" (bname k)
-        | _ -> ());
         let seg = add_segment vm in
         let b = { kind = k; base = seg; included = true; stop_ptr = 0; cache = [||] } in
         vm.seg_builtin.(seg) <- Some b;
@@ -83,6 +83,11 @@ let initialize (cfg : config) (prog : Program.t) : t =
   vm.builtins <- builtins;
   let return_fp = add_segment vm in
   let end_seg = add_segment vm in
+  (* cairo-vm creates the mod builtins' shared zero segment after the
+     entrypoint segments *)
+  (match List.filter (fun b -> b.kind = Add_mod || b.kind = Mul_mod) builtins with
+  | [] -> ()
+  | mods -> ignore (Builtins_ext.add_zero_segment vm mods));
   let entry =
     let name = cfg.entrypoint in
     let full = "__main__." ^ name in
@@ -211,6 +216,7 @@ let verify_secure_runner r =
       match b.kind with
       | Output -> ()
       | k ->
+          if k = Add_mod || k = Mul_mod then Builtins_ext.security_check vm b;
           let n = used_size vm b.base in
           if n > 0 then begin
             let cpi = cells_per_instance k and nin = n_input_cells k in
