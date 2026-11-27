@@ -301,19 +301,18 @@ let () =
       (match keys with
       | k :: _ -> set_val vm c "big_keys" (of_bool (Felt.is_felt k && Z.geq (Felt.to_z k) rc_bound))
       | [] -> fail "squash_dict: no keys");
-      let rec split_last = function [ x ] -> ([], x) | x :: r -> let r', l = split_last r in (x :: r', l) | [] -> assert false in
-      let rest, first = split_last keys in
+      (* Python pops the smallest key from the end. Keep the next key at the
+         head so each subsequent pop shares the tail of the OCaml list. *)
+      let first, rest = match List.rev keys with k :: rest -> (k, rest) | [] -> assert false in
       set c.scopes "access_indices" (Access_indices idx);
       set c.scopes "keys" (Values rest);
       set c.scopes "key" (Value first);
       set_val vm c "first_key" first);
-  let pop_last name scopes =
+  let pop_next name scopes =
     match var scopes name with
-    | Values l | Ints l ->
-        let rec split = function [ x ] -> ([], x) | x :: r -> let r', l = split r in (x :: r', l) | [] -> fail "pop from empty list" in
-        let rest, last = split l in
-        (match var scopes name with Ints _ -> set scopes name (Ints rest) | _ -> set scopes name (Values rest));
-        last
+    | Values (x :: xs) -> set scopes name (Values xs); x
+    | Ints (x :: xs) -> set scopes name (Ints xs); x
+    | Ints [] | Values [] -> fail "pop from empty list"
     | _ -> fail "%s is not a list" name
   in
   let access_list scopes =
@@ -322,16 +321,16 @@ let () =
     | _ -> fail "squash_dict scope corrupted"
   in
   reg H.h25 (fun c vm ->
-      let l = List.rev (List.sort compare (access_list c.scopes)) in
-      set c.scopes "current_access_indices" (Ints l);
-      let cur = pop_last "current_access_indices" c.scopes in
+      (* The collection loop already restores increasing access order. *)
+      set c.scopes "current_access_indices" (Ints (access_list c.scopes));
+      let cur = pop_next "current_access_indices" c.scopes in
       set c.scopes "current_access_index" (Int (z cur));
       let rc = get_ptr vm c "range_check_ptr" in
       write_checked vm (Felt.rseg rc) (Felt.roff rc) (Felt.small cur));
   let nonempty scopes name = match var scopes name with Ints l | Values l -> l <> [] | _ -> fail "not a list" in
   reg H.h26 (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
   reg H.h27 (fun c vm ->
-      let nw = pop_last "current_access_indices" c.scopes in
+      let nw = pop_next "current_access_indices" c.scopes in
       let cur = Z.to_int (var_z c.scopes "current_access_index") in
       set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (nw - cur - 1));
       set c.scopes "current_access_index" (Int (z nw)));
@@ -342,7 +341,7 @@ let () =
   reg H.h31 (fun c _ -> check (not (nonempty c.scopes "keys")) "assert len(keys) == 0");
   reg H.h32 (fun c vm ->
       if not (nonempty c.scopes "keys") then fail "No keys left but remaining_accesses > 0.";
-      let k = pop_last "keys" c.scopes in
+      let k = pop_next "keys" c.scopes in
       set c.scopes "key" (Value k);
       set_val vm c "next_key" k);
   (* dict_new *)
