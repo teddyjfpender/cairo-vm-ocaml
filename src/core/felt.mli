@@ -19,61 +19,72 @@ val half_p : Z.t
 val small_bound : int
 val off_bits : int
 val off_mask : int
+type pool = (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+(** Big-felt storage: 32-byte slots of four little-endian u64 limbs. *)
+
 external c_init : unit -> unit = "cvm_init"
 external c_binop :
-  bytes ->
+  pool ->
   (int [@untagged]) ->
   (int [@untagged]) ->
   (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_binop_byte" "cvm_binop" [@@noalloc]
 external c_load_slot :
-  bytes -> (int [@untagged]) -> (int [@untagged]) -> unit
+  pool -> (int [@untagged]) -> (int [@untagged]) -> unit
   = "cvm_load_slot_byte" "cvm_load_slot" [@@noalloc]
 external c_code_of_slot :
-  bytes -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
+  pool -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_code_of_slot_byte" "cvm_code_of_slot" [@@noalloc]
 external c_big_eq :
-  bytes -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
+  pool -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_big_eq_byte" "cvm_big_eq" [@@noalloc]
 external c_bitwise :
-  bytes ->
+  pool ->
   (int [@untagged]) ->
   (int [@untagged]) ->
   (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_bitwise_byte" "cvm_bitwise" [@@noalloc]
 external c_cmp :
-  bytes -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
+  pool -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_cmp_byte" "cvm_cmp" [@@noalloc]
 external c_split_part :
-  bytes ->
+  pool ->
   (int [@untagged]) ->
   (int [@untagged]) ->
   (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_split_part_byte" "cvm_split_part" [@@noalloc]
-external c_bits : bytes -> (int [@untagged]) -> (int [@untagged])
+external c_bits : pool -> (int [@untagged]) -> (int [@untagged])
   = "cvm_bits_byte" "cvm_bits" [@@noalloc]
 external c_pedersen :
-  bytes ->
+  pool ->
   (int [@untagged]) ->
   (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_pedersen_byte" "cvm_pedersen" [@@noalloc]
-external c_poseidon : bytes -> (int [@untagged]) -> (int [@untagged]) -> unit
+external c_poseidon : pool -> (int [@untagged]) -> (int [@untagged]) -> unit
   = "cvm_poseidon_byte" "cvm_poseidon" [@@noalloc]
-external c_keccak : bytes -> (int [@untagged]) -> (int [@untagged]) -> unit
+external c_keccak : pool -> (int [@untagged]) -> (int [@untagged]) -> unit
   = "cvm_keccak_byte" "cvm_keccak" [@@noalloc]
 external c_ec_op :
-  bytes -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
+  pool -> (int [@untagged]) -> (int [@untagged]) -> (int [@untagged])
   = "cvm_ec_op_byte" "cvm_ec_op" [@@noalloc]
 external c_put_code :
-  bytes -> (int [@untagged]) -> bytes -> (int [@untagged]) -> unit
+  pool -> (int [@untagged]) -> bytes -> (int [@untagged]) -> unit
   = "cvm_put_code_byte" "cvm_put_code" [@@noalloc]
 external keccak256_raw : bytes -> bytes -> unit = "cvm_keccak256"
 external keccak_f_bytes : bytes -> unit = "cvm_keccak_f_bytes"
 val scratch : int
-val pool : bytes ref
+val capacity : int
+(** Slots in the pool's fixed reservation. *)
+
+val pool : pool
+(** Process-global and non-moving: a slot's address is stable for the run. *)
+
 val pool_n : int ref
-val grow_pool : unit -> unit
+(** Next free slot. *)
+
 val reserve : int -> unit
+(** [reserve k] raises [Out_of_memory] unless [k] slots are free. *)
+
 val commit : t -> unit
 val is_small : t -> bool
 val both_small : t -> t -> bool
@@ -90,7 +101,7 @@ val one : t
 val fits_small : int -> bool
 val of_int : int -> t
 val equal : t -> t -> bool
-external c_big_hash : bytes -> (int [@untagged]) -> (int [@untagged])
+external c_big_hash : pool -> (int [@untagged]) -> (int [@untagged])
   = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
 val mix : int -> int
 (** Integer hash mix for immediate keys. *)
@@ -105,8 +116,6 @@ val div : t -> t -> t option
 val neg : t -> t
 val split_at_limb : two_limbs:bool -> t -> t * t
 val to_z : t -> Z.t
-val small_limit_z : Z.t
-val negative_small_limit : Z.t
 val of_z : Z.t -> t
 val to_signed_z : t -> Z.t
 val to_nat : t -> int

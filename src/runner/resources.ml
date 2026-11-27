@@ -101,17 +101,17 @@ let accessed_count r seg =
 
 (* ---- end of run ---- *)
 
-external verified_bitwise : bytes -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
+external verified_bitwise : Felt.pool -> seg -> int -> bool = "cvm_verify_bitwise" [@@noalloc]
 
-external verified_pedersen : bytes -> seg -> int -> Felt.t array -> bool = "cvm_verify_pedersen" [@@noalloc]
+external verified_pedersen : Felt.pool -> seg -> int -> Felt.t array -> bool = "cvm_verify_pedersen" [@@noalloc]
 
 let verify_auto_deductions ?(fill_holes=false) vm =
   List.iter
     (fun b ->
       if is_deducing vm.seg_flag.(b.base) &&
          (fill_holes || not (match b.kind with
-          | Bitwise -> verified_bitwise !Felt.pool vm.segs.(b.base) (used_size vm b.base)
-          | Pedersen -> verified_pedersen !Felt.pool vm.segs.(b.base) (used_size vm b.base) b.cache
+          | Bitwise -> verified_bitwise Felt.pool vm.segs.(b.base) (used_size vm b.base)
+          | Pedersen -> verified_pedersen Felt.pool vm.segs.(b.base) (used_size vm b.base) b.cache
           | _ -> false)) then begin
         let n = used_size vm b.base in
         let width = cells_per_instance b.kind and inputs = n_input_cells b.kind in

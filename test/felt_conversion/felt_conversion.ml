@@ -23,5 +23,5 @@ let () =
   done;
   (* Builtins may leave data in the next uncommitted slot. *)
   Felt.reserve 1;
-  Bytes.fill !Felt.pool (!Felt.pool_n * 32) 32 '\255';
+  Bigarray.Array1.(fill (sub Felt.pool (!Felt.pool_n * 32) 32) '\255');
   check (pow2 64)

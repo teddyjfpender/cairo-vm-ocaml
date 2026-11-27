@@ -117,7 +117,7 @@ let keccak_input vm data ~first length ~check_width =
       if not (Felt.is_felt word) then fail "unsafe_keccak: expected an integer";
       let count = min 16 (length - offset) in
       if check_width && Felt.bits word > 8 * count then fail "unsafe_keccak: word out of range";
-      Felt.c_put_code !Felt.pool (word :> int) scratch 0;
+      Felt.c_put_code Felt.pool (word :> int) scratch 0;
       if count = 16 then begin
         Bytes.set_int64_be bytes offset (Bytes.get_int64_le scratch 8);
         Bytes.set_int64_be bytes (offset + 8) (Bytes.get_int64_le scratch 0)

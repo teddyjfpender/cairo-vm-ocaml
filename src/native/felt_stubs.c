@@ -1,74 +1,13 @@
-/* Stark-field kernel for the OCaml Cairo VM.
+/* Stark-field kernel for the OCaml Cairo VM. Code encoding, the pool layout
+   and the canonical arithmetic shared with the CPU kernel are in field.h.
 
-   Values cross the OCaml boundary as "codes" (untagged OCaml ints):
-     0                 empty cell
-     (v << 2) | 1      small felt v, |v| < 2^59, representing v mod p
-     ...      | 2      relocatable (never seen here)
-     (i << 2) | 3      big felt stored canonically at slot i of the pool
-   The pool is an OCaml [bytes] holding 4 little-endian u64 limbs per slot.
-   Every big felt is canonical (< p) and never representable as a small felt,
-   so equality of codes with tag 1 is integer equality.
-
-   All entry points are [@@noalloc] with untagged arguments: the pool cannot
-   move while they run. */
-#include <stdint.h>
-#include <string.h>
+   All entry points are [@@noalloc] with untagged arguments. */
 #include <stdlib.h>
-#include <caml/mlvalues.h>
+#include <sys/mman.h>
 #include <caml/fail.h>
 #include <caml/hash.h>
-#include <caml/bigarray.h>
-
-typedef uint64_t u64;
-typedef unsigned __int128 u128;
-typedef int64_t i64;
-
+#include "field.h"
 #include "constants.h"
-
-static const u64 P[4] = {1, 0, 0, 0x0800000000000011ULL};
-#define SMALL_BOUND ((i64)1 << 59)
-
-/* ---------- canonical (non-Montgomery) limb arithmetic ---------- */
-
-static inline int geq_p(const u64 a[4]) {
-  if (a[3] != P[3]) return a[3] > P[3];
-  if (a[2] != 0) return 1;
-  if (a[1] != 0) return 1;
-  return a[0] >= 1;
-}
-
-static inline u64 sub4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 borrow = 0;
-  for (int i = 0; i < 4; i++) {
-    u128 d = (u128)a[i] - b[i] - borrow;
-    r[i] = (u64)d;
-    borrow = (u64)(d >> 64) & 1;
-  }
-  return borrow;
-}
-
-static inline u64 add4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u128 c = 0;
-  for (int i = 0; i < 4; i++) {
-    c = (u128)a[i] + b[i] + (u64)(c >> 64);
-    r[i] = (u64)c;
-  }
-  return (u64)(c >> 64);
-}
-
-static inline void fadd(u64 r[4], const u64 a[4], const u64 b[4]) {
-  add4(r, a, b); /* a,b < p < 2^252: no carry out */
-  if (geq_p(r)) sub4(r, r, P);
-}
-
-static inline void fsub(u64 r[4], const u64 a[4], const u64 b[4]) {
-  if (sub4(r, a, b)) add4(r, r, P);
-}
-
-static inline int is_zero(const u64 a[4]) { return (a[0] | a[1] | a[2] | a[3]) == 0; }
-static inline int eq4(const u64 a[4], const u64 b[4]) {
-  return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
-}
 
 /* ---------- Montgomery arithmetic, R = 2^256. -p^{-1} mod 2^64 = -1 ---------- */
 
@@ -185,43 +124,6 @@ static void from_mont(u64 r[4], const u64 a[4]) {
   mont_mul(r, a, one);
 }
 
-/* Reduce a canonical product without entering Montgomery form.
-   With B=2^64, 32p=B^4+544B^3+32. Fold the four high coefficients
-   using B^4 = -544B^3-32 (mod p). The largest temporary fits in
-   104 signed bits. Normalize carries, fold the carry above limb 3,
-   and finish with the top-limb quotient estimate for p. */
-static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 t[8] = {0};
-  for (int i = 0; i < 4; i++) {
-    u128 carry = 0;
-    for (int j = 0; j < 4; j++) {
-      carry = (u128)a[i] * b[j] + t[i+j] + (u64)(carry >> 64);
-      t[i+j] = (u64)carry;
-    }
-    t[i+4] = (u64)(carry >> 64);
-  }
-
-  typedef __int128 wide;
-  wide h7 = t[7], h6 = (wide)t[6]-544*h7;
-  wide h5 = (wide)t[5]-544*h6, h4 = (wide)t[4]-544*h5;
-  wide x0 = (wide)t[0]-32*h4, x1 = (wide)t[1]-32*h5;
-  wide x2 = (wide)t[2]-32*h6, x3 = (wide)t[3]-32*h7-544*h4;
-  x1 += x0 >> 64; x2 += x1 >> 64; x3 += x2 >> 64;
-  wide extra = x3 >> 64;
-  x0 = (wide)(u64)x0 - 32*extra;
-  x1 = (wide)(u64)x1 + (x0 >> 64);
-  x2 = (wide)(u64)x2 + (x1 >> 64);
-  x3 = (wide)(u64)x3 - 544*extra + (x2 >> 64);
-
-  wide quotient = x3 >> 59;
-  x0 = (wide)(u64)x0 - quotient;
-  x1 = (wide)(u64)x1 + (x0 >> 64);
-  x2 = (wide)(u64)x2 + (x1 >> 64);
-  x3 = x3 - quotient*P[3] + (x2 >> 64);
-  r[0] = (u64)x0; r[1] = (u64)x1; r[2] = (u64)x2; r[3] = (u64)x3;
-  if (x3 < 0) add4(r, r, P);
-  else if (geq_p(r)) sub4(r, r, P);
-}
 
 /* Inverse of a canonical value via GMP's mpz_invert (Lehmer/HGCD; ~5x faster
    than Fermat at 256 bits).  Variable time is fine: nothing here is secret. */
@@ -268,89 +170,34 @@ static void init_consts(void) {
   initialized = 1;
 }
 
-/* ---------- code <-> limbs ---------- */
-
-#define SLOT(pool, i) ((u64 *)(Bytes_val(pool) + ((size_t)(i) << 5)))
-
-static inline void load(value pool, intnat code, u64 out[4]) {
-  if ((code & 3) == 3) {
-    memcpy(out, SLOT(pool, code >> 2), 32);
-  } else {
-    i64 v = (i64)code >> 2;
-    if (v >= 0) {
-      out[0] = (u64)v; out[1] = out[2] = out[3] = 0;
-    } else {
-      u64 n[4] = {(u64)(-v), 0, 0, 0};
-      sub4(out, P, n);
-    }
-  }
-}
-
-/* Return the canonical code for x, storing it at [dst] when it is big. */
-static inline intnat store(value pool, const u64 x[4], intnat dst) {
-  if (x[1] == 0 && x[2] == 0 && x[3] == 0 && x[0] < (u64)SMALL_BOUND)
-    return (intnat)(((i64)x[0] << 2) | 1);
-  /* p = P3 * 2^192 + 1. For p-1 the low limbs are zero. For
-     p-n, 2 <= n < SMALL_BOUND, the borrow propagates to limb 3. */
-  if (x[3] == P[3] && (x[2] | x[1] | x[0]) == 0)
-    return -3; /* small(-1) */
-  if (x[3] == P[3] - 1 && x[2] == UINT64_MAX && x[1] == UINT64_MAX &&
-      x[0] > (u64)1 - (u64)SMALL_BOUND) {
-    u64 magnitude = 1 - x[0];
-    return -(intnat)magnitude * 4 + 1;
-  }
-  memcpy(SLOT(pool, dst), x, 32);
-  return (intnat)((dst << 2) | 3);
-}
-
 value cvm_init(value unit) { init_consts(); return Val_unit; }
 
-/* Multiply a canonical field element by an immediate signed word. With
-   B=2^64, p = P[3]*B^3 + 1. Divide the top two limbs by P[3], then
-   subtract the quotient from the low limbs. The intermediate is already
-   below p, or negative by at most one word. */
-static void fmul_word(u64 r[4], const u64 x[4], i64 word) {
-  u64 magnitude = word < 0 ? (u64)-word : (u64)word;
-  u128 product = 0;
-  for (int i = 0; i < 4; i++) {
-    product = (u128)x[i] * magnitude + (u64)(product >> 64);
-    r[i] = (u64)product;
-  }
-  u64 quotient = (u64)(product / P[3]);
-  r[3] = (u64)(product - (u128)quotient * P[3]);
-  u64 correction[4] = {quotient, 0, 0, 0};
-  fsub(r, r, correction);
-  if (word < 0 && !is_zero(r)) sub4(r, P, r);
+/* Reserve the pool: [slots] 32-byte slots of lazily committed zero pages
+   that are never moved or freed. */
+value cvm_pool_make(value slots) {
+  size_t length = (size_t)Long_val(slots) << 5;
+  void *p = mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+  if (p == MAP_FAILED) caml_raise_out_of_memory();
+  return caml_ba_alloc_dims(CAML_BA_CHAR | CAML_BA_C_LAYOUT | CAML_BA_EXTERNAL, 1, p, (intnat)length);
 }
 
 /* op: 0 add, 1 sub, 2 mul, 3 div (returns 0 when b == 0) */
 intnat cvm_binop(value pool, intnat op, intnat a, intnat b, intnat dst) {
+  if (op < 3) return arith(pool, op, a, b, dst);
   u64 x[4], y[4], r[4];
-  if (op == 2 && ((a & 3) == 1 || (b & 3) == 1)) {
-    if ((a & 3) != 1) { intnat tmp = a; a = b; b = tmp; }
-    load(pool, b, y);
-    fmul_word(r, y, a >> 2);
-    return store(pool, r, dst);
-  }
   load(pool, a, x);
   load(pool, b, y);
-  switch (op) {
-  case 0: fadd(r, x, y); break;
-  case 1: fsub(r, x, y); break;
-  case 2: fmul(r, x, y); break;
-  default:
-    if (is_zero(y)) return 0;
-    /* A zero key is initially invalid because divisors are nonzero.
-       Store limbs, never a pool pointer or OCaml value. */
-    static _Thread_local u64 last_divisor[4], inverse_mont[4];
-    if (!eq4(last_divisor, y)) {
-      u64 inverse[4];
-      finv(inverse, y);
-      to_mont(inverse_mont, inverse);
-      memcpy(last_divisor, y, sizeof last_divisor);
-    }
-    mont_mul(r, x, inverse_mont);
+  if (is_zero(y)) return 0;
+  /* A zero key is initially invalid because divisors are nonzero.
+     Store limbs, never a pool pointer or OCaml value. */
+  static _Thread_local u64 last_divisor[4], inverse_mont[4];
+  if (!eq4(last_divisor, y)) {
+    u64 inverse[4];
+    finv(inverse, y);
+    to_mont(inverse_mont, inverse);
+    memcpy(last_divisor, y, sizeof last_divisor);
   }
+  mont_mul(r, x, inverse_mont);
   return store(pool, r, dst);
 }
 value cvm_binop_byte(value pool, value op, value a, value b, value dst) {
@@ -366,6 +213,16 @@ void cvm_load_slot(value pool, intnat code, intnat dst) {
 value cvm_load_slot_byte(value pool, value c, value d) {
   cvm_load_slot(pool, Long_val(c), Long_val(d));
   return Val_unit;
+}
+
+/* Code of a canonical little-endian magnitude of at most 32 bytes. */
+intnat cvm_of_bits(value pool, value bits, intnat dst) {
+  u64 x[4] = {0};
+  memcpy(x, String_val(bits), caml_string_length(bits));
+  return store(pool, x, dst);
+}
+value cvm_of_bits_byte(value pool, value bits, value dst) {
+  return Val_long(cvm_of_bits(pool, bits, Long_val(dst)));
 }
 
 /* Canonicalize slot [src] into a code (big values copied to [dst]). */

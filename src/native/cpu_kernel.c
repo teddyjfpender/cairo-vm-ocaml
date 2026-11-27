@@ -1,18 +1,14 @@
 /* Run common decoded Cairo instructions without returning to OCaml between
    steps. All pointers are borrowed for one bounded, nonallocating call. The
    OCaml runner owns decoding, hints, segment growth and builtin deduction. */
-#include <stdint.h>
-#include <caml/mlvalues.h>
-#include <caml/bigarray.h>
+#include "field.h"
 
 extern intnat cvm_binop(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_bitwise(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_pedersen(value, intnat, intnat, intnat);
-extern intnat cvm_big_eq(value, intnat, intnat);
 extern intnat cvm_bits(value, intnat);
 
 #define OFFSET_MASK ((INT64_C(1) << 40) - 1)
-#define SMALL_BOUND (INT64_C(1) << 59)
 #define ADDRESS(seg, off) (((intnat)(seg) << 42) | ((off) << 2) | 2)
 #define CELLS(ba) ((intnat *)Caml_ba_data_val(ba))
 #define CAPACITY(ba) (Caml_ba_array_val(ba)->dim[0])
@@ -30,7 +26,7 @@ static inline intnat offset(intnat code) {
 }
 
 static inline int same_value(value pool, intnat a, intnat b) {
-  return a == b || ((a & b & 3) == 3 && cvm_big_eq(pool, a, b));
+  return a == b || ((a & b & 3) == 3 && eq4(SLOT(pool, a >> 2), SLOT(pool, b >> 2)));
 }
 
 /* Invert an ASSERT_EQ only when both known operands support the Stone
@@ -57,7 +53,8 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
       if (v > -SMALL_BOUND && v < SMALL_BOUND) return small_code(v);
     } else if (x % y == 0) return small_code(x/y);
   }
-  return slot < slots ? cvm_binop(pool, kind == 1 ? 1 : 3, dst, known, slot) : 0;
+  if (slot >= slots) return 0;
+  return kind == 1 ? arith(pool, 1, dst, known, slot) : cvm_binop(pool, 3, dst, known, slot);
 }
 
 /* Returns the number of completed instructions. State contains pc, ap, fp,
@@ -72,7 +69,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
   intnat pc = Long_val(Field(state, 0)), ap = Long_val(Field(state, 1));
   intnat fp = Long_val(Field(state, 2)), high = Long_val(Field(state, 3));
   intnat used = Long_val(Field(state, 4)), slot = Long_val(Field(state, 5));
-  const intnat slots = caml_string_length(pool) / 32;
+  const intnat slots = CAPACITY(pool) / 32;
   value stack_ba = Field(segs, 1), program_ba = Field(segs, 0);
   intnat *stack = CELLS(stack_ba), *program = CELLS(program_ba), *entries = CELLS(trace);
   const intnat length = CAPACITY(stack_ba), program_length = CAPACITY(program_ba);
@@ -250,7 +247,7 @@ general:;
           }
           if (!small) {
             if (slot >= slots) break;
-            value_code = cvm_binop(pool, result == 1 ? 0 : 2, a, b, slot);
+            value_code = arith(pool, result == 1 ? 0 : 2, a, b, slot);
           }
         }
       }

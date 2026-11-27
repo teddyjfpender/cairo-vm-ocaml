@@ -54,9 +54,11 @@ C, use `Felt.unsafe_of_int` (in) and `(v :> int)` (out). Both are visible in the
 
 ## The pool
 
-Big felts live in a growable byte buffer, 32 bytes per slot, as four little-endian 64-bit limbs.
-C kernels (Pedersen, Poseidon, field multiplication) read their inputs from slots and write
-their results to fresh ones. `Felt.of_z` and `Felt.to_z` convert to and from Zarith integers for
+Big felts live in one fixed reservation of lazily committed memory (`Felt.capacity` slots), 32
+bytes per slot, as four little-endian 64-bit limbs. It never moves or grows, so allocating a
+slot never copies the pool; running out raises `Out_of_memory`. C kernels (Pedersen, Poseidon,
+field multiplication) read their inputs from slots and write their results to fresh ones. The
+field arithmetic they share with the native CPU kernel is in `src/native/field.h`. `Felt.of_z` and `Felt.to_z` convert to and from Zarith integers for
 hint code, which needs arbitrary-precision arithmetic.
 
 ## Exercises

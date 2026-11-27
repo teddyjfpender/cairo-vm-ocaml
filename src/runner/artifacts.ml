@@ -26,7 +26,7 @@ let relocation_table r =
 
 external c_write_trace : string -> seg -> int -> int array -> unit = "cvm_write_trace"
 
-external c_write_memory : string -> seg array -> int array -> int array -> int -> bytes -> unit
+external c_write_memory : string -> seg array -> int array -> int array -> int -> Felt.pool -> unit
   = "cvm_write_memory_byte" "cvm_write_memory"
 
 let write_trace r path =
@@ -38,7 +38,7 @@ let write_memory r path =
   (* relocate_value rejects temporary segments (TemporarySegmentInRelocation) *)
   if vm.had_temp then check_no_temp_values vm;
   let sizes = Array.init vm.nsegs (used_size vm) in
-  c_write_memory path vm.segs sizes (relocation_table r) vm.nsegs !Felt.pool
+  c_write_memory path vm.segs sizes (relocation_table r) vm.nsegs Felt.pool
 
 (* first and last trace entries as (pc_seg, pc, ap, fp) *)
 let trace_bounds r =

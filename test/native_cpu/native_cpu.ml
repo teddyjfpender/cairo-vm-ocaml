@@ -38,7 +38,7 @@ let compare flags offsets cells imm =
   | d ->
   let registers = [|0;8;6;vm.hi.(1);0;!Felt.pool_n;0;0;0|] in
   Felt.reserve 1;
-  let steps = cpu_batch registers [|d;0;0;0|] vm.segs vm.seg_flag vm.hi vm.trace !Felt.pool 3 true [||] in
+  let steps = cpu_batch registers [|d;0;0;0|] vm.segs vm.seg_flag vm.hi vm.trace Felt.pool 3 true [||] in
   assert (steps = 0 || steps = 1);
   Felt.pool_n := registers.(5);
   if steps = 0 then incr declined
@@ -88,7 +88,7 @@ let () =
     let code = Array.copy cache in
     if hint then code.(1) <- code.(1) lor hint_bit;
     let regs = [|0;8;6;vm.hi.(1);0;!Felt.pool_n;0;0;0|] in
-    let n = cpu_batch regs code vm.segs vm.seg_flag vm.hi vm.trace !Felt.pool 3 true [||] in
+    let n = cpu_batch regs code vm.segs vm.seg_flag vm.hi vm.trace Felt.pool 3 true [||] in
     assert (n = if hint || hole then 1 else 3);
     for i = 0 to n-1 do step_instr reference cache.(i) done;
     assert (regs.(0) = reference.pc && regs.(1) = reference.ap && regs.(3) = reference.hi.(1));

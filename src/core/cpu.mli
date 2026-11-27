@@ -29,7 +29,7 @@ val hint_steps : int ref
 (** Executed pcs carrying hints ([--stats]). *)
 
 external cpu_batch :
-  int array -> int array -> Segment.seg array -> Builtin.flag array -> int array -> Segment.seg -> bytes -> int ->
+  int array -> int array -> Segment.seg array -> Builtin.flag array -> int array -> Segment.seg -> Felt.pool -> int ->
   bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch"
 [@@noalloc]
 (** Native kernel: run cached program-segment instructions (including a

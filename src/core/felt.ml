@@ -18,59 +18,66 @@ let small_bound = 1 lsl 59
 let off_bits = 40
 let off_mask = (1 lsl off_bits) - 1
 
+type pool = (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+
 external c_init : unit -> unit = "cvm_init"
+external pool_make : int -> pool = "cvm_pool_make"
+
+external c_of_bits : pool -> string -> (int[@untagged]) -> (int[@untagged])
+  = "cvm_of_bits_byte" "cvm_of_bits"
+[@@noalloc]
 
 external c_binop :
-  bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   -> (int[@untagged]) = "cvm_binop_byte" "cvm_binop"
 [@@noalloc]
 
-external c_load_slot : bytes -> (int[@untagged]) -> (int[@untagged]) -> unit
+external c_load_slot : pool -> (int[@untagged]) -> (int[@untagged]) -> unit
   = "cvm_load_slot_byte" "cvm_load_slot"
 [@@noalloc]
 
-external c_code_of_slot : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+external c_code_of_slot : pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "cvm_code_of_slot_byte" "cvm_code_of_slot"
 [@@noalloc]
 
-external c_big_eq : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+external c_big_eq : pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "cvm_big_eq_byte" "cvm_big_eq"
 [@@noalloc]
 
 external c_bitwise :
-  bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   -> (int[@untagged]) = "cvm_bitwise_byte" "cvm_bitwise"
 [@@noalloc]
 
-external c_cmp : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+external c_cmp : pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "cvm_cmp_byte" "cvm_cmp"
 [@@noalloc]
 
-external c_split_part : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+external c_split_part : pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   -> (int[@untagged]) -> (int[@untagged]) = "cvm_split_part_byte" "cvm_split_part"
 [@@noalloc]
 
-external c_bits : bytes -> (int[@untagged]) -> (int[@untagged]) = "cvm_bits_byte" "cvm_bits"
+external c_bits : pool -> (int[@untagged]) -> (int[@untagged]) = "cvm_bits_byte" "cvm_bits"
 [@@noalloc]
 
 external c_pedersen :
-  bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+  pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "cvm_pedersen_byte" "cvm_pedersen"
 [@@noalloc]
 
-external c_poseidon : bytes -> (int[@untagged]) -> (int[@untagged]) -> unit
+external c_poseidon : pool -> (int[@untagged]) -> (int[@untagged]) -> unit
   = "cvm_poseidon_byte" "cvm_poseidon"
 [@@noalloc]
 
-external c_keccak : bytes -> (int[@untagged]) -> (int[@untagged]) -> unit
+external c_keccak : pool -> (int[@untagged]) -> (int[@untagged]) -> unit
   = "cvm_keccak_byte" "cvm_keccak"
 [@@noalloc]
 
-external c_ec_op : bytes -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
+external c_ec_op : pool -> (int[@untagged]) -> (int[@untagged]) -> (int[@untagged])
   = "cvm_ec_op_byte" "cvm_ec_op"
 [@@noalloc]
 
-external c_put_code : bytes -> (int[@untagged]) -> bytes -> (int[@untagged]) -> unit
+external c_put_code : pool -> (int[@untagged]) -> bytes -> (int[@untagged]) -> unit
   = "cvm_put_code_byte" "cvm_put_code"
 [@@noalloc]
 
@@ -82,18 +89,14 @@ let () = c_init ()
 (* ---- the big-felt pool ---- *)
 
 let scratch = 64 (* slots 0..63 are scratch for multi-slot builtins *)
-let pool = ref (Bytes.make (32 * 4096) '\000')
+(* One fixed reservation of lazily committed pages: slots never move, so no
+   growth copies, and running out fails explicitly. *)
+let capacity = 1 lsl 28
+let pool = pool_make capacity
 let pool_n = ref scratch
 
-let[@inline never] grow_pool () =
-  let b = !pool in
-  (* Every new felt slot is fully initialized before it can be read. *)
-  let nb = Bytes.create (2 * Bytes.length b) in
-  Bytes.blit b 0 nb 0 (Bytes.length b);
-  pool := nb
-
-(* Make sure slots [pool_n .. pool_n + k) exist. *)
-let[@inline] reserve k = if (!pool_n + k) * 32 > Bytes.length !pool then grow_pool ()
+(* Fail unless slots [pool_n .. pool_n + k) exist. *)
+let[@inline] reserve k = if !pool_n + k > capacity then raise Out_of_memory
 
 let[@inline] commit code = if code land 3 = 3 && code asr 2 = !pool_n then incr pool_n
 
@@ -118,28 +121,28 @@ let of_int v =
   if fits_small v then small v
   else begin
     reserve 1;
-    let c = c_binop !pool 0 (small (v asr 1)) (small (v - (v asr 1))) !pool_n in
+    let c = c_binop pool 0 (small (v asr 1)) (small (v - (v asr 1))) !pool_n in
     commit c;
     c
   end
 
 (* Field equality for felt codes; relocatables compare structurally. *)
 let[@inline] equal a b =
-  a = b || (a land 3 = 3 && b land 3 = 3 && c_big_eq !pool a b = 1)
+  a = b || (a land 3 = 3 && b land 3 = 3 && c_big_eq pool a b = 1)
 
-external c_big_hash : bytes -> (int[@untagged]) -> (int[@untagged])
+external c_big_hash : pool -> (int[@untagged]) -> (int[@untagged])
   = "cvm_big_hash_byte" "cvm_big_hash" [@@noalloc]
 
 (* Small felts and relocatables are canonical immediates: an integer mix is a
    valid hash. Big felts hash their limbs. *)
 let[@inline] mix x = let h = x * 0x9E3779B97F4A7C1 in h lxor (h lsr 29)
-let hash v = if is_big v then c_big_hash !pool v else mix v
+let hash v = if is_big v then c_big_hash pool v else mix v
 
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 
 let[@inline never] slow_binop op a b =
   reserve 1;
-  let c = c_binop !pool op a b !pool_n in
+  let c = c_binop pool op a b !pool_n in
   commit c;
   c
 
@@ -173,7 +176,7 @@ let div a b =
   else if both_small a b && (a asr 2) mod (b asr 2) = 0 then Some (small ((a asr 2) / (b asr 2)))
   else begin
     reserve 1;
-    let c = c_binop !pool 3 a b !pool_n in
+    let c = c_binop pool 3 a b !pool_n in
     if c = 0 then None
     else begin
       commit c;
@@ -190,7 +193,7 @@ let split_at_limb ~two_limbs c =
     let use_two = Bool.to_int two_limbs in
     reserve 2;
     let part high =
-      let result = c_split_part !pool c use_two high !pool_n in
+      let result = c_split_part pool c use_two high !pool_n in
       commit result;
       result
     in
@@ -205,29 +208,20 @@ let to_z c =
     let v = small_val c in
     if v >= 0 then Z.of_int v else Z.add p (Z.of_int v)
   end
-  else Z.of_bits (Bytes.sub_string !pool ((c asr 2) * 32) 32)
-
-let small_limit_z = Z.of_int small_bound
-let negative_small_limit = Z.sub p small_limit_z
+  else begin
+    let b = Bytes.create 32 in
+    c_put_code pool c b 0;
+    Z.of_bits (Bytes.unsafe_to_string b)
+  end
 
 let of_z z =
   if Z.fits_int z && fits_small (Z.to_int z) then small (Z.to_int z)
   else begin
     let z = if Z.sign z >= 0 && Z.lt z p then z else Z.erem z p in
-    if Z.lt z small_limit_z then small (Z.to_int z)
-    else if Z.gt z negative_small_limit then small (- Z.to_int (Z.sub p z))
-    else begin
-      let bits = Z.to_bits z in
-      let len = String.length bits in
-      reserve 1;
-      let off = !pool_n * 32 in
-      Bytes.blit_string bits 0 !pool off len;
-      (* A short magnitude may reuse a slot touched by a builtin. *)
-      Bytes.fill !pool (off + len) (32 - len) '\000';
-      let c = (!pool_n lsl 2) lor 3 in
-      incr pool_n;
-      c
-    end
+    reserve 1;
+    let c = c_of_bits pool (Z.to_bits z) !pool_n in
+    commit c;
+    c
   end
 
 (* Signed representative in (-p/2, p/2], as cairo-vm's signed_felt. *)
@@ -245,9 +239,9 @@ let to_nat c =
 
 let compare a b =
   if is_small a && is_small b && a asr 2 >= 0 && b asr 2 >= 0 then Stdlib.compare a b
-  else c_cmp !pool a b
+  else c_cmp pool a b
 
-let bits c = c_bits !pool c
+let bits c = c_bits pool c
 
 let to_string c = Z.to_string (to_z c)
 
@@ -262,7 +256,7 @@ let empty = 0
 
 let pedersen a b =
   reserve 1;
-  let r = c_pedersen !pool a b !pool_n in
+  let r = c_pedersen pool a b !pool_n in
   commit r;
   r
 
@@ -272,7 +266,7 @@ let bitwise op x y =
     match op with 0 -> x land y | 1 -> (x lxor y) lor 1 | _ -> x lor y
   else begin
     reserve 1;
-    let r = c_bitwise !pool op x y !pool_n in
+    let r = c_bitwise pool op x y !pool_n in
     commit r;
     r
   end
@@ -281,16 +275,16 @@ let kernel (k : int -> int -> int) (inp : t array) n_out =
   let n_in = Array.length inp in
   reserve (n_in + n_out);
   let s = !pool_n in
-  Array.iteri (fun i v -> c_load_slot !pool v (s + i)) inp;
+  Array.iteri (fun i v -> c_load_slot pool v (s + i)) inp;
   let rc = k s (s + n_in) in
   if rc <> 0 then Error rc
   else
     Ok (Array.init n_out (fun i ->
-        let r = c_code_of_slot !pool (s + n_in + i) !pool_n in
+        let r = c_code_of_slot pool (s + n_in + i) !pool_n in
         commit r;
         r))
 
 let infallible = function Ok out -> out | Error _ -> assert false
-let poseidon inp = infallible (kernel (fun i o -> c_poseidon !pool i o; 0) inp 3)
-let keccak inp = infallible (kernel (fun i o -> c_keccak !pool i o; 0) inp 8)
-let ec_op inp = kernel (fun i o -> c_ec_op !pool i o) inp 2
+let poseidon inp = infallible (kernel (fun i o -> c_poseidon pool i o; 0) inp 3)
+let keccak inp = infallible (kernel (fun i o -> c_keccak pool i o; 0) inp 8)
+let ec_op inp = kernel (fun i o -> c_ec_op pool i o) inp 2

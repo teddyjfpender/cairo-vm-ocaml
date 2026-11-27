@@ -290,7 +290,7 @@ let hint_steps = ref 0
 
 (* The kernel executes a flagged first instruction: its hints already ran. *)
 external cpu_batch : int array -> int array -> seg array -> flag array -> int array ->
-  seg -> bytes -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
+  seg -> pool -> int -> bool -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
@@ -310,7 +310,7 @@ let run_fast vm (hints : (vm -> unit) array array) end_seg =
         registers.(0) <- pc; registers.(1) <- vm.ap; registers.(2) <- vm.fp;
         registers.(3) <- vm.hi.(1); registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
         let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
-          !pool vm.nsegs vm.trace_on (match pedersen with Some b -> b.cache | None -> [||]) in
+          pool vm.nsegs vm.trace_on (match pedersen with Some b -> b.cache | None -> [||]) in
         vm.pc <- registers.(0); vm.ap <- registers.(1); vm.fp <- registers.(2);
         vm.hi.(1) <- registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
         vm.steps <- vm.steps + count;
