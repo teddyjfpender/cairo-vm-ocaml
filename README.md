@@ -41,7 +41,8 @@ _build/default/bin/main.exe program.json --layout all_cairo --print_output
 | [Architecture](docs/architecture.md) | why it's fast, source layout |
 | [Contributing](docs/contributing.md) | tests, parity runs, perf claims |
 
-Serve them locally as a site with `pip install mkdocs-material && mkdocs serve`.
+Preview them as a site with `scripts/docs.sh`, then open http://127.0.0.1:8000.
+It needs [uv](https://docs.astral.sh/uv/) and installs nothing globally.
 
 ## 📜 License
 

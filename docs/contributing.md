@@ -27,3 +27,8 @@ such as `sample` or `perf` enough data on short programs.
 
 - `src/hints/hint_codes.ml`: `scripts/gen_hint_codes.py CAIRO_VM_CHECKOUT`
 - `src/native/constants.h`: `scripts/gen_constants.py`
+
+## Docs
+
+`scripts/docs.sh` serves this site at http://127.0.0.1:8000 with live reload, and
+`scripts/docs.sh build` writes it to `site/`. Both use `uvx`, so nothing is installed globally.
