@@ -44,6 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("ocaml", "rust", "program"):
         parser.add_argument(f"--{name}", required=True, type=Path)
+    parser.add_argument("--merge-extra-segments", action="store_true")
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("inputs", nargs="+", type=Path)
     args = parser.parse_args()
@@ -66,6 +67,9 @@ def main():
                 if mode == "pie":
                     commands["ocaml"] += ["--cairo_pie_output", archives["ocaml"]]
                     commands["rust"].append(archives["rust"])
+                    if args.merge_extra_segments:
+                        commands["ocaml"].append("--merge_extra_segments")
+                        commands["rust"].append("--merge-extra-segments")
                 for i in range(args.pairs):
                     order = ("rust", "ocaml") if i % 2 == 0 else ("ocaml", "rust")
                     result = {vm: run(commands[vm]) for vm in order}

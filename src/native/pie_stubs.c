@@ -122,3 +122,63 @@ value cvm_pie_load_run(value memory, value seg_id, value cells, value pool, valu
   Field(state, 2) = Val_long(hi);
   return Val_unit;
 }
+
+/* Merge selected segment offsets before encoding the 16:47 PIE address.
+   The high bit is reserved for the address tag. */
+static inline int pie_address(intnat seg, uint64_t off, value offsets, intnat merged,
+                              uint64_t *packed) {
+  if ((uintnat)seg < Wosize_val(offsets)) {
+    intnat delta = Long_val(Field(offsets, seg));
+    if (delta >= 0) { seg = merged; off += (uintnat)delta; }
+  }
+  if ((uintnat)seg > UINT16_MAX || off >= (UINT64_C(1) << 47)) return 0;
+  *packed = ((uint64_t)seg << 47) | off;
+  return 1;
+}
+
+/* Advance a cursor across all segments, skipping holes and emitting whole
+   40-byte cells. The caller owns the buffer and streams each filled chunk. */
+value cvm_pie_encode(value segs, value highs, value count, value pool,
+                     value offsets, value cursor, value buffer) {
+  intnat seg = Long_val(Field(cursor, 0)), off = Long_val(Field(cursor, 1));
+  const intnat merged = Long_val(Field(cursor, 2)), n = Long_val(count);
+  const size_t capacity = caml_string_length(buffer) / 40;
+  unsigned char *bytes = Bytes_val(buffer);
+  size_t emitted = 0;
+  for (; seg < n && emitted < capacity; ++seg, off = 0) {
+    value array = Field(segs, seg);
+    const intnat *cells = Caml_ba_data_val(array);
+    const intnat hi = Long_val(Field(highs, seg));
+    if (hi < 0 || hi > Caml_ba_array_val(array)->dim[0]) return Val_long(-1);
+    if (!hi) continue;
+    uint64_t last;
+    if (!pie_address(seg, hi-1, offsets, merged, &last)) return Val_long(-1);
+    uint64_t base = (last-(uintnat)(hi-1)) | (UINT64_C(1) << 63);
+    while (off < hi) {
+      intnat code = cells[off];
+      if (code) {
+        uint64_t addr = base + (uintnat)off, words[4];
+        if ((code & 3) == 2) {
+          if (!pie_address(code >> 42, ((uintnat)code >> 2) & ((UINT64_C(1) << 40)-1),
+                           offsets, merged, &words[0])) return Val_long(-1);
+          words[1] = words[2] = 0;
+          words[3] = UINT64_C(1) << 63;
+        } else load(pool, code, words);
+        memcpy(bytes+40*emitted, &addr, 8);
+        memcpy(bytes+40*emitted+8, words, 32);
+        ++emitted;
+      }
+      ++off;
+      if (emitted == capacity) goto done;
+    }
+  }
+done:
+  Field(cursor, 0) = Val_long(seg);
+  Field(cursor, 1) = Val_long(off);
+  return Val_long(40*emitted);
+}
+
+value cvm_pie_encode_byte(value *argv, int argc) {
+  (void)argc;
+  return cvm_pie_encode(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5], argv[6]);
+}

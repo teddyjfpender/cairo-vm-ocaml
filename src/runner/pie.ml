@@ -90,31 +90,17 @@ let by_ord l = List.sort (fun (a, _) (b, _) -> compare (ord_rank a) (ord_rank b)
 
 let canonical z = Felt.to_z (Felt.of_z z)
 
-let memory_member (r : Runner.t) remap emit =
-  let vm = r.vm in
-  let chunk = Bytes.create (40 * 8192) and pos = ref 0 in
-  let address seg off =
-    let seg, off = remap seg off in
-    Int64.logor (Int64.shift_left (Int64.of_int seg) 47) (Int64.of_int off)
-  in
-  for seg = 0 to vm.nsegs - 1 do
-    for off = 0 to used_size vm seg - 1 do
-      let v = read vm seg off in
-      if v <> Felt.empty then begin
-        Bytes.set_int64_le chunk !pos (Int64.logor Int64.min_int (address seg off));
-        let dst = !pos + 8 in
-        if Felt.is_reloc v then begin
-          Bytes.set_int64_le chunk dst (address (Felt.rseg v) (Felt.roff v));
-          Bytes.set_int64_le chunk (dst + 8) 0L;
-          Bytes.set_int64_le chunk (dst + 16) 0L;
-          Bytes.set_int64_le chunk (dst + 24) Int64.min_int
-        end else Felt.c_put_code Felt.pool (v :> int) chunk dst;
-        pos := !pos + 40;
-        if !pos = Bytes.length chunk then (emit chunk !pos; pos := 0)
-      end
-    done
-  done;
-  if !pos > 0 then emit chunk !pos
+external encode_memory : Segment.seg array -> int array -> int -> Felt.pool -> int array ->
+  int array -> bytes -> int = "cvm_pie_encode_byte" "cvm_pie_encode" [@@noalloc]
+
+let memory_member (r : Runner.t) merged offsets emit =
+  let vm = r.vm and chunk = Bytes.create (40 * 8192) in
+  let cursor = [|0; 0; merged|] in
+  while cursor.(0) < vm.nsegs do
+    let n = encode_memory vm.segs vm.hi vm.nsegs Felt.pool offsets cursor chunk in
+    if n < 0 then fail "Cairo PIE memory address exceeds its encoding";
+    if n > 0 then emit chunk n
+  done
 
 let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
     ~merge_extra_segments path =
@@ -138,14 +124,13 @@ let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t)
   let extra = List.filter (fun s -> not (List.mem s known)) (List.init vm.nsegs Fun.id) in
   (* finalized sizes win (a run from a PIE finalizes every segment) *)
   let extra_infos = List.map (fun s -> (s, Resources.segment_size r s)) extra in
-  let extra_json, remap =
+  let extra_json, merged, offsets =
     match (merge_extra_segments, extra_infos) with
     | true, (first, _) :: _ ->
-        let tbl = Hashtbl.create 8 in
-        let acc = List.fold_left (fun a (s, n) -> Hashtbl.replace tbl s a; a + n) 0 extra_infos in
-        ( [ seg_info first acc ],
-          fun s o -> match Hashtbl.find_opt tbl s with Some a -> (first, a + o) | None -> (s, o) )
-    | _ -> (List.map (fun (s, n) -> seg_info s n) extra_infos, fun s o -> (s, o))
+        let offsets = Array.make vm.nsegs (-1) in
+        let size = List.fold_left (fun pos (seg, n) -> offsets.(seg) <- pos; pos+n) 0 extra_infos in
+        [seg_info first size], first, offsets
+    | _ -> List.map (fun (s, n) -> seg_info s n) extra_infos, -1, [||]
   in
   let ordered = List.filter_map (fun k -> List.find_opt (fun b -> b.kind = k) builtins) all_builtins in
   let metadata =
@@ -202,7 +187,7 @@ let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t)
     [
       ("version.json", text_member (to_string (Obj [ ("cairo_pie", Str "1.1") ])));
       ("metadata.json", text_member (to_string metadata));
-      ("memory.bin", memory_member r remap);
+      ("memory.bin", memory_member r merged offsets);
       ("additional_data.json", text_member (to_string additional));
       ("execution_resources.json", text_member (to_string resources));
     ]

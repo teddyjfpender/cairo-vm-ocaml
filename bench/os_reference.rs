@@ -8,7 +8,8 @@ fn main() {
     let hints: OsHints = serde_json::from_reader(input).unwrap();
     let result = run_os_stateless(DEFAULT_OS_LAYOUT, hints).unwrap();
     if let Some(path) = args.next() {
-        result.cairo_pie.write_zip_file(std::path::Path::new(&path), false).unwrap();
+        let merge = args.next().as_deref() == Some("--merge-extra-segments");
+        result.cairo_pie.write_zip_file(std::path::Path::new(&path), merge).unwrap();
     }
     for value in result.raw_os_output { println!("{value:#x}"); }
 }
