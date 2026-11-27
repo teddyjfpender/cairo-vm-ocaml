@@ -37,23 +37,47 @@ static inline int geq_p(const u64 a[4]) {
   return a[0] >= 1;
 }
 
+#define ALWAYS_INLINE static inline __attribute__((always_inline))
+/* Add with carry and subtract with borrow: the builtins where available
+   (clang, GCC >= 14), otherwise portable 128-bit sums that compilers lower
+   to adds/adcs or add/adc. Carries and borrows are 0 or 1. */
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_addcll) && __has_builtin(__builtin_subcll)
+#define HAVE_ADDCLL 1
+#endif
+#endif
+#ifdef HAVE_ADDCLL
+#define ADC(r, a, b, cin, cout) r = __builtin_addcll(a, b, cin, &cout)
+#define SBB(r, a, b, bin, bout) r = __builtin_subcll(a, b, bin, &bout)
+#else
+static inline unsigned long long adc64(unsigned long long a, unsigned long long b,
+                                       unsigned long long cin, unsigned long long *cout) {
+  u128 s = (u128)a + b + cin;
+  *cout = (unsigned long long)(s >> 64);
+  return (unsigned long long)s;
+}
+static inline unsigned long long sbb64(unsigned long long a, unsigned long long b,
+                                       unsigned long long bin, unsigned long long *bout) {
+  u128 d = (u128)a - b - bin;
+  *bout = (unsigned long long)(d >> 127);
+  return (unsigned long long)d;
+}
+#define ADC(r, a, b, cin, cout) r = adc64(a, b, cin, &cout)
+#define SBB(r, a, b, bin, bout) r = sbb64(a, b, bin, &bout)
+#endif
+
 static inline u64 sub4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u64 borrow = 0;
-  for (int i = 0; i < 4; i++) {
-    u128 d = (u128)a[i] - b[i] - borrow;
-    r[i] = (u64)d;
-    borrow = (u64)(d >> 64) & 1;
-  }
-  return borrow;
+  unsigned long long c;
+  SBB(r[0], a[0], b[0], 0, c); SBB(r[1], a[1], b[1], c, c);
+  SBB(r[2], a[2], b[2], c, c); SBB(r[3], a[3], b[3], c, c);
+  return c;
 }
 
 static inline u64 add4(u64 r[4], const u64 a[4], const u64 b[4]) {
-  u128 c = 0;
-  for (int i = 0; i < 4; i++) {
-    c = (u128)a[i] + b[i] + (u64)(c >> 64);
-    r[i] = (u64)c;
-  }
-  return (u64)(c >> 64);
+  unsigned long long c;
+  ADC(r[0], a[0], b[0], 0, c); ADC(r[1], a[1], b[1], c, c);
+  ADC(r[2], a[2], b[2], c, c); ADC(r[3], a[3], b[3], c, c);
+  return c;
 }
 
 static inline void fadd(u64 r[4], const u64 a[4], const u64 b[4]) {
@@ -75,44 +99,27 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
 static u64 R2[4];   /* R^2 mod p */
 static u64 ONE_M[4];/* R mod p   */
 
-#define ALWAYS_INLINE static inline __attribute__((always_inline))
-/* Add with carry: the builtin where available (clang, GCC >= 14), otherwise a
-   portable 128-bit sum that compilers lower to adds/adcs or add/adc. */
-#if defined(__has_builtin)
-#if __has_builtin(__builtin_addcll)
-#define HAVE_ADDCLL 1
-#endif
-#endif
-#ifdef HAVE_ADDCLL
-#define ADC(r, a, b, cin, cout) r = __builtin_addcll(a, b, cin, &cout)
-#else
-static inline unsigned long long adc64(unsigned long long a, unsigned long long b,
-                                       unsigned long long cin, unsigned long long *cout) {
-  u128 s = (u128)a + b + cin;
-  *cout = (unsigned long long)(s >> 64);
-  return (unsigned long long)s;
-}
-#define ADC(r, a, b, cin, cout) r = adc64(a, b, cin, &cout)
-#endif
-
 /* REDC(T) for T = high * R + low, without the final subtraction: the result
    is congruent to T/R and below high + p + 1. Since p^-1 = 1 - P3*2^192
    (mod R), m = q*2^192 - low with q = low0*P3 gives low + m*p = 0 (mod R);
    the borrow k of that subtraction is (low + m) / R, so
-   (low + m*p) / R = k + (q + m*P3) / 2^64. */
+   (low + m*p) / R = k + (q + m*P3) / 2^64. The low word of q + m0*P3 is
+   zero, so its carry is q != 0. m3 waits for the whole borrow chain, so
+   its product is added last. */
 ALWAYS_INLINE void redc(u64 r[4], u64 t0, u64 t1, u64 t2, u64 t3,
                         u64 t4, u64 t5, u64 t6, u64 t7) {
-  u64 q = t0 * P[3];
-  u128 d = (u128)0 - t0;               u64 m0 = (u64)d;
-  d = (u128)0 - t1 - (u64)(d >> 127);  u64 m1 = (u64)d;
-  d = (u128)0 - t2 - (u64)(d >> 127);  u64 m2 = (u64)d;
-  d = (u128)q - t3 - (u64)(d >> 127);  u64 m3 = (u64)d;
-  u64 k = (u64)(d >> 127);
-  u128 c = (u128)m0 * P[3] + q;
-  c = (u128)m1 * P[3] + (u64)(c >> 64) + t4 + k; r[0] = (u64)c;
-  c = (u128)m2 * P[3] + (u64)(c >> 64) + t5;     r[1] = (u64)c;
-  c = (u128)m3 * P[3] + (u64)(c >> 64) + t6;     r[2] = (u64)c;
-  r[3] = (u64)(c >> 64) + t7;
+  u64 q = t0 * P[3], m0, m1, m2, m3, g0, g1, g2;
+  unsigned long long k, c;
+  SBB(m0, 0, t0, 0, k); SBB(m1, 0, t1, k, k); SBB(m2, 0, t2, k, k); SBB(m3, q, t3, k, k);
+  u128 p0 = (u128)m0 * P[3], p1 = (u128)m1 * P[3], p2 = (u128)m2 * P[3], p3 = (u128)m3 * P[3];
+  ADC(g0, (u64)(p0 >> 64), (u64)p1, q != 0, c);
+  ADC(g1, (u64)(p1 >> 64), (u64)p2, c, c);
+  ADC(g2, (u64)(p2 >> 64), t6, c, c);
+  t7 += c;
+  ADC(r[0], g0, t4, k, c);
+  ADC(r[1], g1, t5, c, c);
+  ADC(r[2], g2, (u64)p3, c, c);
+  r[3] = t7 + (u64)(p3 >> 64) + c;
 }
 
 /* r = a * b (5 limbs) */
@@ -762,12 +769,11 @@ static void poseidon_init(void) {
 /* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
    (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
 ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
-  typedef __int128 wide;
-  wide s = 1 - (wide)(x[3] >> 59);
-  wide d = (wide)x[0] + s;     x[0] = (u64)d;
-  d = (wide)x[1] + (d >> 64);  x[1] = (u64)d;
-  d = (wide)x[2] + (d >> 64);  x[2] = (u64)d;
-  x[3] = (u64)((wide)x[3] + s * (wide)P[3] + (d >> 64));
+  /* add s*p = (s, e, e, e + s*P3) mod 2^256, e the sign extension of s */
+  u64 s = 1 - (x[3] >> 59), e = (u64)((i64)s >> 63);
+  unsigned long long c;
+  ADC(x[0], x[0], s, 0, c); ADC(x[1], x[1], e, c, c); ADC(x[2], x[2], e, c, c);
+  x[3] += e + s * P[3] + c;
 }
 
 /* Below 9p (R > 31.99p), the cube is below 2p. */
