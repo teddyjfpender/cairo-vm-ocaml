@@ -36,7 +36,7 @@ type vm = {
   mutable tsegs : Segment.seg array;  (** temporary segments *)
   mutable thi : int array;
   mutable ntsegs : int;
-  rules : (int, Felt.t) Hashtbl.t;  (** temporary index -> destination *)
+  mutable rules : Felt.t array;  (** temporary index -> destination *)
   mutable relocating : bool;
       (** reads translate temporary relocatables when a rule exists *)
   mutable had_temp : bool;

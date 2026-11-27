@@ -163,3 +163,24 @@ let () =
   for i = 0 to 3 do assert (watched_range vm (Felt.reloc code i) 1) done;
   assert (not (watched_range vm (Felt.reloc code 4) 1));
   assert (vm.tlen = 0)
+
+let () =
+  let vm = create ~trace:false in
+  let base = add_segment vm in
+  let first = add_temp_segment vm and second = add_temp_segment vm in
+  let ptr = Felt.reloc in
+  write_checked vm first 0 Felt.one;
+  write_checked vm second 0 (ptr first 3);
+  write_checked vm base 0 (ptr second 1);
+  add_relocation_rule vm (ptr first 0) (ptr second 4);
+  add_relocation_rule vm (ptr second 0) (ptr base 10);
+  assert (get vm base 0 = ptr base 11);
+  assert (relocate_temp_value vm (ptr first 3) = ptr second 7);
+  relocate_temp_memory vm;
+  assert (get vm base 10 = ptr base 17);
+  assert (get vm base 14 = Felt.one);
+  let cycle = add_temp_segment vm in
+  add_relocation_rule vm (ptr cycle 0) (ptr cycle 0);
+  match relocate_temp_memory vm with
+  | exception Errors.Vm_error _ -> ()
+  | () -> failwith "accepted cyclic temporary segment relocation"

@@ -36,7 +36,7 @@ type vm = {
   mutable tsegs : seg array;
   mutable thi : int array;
   mutable ntsegs : int;
-  rules : (int, Felt.t) Hashtbl.t; (* temp index -> destination relocatable *)
+  mutable rules : Felt.t array; (* temp index -> destination relocatable *)
   mutable relocating : bool;
   mutable had_temp : bool;
 }
@@ -70,7 +70,7 @@ let create ~trace =
     tsegs = [||];
     thi = [||];
     ntsegs = 0;
-    rules = Hashtbl.create 8;
+    rules = [||];
     relocating = false;
     had_temp = false;
   }
@@ -144,15 +144,17 @@ let[@inline never] temp_read vm seg off =
   if off >= 0 && off < slen a then sget a off else Felt.empty
 
 (* Memory.relocate_value: one application of the current rules *)
-let[@inline never] relocate_temp_value vm v =
-  if is_reloc v && rseg v < 0 then
-    match Hashtbl.find_opt vm.rules (temp_index (rseg v)) with
-    | Some dst ->
-        let o = roff dst + roff v in
-        if o > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
-        reloc (rseg dst) o
-    | None -> v
-  else v
+let[@inline] rule rules index =
+  if index < Array.length rules then Array.unsafe_get rules index else Felt.empty
+
+let[@inline] relocate_temp_value vm v =
+  if v < Felt.empty && is_reloc v then begin
+    let dst = rule vm.rules (temp_index (rseg v)) in
+    if dst = Felt.empty then v else
+      let off = roff dst + roff v in
+      if off > off_mask then fail "Offset exceeds range when relocating %d:%d" (rseg v) (roff v);
+      reloc (rseg dst) off
+  end else v
 
 let get vm seg off =
   let v =
@@ -247,58 +249,50 @@ let add_relocation_rule vm src dst =
   if rseg src >= 0 then fail "Address %d is not in a temporary segment" (rseg src);
   if roff src <> 0 then fail "Non-zero offset %d in relocation source" (roff src);
   let k = temp_index (rseg src) in
-  if Hashtbl.mem vm.rules k then fail "Duplicated relocation rule for segment %d" (rseg src);
-  Hashtbl.add vm.rules k dst;
+  if k >= Array.length vm.rules then begin
+    let grown = Array.make (max (k+1) (max 4 (2 * Array.length vm.rules))) Felt.empty in
+    Array.blit vm.rules 0 grown 0 (Array.length vm.rules);
+    vm.rules <- grown
+  end;
+  if vm.rules.(k) <> Felt.empty then fail "Duplicated relocation rule for segment %d" (rseg src);
+  vm.rules.(k) <- dst;
   vm.relocating <- true
 
 (* Memory.relocate_memory, run at the start of end_run: flatten rule chains,
    rewrite temporary relocatables in all memory, then move each relocated
    temporary segment into real memory (descending index order, holes skip
    addresses), with ordinary write-once and builtin validation. *)
+external relocate_segments : seg array -> int array -> int -> Felt.t array -> bool
+  = "cvm_relocate_segments" [@@noalloc]
+
 let relocate_temp_memory vm =
   if vm.relocating && vm.ntsegs > 0 then begin
-    let max_hops = Hashtbl.length vm.rules + 1 in
-    let flat = Hashtbl.create (Hashtbl.length vm.rules) in
-    Hashtbl.iter
-        (fun k dst ->
-          let rec go dst hops =
-            if rseg dst >= 0 then dst
-            else begin
-              let next =
-                match Hashtbl.find_opt vm.rules (temp_index (rseg dst)) with
-                | Some n -> n
-                | None -> fail "Unmapped temporary segment %d" (rseg dst)
-              in
-              let o = roff next + roff dst in
-              if o > off_mask then fail "Offset exceeds range in relocation rule";
-              if hops + 1 > max_hops then fail "Relocation rule cycle";
-              go (reloc (rseg next) o) (hops + 1)
-            end
-          in
-          Hashtbl.add flat k (go dst 0))
-        vm.rules;
-    let relocate v =
-      if is_reloc v && rseg v < 0 then
-        match Hashtbl.find_opt flat (temp_index (rseg v)) with
-        | Some dst ->
-            let o = roff dst + roff v in
-            if o > off_mask then fail "Offset exceeds range when relocating memory";
-            reloc (rseg dst) o
-        | None -> v
-      else v
-    in
-    let rewrite a n =
-      for i = 0 to n - 1 do
-        let v = sget a i in
-        if is_reloc v && rseg v < 0 then sset a i (relocate v)
-      done
-    in
-    for s = 0 to vm.nsegs - 1 do rewrite vm.segs.(s) (min vm.hi.(s) (slen vm.segs.(s))) done;
-    for k = 0 to vm.ntsegs - 1 do rewrite vm.tsegs.(k) vm.thi.(k) done;
+    (* Resolve each rule once. A non-pointer marker denotes an active path.
+       Accumulate offsets when unwinding so shared tails reuse their result. *)
+    let flat = Array.make (Array.length vm.rules) Felt.empty in
+    let finish dst path =
+      List.fold_left (fun base (k, delta) ->
+          let off = roff base + delta in
+          if off > off_mask then fail "Offset exceeds range in relocation rule";
+          let v = reloc (rseg base) off in flat.(k) <- v; v) dst path |> ignore in
+    let rec walk k path =
+      let known = rule flat k in
+      if known = Felt.one then fail "Relocation rule cycle"
+      else if known <> Felt.empty then finish known path
+      else begin
+        let dst = rule vm.rules k in
+        if dst = Felt.empty then fail "Unmapped temporary segment %d" (-1-k);
+        if rseg dst >= 0 then begin flat.(k) <- dst; finish dst path end
+        else begin flat.(k) <- Felt.one; walk (temp_index (rseg dst)) ((k, roff dst) :: path) end
+      end in
+    Array.iteri (fun k v -> if v <> Felt.empty && flat.(k) = Felt.empty then walk k []) vm.rules;
+    if not (relocate_segments vm.segs vm.hi vm.nsegs flat &&
+            relocate_segments vm.tsegs vm.thi vm.ntsegs flat) then
+      fail "Offset exceeds range when relocating memory";
     let keep = ref [] in
     for k = vm.ntsegs - 1 downto 0 do
-      match Hashtbl.find_opt flat k with
-      | Some dst ->
+      let dst = rule flat k in
+      if dst <> Felt.empty then begin
           let a = vm.tsegs.(k) in
           for i = 0 to vm.thi.(k) - 1 do
             let v = sget a i in
@@ -308,13 +302,13 @@ let relocate_temp_memory vm =
               write_checked vm (rseg dst) o v
             end
           done
-      | None -> keep := (vm.tsegs.(k), vm.thi.(k)) :: !keep
+      end else keep := (vm.tsegs.(k), vm.thi.(k)) :: !keep
     done;
     let kept = Array.of_list !keep in
     vm.tsegs <- Array.map fst kept;
     vm.thi <- Array.map snd kept;
     vm.ntsegs <- Array.length kept;
-    Hashtbl.clear vm.rules;
+    vm.rules <- [||];
     vm.relocating <- false
   end
 
