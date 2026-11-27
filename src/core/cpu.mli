@@ -6,7 +6,7 @@ val decode_at : Vm.vm -> int -> int -> int
 
 val record_trace : Vm.vm -> int -> int -> int -> int -> unit
 (** [record_trace vm pc_seg pc ap fp] appends one trace entry: a packed word
-    with low bit 1, or a relocatable pc code followed by ap and fp. The layout
+    for common main or dynamic code offsets, or a full pc, ap and fp triple. The layout
     is shared with [cvm_write_trace]. *)
 
 val step_instr : Vm.vm -> int -> unit

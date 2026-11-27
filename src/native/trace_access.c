@@ -2,6 +2,7 @@
    uncached instruction or bitmap growth to Resources.update_accessed.
    Marking is idempotent, so the fallback can repeat a partial entry. */
 #include <stdint.h>
+#include "trace_encoding.h"
 #include <string.h>
 #include <caml/mlvalues.h>
 #include <caml/bigarray.h>
@@ -56,6 +57,9 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
       ap = (w >> 24) & 0x7fffff;
       fp = (w >> 1) & 0x7fffff;
       width = 1;
+    } else if (!(w & 2)) {
+      trace_unpack_dynamic(w, &code_seg, &pc, &ap, &fp);
+      width = 1;
     } else {
       if (stop-cursor < 3) break;
       code_seg = (intnat)w >> 42;
@@ -63,11 +67,11 @@ value cvm_trace_access(value trace, value end, value cache, value stack,
       ap = entries[cursor+1];
       fp = entries[cursor+2];
       width = 3;
-      if (code_seg != 0) {
-        if (code_seg != Long_val(Field(state, 3))) break;
-        words = page;
-        base_pc = Long_val(Field(state, 4));
-      }
+    }
+    if (code_seg != 0) {
+      if (code_seg != Long_val(Field(state, 3))) break;
+      words = page;
+      base_pc = Long_val(Field(state, 4));
     }
     if ((uintnat)(pc-base_pc) >= Wosize_val(words)) break;
     uint64_t d = Long_val(Field(words, pc-base_pc));

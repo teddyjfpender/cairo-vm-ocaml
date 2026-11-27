@@ -8,10 +8,17 @@ let () =
     (0, 0, 0, 0); (0, 65535, max_reg, max_reg);
     (0, 65536, 42, 41); (0, 0, max_reg + 1, 1);
     (0, 0, 1, max_reg + 1); (2, 19, 61, 58); (0, 7, 11, 5);
+    (1023, 262143, 16777215, 16776704); (1024, 2, 3, 3); (1, 262144, 3, 3);
+    (1, 3, 16777216, 16777216); (1, 3, 513, 1); (1, 3, 1, 3);
   ] in
   List.iter (fun (seg, pc, ap, fp) -> Cpu.record_trace vm seg pc ap fp) rows;
-  assert (vm.tlen = 3 + 4 * 3);
-  let bases = [| 1; 70200; 9000000 |] in
+  assert (vm.tlen = 6 + 7 * 3);
+  let cursor = ref 0 in
+  List.iter (fun expected ->
+      let next, seg, pc, ap, fp = Resources.trace_entry vm.trace !cursor in
+      assert ((seg, pc, ap, fp) = expected);
+      cursor := next) rows;
+  let bases = Array.init 1025 (fun i -> 1 + i * 70200) in
   let path = Filename.temp_file "cairo-trace" ".bin" in
   Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
     Artifacts.c_write_trace path vm.trace vm.tlen bases;

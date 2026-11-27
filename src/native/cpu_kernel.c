@@ -2,6 +2,7 @@
    steps. All pointers are borrowed for one bounded, nonallocating call. The
    OCaml runner owns decoding, hints, segment growth and builtin deduction. */
 #include "field.h"
+#include "trace_encoding.h"
 
 extern intnat cvm_binop(value, intnat, intnat, intnat, intnat);
 extern intnat cvm_pedersen(value, intnat, intnat, intnat);
@@ -373,7 +374,11 @@ complete:
       last_trace = used;
       if (code_seg == 0 && pc < 65536 && (ap | fp) < (1 << 23))
         entries[used++] = ((uint64_t)pc << 47) | (ap << 24) | (fp << 1) | 1;
-      else { entries[used++] = ADDRESS(code_seg,pc); entries[used++] = ap; entries[used++] = fp; }
+      else {
+        uint64_t word;
+        if (trace_pack_dynamic(code_seg, pc, ap, fp, &word)) entries[used++] = word;
+        else { entries[used++] = ADDRESS(code_seg, pc); entries[used++] = ap; entries[used++] = fp; }
+      }
     }
     pc = next_pc; ap = next_ap; fp = next_fp;
   }

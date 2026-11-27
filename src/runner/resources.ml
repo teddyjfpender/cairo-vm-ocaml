@@ -44,11 +44,13 @@ let decoded vm pc_seg pc =
   if pc_seg = 0 && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then vm.icache.(pc) land lnot ext_mask
   else decode_at vm pc_seg pc
 
-(* Trace layout (see Cpu.record_trace): a packed word with low bit 1, or a
-   relocatable pc code followed by ap and fp. *)
+(* See Cpu.record_trace and trace_encoding.h for the memory layout. *)
 let trace_entry t i =
   let w = raw_get t i in
   if w land 1 = 1 then (i + 1, 0, w lsr 47, (w lsr 24) land ((1 lsl 23) - 1), (w lsr 1) land ((1 lsl 23) - 1))
+  else if w land 2 = 0 then
+    let ap = (w lsr 11) land 0xffffff in
+    (i + 1, w lsr 53, (w lsr 35) land 0x3ffff, ap, ap - ((w lsr 2) land 511))
   else
     let pc = Felt.unsafe_of_int w in
     (i + 3, Felt.rseg pc, Felt.roff pc, raw_get t (i + 1), raw_get t (i + 2))

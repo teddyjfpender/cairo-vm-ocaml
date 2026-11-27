@@ -10,6 +10,7 @@
 #include <caml/memory.h>
 #include <caml/hash.h>
 #include "field.h"
+#include "trace_encoding.h"
 #include "constants.h"
 
 /* ---------- Montgomery arithmetic, R = 2^256. -p^{-1} mod 2^64 = -1 ---------- */
@@ -1183,6 +1184,13 @@ static void art_trace(art_job *j) {
       e[0] = base1 + ((packed >> 24) & offset_mask);
       e[1] = base1 + ((packed >> 1) & offset_mask);
       e[2] = base0 + ((packed >> 47) & 0xffff);
+    } else if (!(word & 2)) {
+      intnat seg, pc, ap, fp;
+      trace_unpack_dynamic(word, &seg, &pc, &ap, &fp);
+      if (seg >= j->ntable) { j->err = "cannot relocate value"; return; }
+      e[0] = base1 + ap;
+      e[1] = base1 + fp;
+      e[2] = table[seg] + pc;
     } else {
       intnat pc = word, s = rel_seg(pc);
       e[0] = (u64)(base1 + t[i++]);

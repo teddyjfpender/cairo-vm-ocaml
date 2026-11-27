@@ -59,9 +59,8 @@ let[@inline never] fetch_slow vm =
 let[@inline never] trace_grow vm =
   vm.trace <- seg_grow vm.trace (2 * slen vm.trace)
 
-(* Pack common register triples with low bit 1. A full triple starts
-   with a relocatable PC code, whose low bit is always 0.
-   Keep this layout in sync with cvm_write_trace. *)
+(* Main-program entries end in 1, compact segment-relative entries in 00,
+   and a full three-word entry begins with a relocatable PC ending in 10. *)
 let[@inline] record_trace vm pc_seg pc ap fp =
   let i = vm.tlen in
   if i + 3 > slen vm.trace then trace_grow vm;
@@ -69,6 +68,9 @@ let[@inline] record_trace vm pc_seg pc ap fp =
   vm.last_trace <- i;
   if pc_seg = 0 && pc lsr 16 = 0 && (ap lor fp) lsr 23 = 0 then begin
     raw_set t i ((pc lsl 47) lor (ap lsl 24) lor (fp lsl 1) lor 1);
+    vm.tlen <- i + 1
+  end else if pc_seg lsr 10 = 0 && pc lsr 18 = 0 && ap lsr 24 = 0 && (ap - fp) lsr 9 = 0 then begin
+    raw_set t i ((pc_seg lsl 53) lor (pc lsl 35) lor (ap lsl 11) lor ((ap-fp) lsl 2));
     vm.tlen <- i + 1
   end else begin
     raw_set t i (reloc pc_seg pc :> int);
