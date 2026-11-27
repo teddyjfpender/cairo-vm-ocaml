@@ -72,7 +72,6 @@ value batch(value state, value cache, value segs, value flags, value highs,
     return Val_int(0);
   intnat pc = Long_val(Field(state, 0)), ap = Long_val(Field(state, 1));
   intnat fp = Long_val(Field(state, 2)), high = Long_val(Field(state, 3));
-  if (Long_val(Field(highs, 1)) > high) high = Long_val(Field(highs, 1));
   intnat used = Long_val(Field(state, 4)), slot = Long_val(Field(state, 5));
   const intnat slots = caml_string_length(pool) / 32;
   value stack_ba = Field(segs, 1), program_ba = Field(segs, 0);
@@ -84,7 +83,10 @@ value batch(value state, value cache, value segs, value flags, value highs,
   int completed = 0;
   for (; completed < 8192 && fits(pc, cache_size); ++completed) {
     uint64_t d = Long_val(Field(cache, pc));
-    if (!d || d >> 61 || (tracing && used > trace_length - 3)) break;
+    /* The caller runs the hints of the first pc only. */
+    if (completed && d >> 61) break;
+    d &= ~(UINT64_C(1) << 61);
+    if (!d || (tracing && used > trace_length - 3)) break;
     intnat next_pc = pc + 1, next_ap = ap, next_fp = fp;
     /* decode_word admits only the Stwo shapes, so flags alone identify the
        canonical RET and CALL rel, whose offsets are fixed. */
@@ -166,11 +168,15 @@ general:;
       if (src != 1 || !dst || !a || !fits(pc+1, program_length)) break;
       intnat imm = program[pc+1];
       if ((imm & 3) != 1) break;
-      if (pc_update == 3 && !ap_update) next_pc = dst == 1 ? pc+2 : pc+(imm>>2);
-      else if (pc_update == 2 && !result && !ap_update) next_pc = pc+(imm>>2);
-      else if (!pc_update && !result && ap_update == 1) {
+      if (ap_update == 1) {
+        if (pc_update || result) break;
         next_ap = ap + (imm>>2); next_pc = pc+2;
-      } else break;
+      } else {
+        next_ap = ap + (ap_update == 2);
+        if (pc_update == 3) next_pc = dst == 1 ? pc+2 : pc+(imm>>2);
+        else if (pc_update == 2 && !result) next_pc = pc+(imm>>2);
+        else break;
+      }
       if (next_ap < 0 || next_ap > OFFSET_MASK || next_pc < 0) break;
     } else {
       if (pc_update || (ap_update != 0 && ap_update != 2)) break;

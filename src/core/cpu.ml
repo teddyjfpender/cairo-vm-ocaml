@@ -275,240 +275,58 @@ let[@inline] step vm =
 
 (* ---------------- fast interpreter loop ----------------
 
-   Registers live in locals.  Each iteration either executes the instruction
-   entirely on the fast path, or (before any mutation) falls back to the
+   Each iteration runs the hints of the current pc, then the native batch
+   kernel, which executes that instruction and its successors until a hint
+   pc or an instruction it declines.  A declined instruction takes the
    generic [step] above, which implements the full deduction semantics.
    Program counters carrying hints are flagged in the decoded cache, so the
-   fast path pays one load per step for hint detection. *)
+   kernel pays no lookup for hint detection. *)
 
 let hint_bit = 1 lsl 61
 
 (* Raised by [run_fast] after the hints of the current pc have run and a
-   relocation rule exists. Registers are synchronized in [vm]; the caller
-   continues with [run_relocating], which reads memory through the rules. *)
+   relocation rule exists. The caller continues with [run_relocating],
+   which reads memory through the rules. *)
 exception Relocating
 let generic_steps = ref 0
 let hint_steps = ref 0
 
+(* The kernel executes a flagged first instruction: its hints already ran. *)
 external cpu_batch : int array -> int array -> seg array -> int array -> int array ->
   seg -> bytes -> int -> bool -> int array -> Felt.t array -> int = "cvm_cpu_batch_byte" "cvm_cpu_batch" [@@noalloc]
 
-(* JNZ's unconstrained result: tag 3 with an impossible pool index, so it
-   never equals a real value. *)
-let unconstrained = Felt.unsafe_of_int (-1)
-
 let run_fast vm (hints : (vm -> unit) array array) end_seg =
   let nh = Array.length hints in
-  let pc = ref vm.pc and ap = ref vm.ap and fp = ref vm.fp and pc_seg = ref vm.pc_seg in
-  let steps = ref vm.steps in
-  let hi1 = ref vm.hi.(1) in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
   let registers = Array.make 9 0 and spans = Array.make nh 0 in
-  while not (!pc_seg = end_seg && !pc = 0) do
-    if !pc_seg = 0 && end_seg <> 0 then begin
-      registers.(0) <- !pc; registers.(1) <- !ap; registers.(2) <- !fp;
-      registers.(3) <- !hi1; registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
-      let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
-        !pool vm.nsegs vm.trace_on spans (match pedersen with Some b -> b.cache | None -> [||]) in
-      pc := registers.(0); ap := registers.(1); fp := registers.(2);
-      hi1 := registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
-      steps := !steps + count
+  while not (vm.pc_seg = end_seg && vm.pc = 0) do
+    let pc = vm.pc in
+    let hinted = vm.pc_seg = 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
+    if hinted then begin
+      incr hint_steps;
+      Array.iter (fun h -> h vm) (Array.unsafe_get hints pc);
+      if vm.relocating then raise Relocating
     end;
-    let ic = vm.icache in
-    let d = if !pc_seg = 0 && !pc < Array.length ic then Array.unsafe_get ic !pc else 0 in
-    let hints_done = d land hint_bit <> 0 in
-    let d =
-      if hints_done then begin
-        (* hints cannot move registers: run them, then execute on the fast path *)
-        vm.pc <- !pc;
-        vm.ap <- !ap;
-        vm.fp <- !fp;
-        vm.pc_seg <- !pc_seg;
-        vm.steps <- !steps;
-        if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
-        let hs = Array.unsafe_get hints !pc in
-        for i = 0 to Array.length hs - 1 do
-          (Array.unsafe_get hs i) vm
-        done;
-        if vm.relocating then raise Relocating;
-        hi1 := vm.hi.(1);
-        d land lnot hint_bit
+    let count =
+      if vm.pc_seg <> 0 || end_seg = 0 then 0
+      else begin
+        registers.(0) <- pc; registers.(1) <- vm.ap; registers.(2) <- vm.fp;
+        registers.(3) <- vm.hi.(1); registers.(4) <- vm.tlen; registers.(5) <- !pool_n;
+        let count = cpu_batch registers vm.icache vm.segs vm.seg_flag vm.hi vm.trace
+          !pool vm.nsegs vm.trace_on spans (match pedersen with Some b -> b.cache | None -> [||]) in
+        vm.pc <- registers.(0); vm.ap <- registers.(1); vm.fp <- registers.(2);
+        vm.hi.(1) <- registers.(3); vm.tlen <- registers.(4); pool_n := registers.(5);
+        vm.steps <- vm.steps + count;
+        count
       end
-      else d
     in
-    let fast = ref false in
-    if d <> 0 then begin
-      let pcv = !pc and apv = !ap and fpv = !fp in
-      let off0 = (d land 0xffff) - 0x8000 in
-      let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
-      let off2 = ((d lsr 32) land 0xffff) - 0x8000 in
-      let dst_addr = (if d land (1 lsl 48) <> 0 then fpv else apv) + off0 in
-      let op0_addr = (if d land (1 lsl 49) <> 0 then fpv else apv) + off1 in
-      let mem = Array.unsafe_get vm.segs 1 in
-      let len = slen mem in
-      if dst_addr >= 0 && op0_addr >= 0 && dst_addr < len - 2 then begin
-        let op0 = if op0_addr < len then sget mem op0_addr else Felt.empty in
-        let src = (d lsr 50) land 3 in
-        let op1 =
-          match src with
-          | 1 ->
-              let prog = Array.unsafe_get vm.segs 0 in
-              let a = pcv + 1 in
-              if a < slen prog then sget prog a else Felt.empty
-          | 2 -> let a = fpv + off2 in if a >= 0 && a < len then sget mem a else Felt.empty
-          | 3 -> let a = apv + off2 in if a >= 0 && a < len then sget mem a else Felt.empty
-          | _ ->
-              if is_reloc op0 then begin
-                let sg = rseg op0 and a = roff op0 + off2 in
-                if sg >= 0 && sg < vm.nsegs && a >= 0 then begin
-                  let sm = Array.unsafe_get vm.segs sg in
-                  let v = if a < slen sm then sget sm a else Felt.empty in
-                  (* op1 deduction for `[ptr + k] = dst` into a non-deducing segment *)
-                  if v = Felt.empty && dst_addr < len && (d lsr 58) land 3 = 3 && (d lsr 52) land 3 = 0
-                     && not (is_deducing (Array.unsafe_get vm.seg_flag sg)) then begin
-                    let dv = sget mem dst_addr in
-                    if dv <> Felt.empty then (write vm sg a dv; dv) else Felt.empty
-                  end
-                  else if v = Felt.empty && is_deducing (Array.unsafe_get vm.seg_flag sg) then begin
-                    (* builtin auto-deduction of the op1 cell, as cairo-vm does first *)
-                    let b = deduce_cell vm sg a in
-                    if b <> Felt.empty then (write vm sg a b; b) else Felt.empty
-                  end
-                  else v
-                end
-                else Felt.empty
-              end
-              else Felt.empty
-        in
-        let size = if src = 1 then 2 else 1 in
-        let opcode = (d lsr 58) land 3 in
-        let dst = sget mem dst_addr in
-        if op1 <> Felt.empty then begin
-          (* ---- result ---- *)
-          let res_kind = (d lsr 52) land 3 in
-          let res =
-            match res_kind with
-            | 0 -> op1
-            | 1 ->
-                if op0 = Felt.empty then Felt.empty
-                else if both_small op0 op1 then begin
-                  let s = small_val op0 + small_val op1 in
-                  if fits_small s then small s else Felt.add op0 op1
-                end
-                else if is_reloc op0 && is_small op1 then begin
-                  let o = roff op0 + small_val op1 in
-                  if o >= 0 && o <= max_off then reloc (rseg op0) o else Felt.empty
-                end
-                else if is_felt op0 && is_felt op1 then Felt.add op0 op1
-                else Felt.empty
-            | 2 -> if op0 <> Felt.empty && is_felt op0 && is_felt op1 then Felt.mul op0 op1 else Felt.empty
-            | _ -> unconstrained
-          in
-          let ok =
-            match opcode with
-            | 3 ->
-                if res = Felt.empty || res = unconstrained || op0 = Felt.empty then false
-                else if dst = Felt.empty then begin
-                  sset mem dst_addr res;
-                  if dst_addr >= !hi1 then hi1 := dst_addr + 1;
-                  true
-                end
-                else Felt.equal dst res
-            | 1 ->
-                (* call: [ap] = fp, [ap+1] = return pc *)
-                let ret = reloc 0 (pcv + size) and fpr = reloc 1 fpv in
-                if !pc_seg <> 0 || res = Felt.empty then false
-                else begin
-                  let o0 = op0 in
-                  if (dst = Felt.empty || dst = fpr) && (o0 = Felt.empty || o0 = ret) then begin
-                    if dst = Felt.empty then sset mem dst_addr fpr;
-                    if o0 = Felt.empty then sset mem op0_addr ret;
-                    if op0_addr >= !hi1 then hi1 := op0_addr + 1;
-                    true
-                  end
-                  else false
-                end
-            | _ -> dst <> Felt.empty && op0 <> Felt.empty (* NOP/RET: cairo-vm requires dst and op0 *)
-          in
-          if ok then begin
-            (* ---- register updates ---- *)
-            let dstv = if opcode = 3 && dst = Felt.empty then res else if opcode = 1 && dst = Felt.empty then reloc 1 fpv else dst in
-            let new_fp =
-              match opcode with
-              | 1 -> apv + 2
-              | 2 -> if is_reloc dstv then roff dstv else if is_small dstv && small_val dstv >= 0 then small_val dstv else -1
-              | _ -> fpv
-            in
-            let new_ap =
-              match (d lsr 56) land 3 with
-              | 0 -> apv
-              | 1 -> if is_small res then apv + small_val res else -1
-              | 2 -> apv + 1
-              | _ -> apv + 2
-            in
-            let pcu = (d lsr 54) land 3 in
-            let new_pc, new_seg =
-              match pcu with
-              | 0 -> (pcv + size, !pc_seg)
-              | 1 -> if (res :> int) > 0 && is_reloc res then (roff res, rseg res) else (-1, 0)
-              | 2 -> if is_small res then (pcv + small_val res, !pc_seg) else (-1, 0)
-              | _ ->
-                  if dstv = zero then (pcv + size, !pc_seg)
-                  else if is_small op1 then (pcv + small_val op1, !pc_seg)
-                  else (-1, 0)
-            in
-            if new_fp >= 0 && new_ap >= 0 && new_pc >= 0 then begin
-              if vm.trace_on then record_trace vm !pc_seg pcv apv fpv;
-              pc := new_pc;
-              pc_seg := new_seg;
-              ap := new_ap;
-              fp := new_fp;
-              incr steps;
-              fast := true
-            end
-            else if opcode = 3 && dst = Felt.empty then
-              (* we already wrote dst; generic step will see it assigned and recompute identically *)
-              ()
-          end
-        end
-      end
-    end;
-    if hints_done then incr hint_steps;
-    if not !fast then begin
+    if count = 0 then begin
       incr generic_steps;
-      vm.pc <- !pc;
-      vm.ap <- !ap;
-      vm.fp <- !fp;
-      vm.pc_seg <- !pc_seg;
-      vm.steps <- !steps;
-      if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
-      if (not hints_done) && !pc_seg = 0 && !pc < nh then begin
-        let hs = Array.unsafe_get hints !pc in
-        for i = 0 to Array.length hs - 1 do
-          (Array.unsafe_get hs i) vm
-        done;
-        if vm.relocating then raise Relocating
-      end;
       step vm;
-      (* flag hint pcs in the decoded cache *)
-      if !pc_seg = 0 && !pc < nh && Array.length (Array.unsafe_get hints !pc) <> 0 then begin
-        let p0 = !pc in
-        if p0 < Array.length vm.icache && vm.icache.(p0) <> 0 then vm.icache.(p0) <- vm.icache.(p0) lor hint_bit
-      end;
-      pc := vm.pc;
-      ap := vm.ap;
-      fp := vm.fp;
-      pc_seg := vm.pc_seg;
-      steps := vm.steps;
-      hi1 := vm.hi.(1)
+      if hinted && pc < Array.length vm.icache && vm.icache.(pc) <> 0 then
+        vm.icache.(pc) <- vm.icache.(pc) lor hint_bit
     end
-  done;
-  if !hi1 > vm.hi.(1) then vm.hi.(1) <- !hi1;
-  vm.pc <- !pc;
-  vm.ap <- !ap;
-  vm.fp <- !fp;
-  vm.pc_seg <- !pc_seg;
-  vm.steps <- !steps
+  done
 
 (* Generic loop used once relocation rules exist (rare: temporary segments).
    [skip_hints] is true when the hints of the current pc already ran. *)
