@@ -100,6 +100,11 @@ let () =
 
 let () = match Array.to_list Sys.argv with
   | [_; "--stream"; path] -> check_stream path
+  | [_; ("--ordered-replay" | "--unordered-replay" as mode); path] ->
+      let pie, source = Pie_file.read_deferred path in
+      let replay () = Pie_run.run ~source ~layout:"all_cairo" ~trace:false ~secure:true
+          ~allow_missing_builtins:false ~fill_holes:false pie in
+      if mode = "--ordered-replay" then ignore (replay ()) else assert (fails replay)
   | [_; "--invalid-stream"; path] ->
       let _,source = Pie_file.read_deferred path in
       (match Pie_file.iter_memory source ignore with

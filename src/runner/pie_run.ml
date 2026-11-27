@@ -59,12 +59,6 @@ let metadata_sizes pie =
   then pie_error "Builtin list mismatch in builtin_segments.";
   sizes
 
-let validity_checks pie =
-  let sizes = metadata_sizes pie in
-  let occupied = Array.make (Array.length sizes) 0 in
-  if not (address_bounds pie.memory sizes occupied Vm.max_off) then pie_error "Invalid address";
-  occupied
-
 (* ---- memory ---- *)
 
 external pie_felt : Bytes.t -> (int[@untagged]) -> Felt.pool -> (int[@untagged]) -> (int[@untagged])
@@ -90,30 +84,40 @@ let decode_value m pos =
 external load_run : bytes -> int -> Segment.seg -> Felt.pool -> int array -> unit
   = "cvm_pie_load_run" [@@noalloc]
 
-let load_memory vm pie =
-  let m = pie.memory in
+let load_memory vm pie sizes source =
+  let occupied = Array.make (Array.length sizes) 0 in
   let sorted = ref true and prev_seg = ref (-1) and prev_off = ref (-1) in
-  let state = [|0; !Felt.pool_n; 0|] in
-  while state.(0) < n_cells pie do
-    let i = state.(0) in
-    let pos = i * cell_bytes in
-    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le m pos)) in
-    if seg < !prev_seg || (seg = !prev_seg && off <= !prev_off) then sorted := false;
-    prev_seg := seg;
-    if vm.seg_flag.(seg) = k_plain && off >= vm.hi.(seg) then begin
-      state.(1) <- !Felt.pool_n;
-      state.(2) <- vm.hi.(seg);
-      load_run m seg vm.segs.(seg) Felt.pool state;
-      Felt.pool_n := state.(1);
-      vm.hi.(seg) <- state.(2)
-    end;
-    if state.(0) = i then begin
-      write vm seg off (decode_value m (pos + 8));
-      state.(0) <- i + 1;
-      prev_off := off
-    end else prev_off := state.(2) - 1
-  done;
-  !sorted
+  let count = ref 0 in
+  let load m =
+    if not (address_bounds m sizes occupied Vm.max_off) then pie_error "Invalid address";
+    let n = Bytes.length m / cell_bytes in
+    count := !count + n;
+    let state = [|0; !Felt.pool_n; 0|] in
+    while state.(0) < n do
+      let i = state.(0) in
+      let pos = i * cell_bytes in
+      let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le m pos)) in
+      if seg < !prev_seg || (seg = !prev_seg && off <= !prev_off) then sorted := false;
+      prev_seg := seg;
+      (* Preallocate only as far as the validated addresses in this chunk.
+         Empty tails in the segment metadata can be arbitrarily large. *)
+      if not (seg_ok vm seg) then pie_error "Invalid PIE memory segment";
+      if occupied.(seg) > Segment.slen vm.segs.(seg) then grow_seg vm seg (occupied.(seg)-1);
+      if vm.seg_flag.(seg) = k_plain && off >= vm.hi.(seg) then begin
+        state.(1) <- !Felt.pool_n;
+        state.(2) <- vm.hi.(seg);
+        load_run m seg vm.segs.(seg) Felt.pool state;
+        Felt.pool_n := state.(1);
+        vm.hi.(seg) <- state.(2)
+      end;
+      if state.(0) = i then begin
+        write vm seg off (decode_value m (pos + 8));
+        state.(0) <- i + 1;
+        prev_off := off
+      end else prev_off := state.(2) - 1
+    done in
+  (match source with None -> load pie.memory | Some src -> iter_memory src load);
+  !sorted, !count
 
 let count_cells vm =
   let n = ref 0 in
@@ -178,7 +182,7 @@ let pedersen_data base j =
 
 (* ---- CairoPie::check_pie_compatibility ---- *)
 
-let check_compatibility (r : Runner.t) pie ~sorted ~pages ~attributes =
+let check_compatibility (r : Runner.t) pie ~sorted ~cell_count ~pages ~attributes =
   let vm = r.vm in
   let builtin_of name = List.find_opt (fun b -> bname b.kind = name) vm.builtins in
   (* metadata: segments the runner would write into its own PIE *)
@@ -203,7 +207,7 @@ let check_compatibility (r : Runner.t) pie ~sorted ~pages ~attributes =
   then
     pie_error "Cairo PIE diff: metadata mismatch";
   (* write-once memory already holds every loaded cell with its PIE value *)
-  if (not sorted) || count_cells vm <> n_cells pie then pie_error "Cairo PIE diff: memory mismatch";
+  if (not sorted) || count_cells vm <> cell_count then pie_error "Cairo PIE diff: memory mismatch";
   let counters_ok =
     List.length vm.builtins = List.length pie.builtin_instance_counter
     && List.for_all
@@ -237,8 +241,8 @@ let stripped_program pie =
       references = [||]; identifiers = Hashtbl.create 1;
     }
 
-let run ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
-  let occupied = validity_checks pie in
+let run ?source ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
+  let sizes = metadata_sizes pie in
   let prog = stripped_program pie in
   let cfg = { Runner.layout; trace; secure_run = secure; allow_missing_builtins; entrypoint = "main" } in
   let r = Runner.initialize cfg prog in
@@ -265,16 +269,13 @@ let run ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_fi
   for _ = 1 to n_extra do
     ignore (add_segment vm)
   done;
-  (* Empty tails are metadata. Allocate only for the addresses to be loaded. *)
-  Array.iteri (fun seg size ->
-      if seg_ok vm seg && size > Segment.slen vm.segs.(seg) then grow_seg vm seg (size - 1)) occupied;
-  let sorted = load_memory vm pie in
+  let sorted,cell_count = load_memory vm pie sizes source in
   Resources.with_preverified_pedersen vm (fun () ->
       Cpu.run ~stop:(r.end_seg, 0) ~steps:pie.n_steps vm r.hints);
   if not (vm.pc_seg = r.end_seg && vm.pc = 0) then
     fail "Could not reach the end of the program. RunResources has no remaining steps.";
   Finalize.end_run ~fill_holes r ~secure ~allow_missing:allow_missing_builtins;
-  if secure then check_compatibility r pie ~sorted ~pages:!pages ~attributes:!attributes;
+  if secure then check_compatibility r pie ~sorted ~cell_count ~pages:!pages ~attributes:!attributes;
   { runner = r; output_pages = !pages; output_attributes = !attributes; pedersen_extra = !pedersen_extra }
 
 let write_output ~secure ~merge_extra_segments result path =
@@ -284,8 +285,9 @@ let write_output ~secure ~merge_extra_segments result path =
 
 let replay_file ?(layout = "all_cairo") ?trace ?memory ?output path =
   Felt.with_temporary_slots (fun () ->
-    let result = run ~layout ~trace:(Option.is_some trace || Option.is_some output)
-        ~secure:true ~allow_missing_builtins:false ~fill_holes:false (Pie_file.read path) in
+    let pie,source = read_deferred path in
+    let result = run ~source ~layout ~trace:(Option.is_some trace || Option.is_some output)
+        ~secure:true ~allow_missing_builtins:false ~fill_holes:false pie in
     Artifacts.with_artifacts result.runner ~trace ~memory (fun () ->
         Option.iter (write_output ~secure:true ~merge_extra_segments:false result) output))
 

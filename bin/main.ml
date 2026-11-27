@@ -122,10 +122,10 @@ let () =
     let pie_input = ref None and da_words = ref None in
     let r, t1, t2 = try
       if !from_pie then begin
-        let pie = Pie_file.read file in
+        let pie,source = Pie_file.read_deferred file in
         let t1 = Unix.gettimeofday () in
         let res =
-          Pie_run.run ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
+          Pie_run.run ~source ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
             ~allow_missing_builtins:cfg.allow_missing_builtins ~fill_holes:(Option.value !fill_holes ~default:false) pie
         in
         pie_input := Some res;

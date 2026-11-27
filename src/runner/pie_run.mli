@@ -16,6 +16,7 @@ type result = {
 }
 
 val run :
+  ?source:Pie_file.memory_source ->
   layout:string ->
   trace:bool ->
   secure:bool ->
