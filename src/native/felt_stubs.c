@@ -202,19 +202,21 @@ static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
 /* Inverse of a canonical value via GMP's mpz_invert (Lehmer/HGCD; ~5x faster
    than Fermat at 256 bits).  Variable time is fine: nothing here is secret. */
 #include <gmp.h>
-static void canon_inv(u64 r[4], const u64 a[4]) {
-  static mpz_t P_z, R_z;
+/* r = a^-1 mod m for 256-bit a and m > 1; 0 when a is not invertible. */
+static int invert_mod(u64 r[4], const u64 a[4], const u64 m[4]) {
+  static mpz_t R_z;
   static int init = 0;
-  if (!init) {
-    mpz_init(P_z); mpz_import(P_z, 4, -1, 8, 0, 0, P);
-    mpz_init2(R_z, 320);
-    init = 1;
-  }
-  mpz_t A;
+  if (!init) { mpz_init2(R_z, 320); init = 1; }
+  mpz_t A, M;
   mpz_roinit_n(A, (const mp_limb_t *)a, 4);
-  if (!mpz_invert(R_z, A, P_z)) { r[0] = r[1] = r[2] = r[3] = 0; return; }
+  mpz_roinit_n(M, (const mp_limb_t *)m, 4);
+  if (!mpz_invert(R_z, A, M)) return 0;
   size_t n = mpz_size(R_z);
   for (int i = 0; i < 4; i++) r[i] = (size_t)i < n ? mpz_getlimbn(R_z, i) : 0;
+  return 1;
+}
+static void canon_inv(u64 r[4], const u64 a[4]) {
+  if (!invert_mod(r, a, P)) r[0] = r[1] = r[2] = r[3] = 0;
 }
 
 /* Montgomery-domain inverse: (aR)^-1 R = from(aR)^-1 * R^2 * R^-1 ... computed as to_mont(inv(from_mont(x))). */
@@ -454,6 +456,108 @@ intnat cvm_cmp(value pool, intnat a, intnat b) {
   return 0;
 }
 value cvm_cmp_byte(value pool, value a, value b) { return Val_long(cvm_cmp(pool, Long_val(a), Long_val(b))); }
+
+/* ---------- integers modulo the secp/ed25519 hint primes ----------
+   Secp_field values and moduli are 32-byte little-endian buffers: values in
+   [0, 2^256), moduli in (1, 2^256). GMP's mpn layer works on stack limbs. */
+#define L(x) ((mp_limb_t *)(x))
+#define BUF(b) ((u64 *)Bytes_val(b))
+
+static mp_size_t used(const u64 *x, mp_size_t n) {
+  while (n > 0 && !x[n - 1]) n--;
+  return n;
+}
+
+/* q, r = x divmod m for x >= 0 of n <= 8 limbs (q has 8 limbs). */
+static void divrem(u64 q[8], u64 r[4], const u64 *x, mp_size_t n, const u64 m[4]) {
+  mp_size_t mn = used(m, 4);
+  n = used(x, n);
+  memset(q, 0, 64);
+  memset(r, 0, 32);
+  if (n < mn) memcpy(r, x, n * 8);
+  else mpn_tdiv_qr(L(q), L(r), 0, L(x), n, L(m), mn);
+}
+
+/* r = floor residue of (neg ? -x : x) */
+static void floor_mod(u64 r[4], const u64 *x, mp_size_t n, int neg, const u64 m[4]) {
+  u64 q[8];
+  divrem(q, r, x, n, m);
+  if (neg && !is_zero(r)) mpn_sub_n(L(r), L(m), L(r), 4);
+}
+
+/* op: 0 a+b, 1 a-b, 2 a*b, 3 a/b (returns 0 when b is not invertible) */
+intnat cvm_sf_op(value vm, intnat op, value va, value vb, value vr) {
+  const u64 *m = BUF(vm), *a = BUF(va), *b = BUF(vb);
+  u64 t[8] = {0}, inv[4];
+  int neg = 0;
+  switch (op) {
+  case 0: t[4] = mpn_add_n(L(t), L(a), L(b), 4); break;
+  case 1:
+    neg = mpn_cmp(L(a), L(b), 4) < 0;
+    mpn_sub_n(L(t), L(neg ? b : a), L(neg ? a : b), 4);
+    break;
+  case 2: mpn_mul_n(L(t), L(a), L(b), 4); break;
+  default:
+    if (!invert_mod(inv, b, m)) return 0;
+    mpn_mul_n(L(t), L(a), L(inv), 4);
+  }
+  floor_mod(BUF(vr), t, 8, neg, m);
+  return 1;
+}
+value cvm_sf_op_byte(value m, value op, value a, value b, value r) {
+  return Val_long(cvm_sf_op(m, Long_val(op), a, b, r));
+}
+
+/* BigInt3 pack d0 + d1 2^86 + d2 2^172 of signed felt limbs (cairo-vm's
+   signed_felt), divided by m: [vr] gets the floor remainder. Returns the
+   quotient's code when the division is exact and |q| < p, else 0 (empty). */
+intnat cvm_sf_pack(value pool, intnat d0, intnat d1, intnat d2, value vm, value vr, intnat dst) {
+  const intnat d[3] = {d0, d1, d2};
+  const u64 *m = BUF(vm);
+  u64 acc[8] = {0}, q[8], *r = BUF(vr);
+  for (int i = 0; i < 3; i++) {
+    u64 x[4], n[4], t[8] = {0};
+    load(pool, d[i], x);
+    sub4(n, P, x);
+    int neg = mpn_cmp(L(n), L(x), 4) < 0; /* x > (p-1)/2 */
+    const u64 *mag = neg ? n : x;
+    int w = 86 * i / 64, s = 86 * i % 64;
+    for (int k = 0; k < 4; k++) {
+      t[w + k] |= mag[k] << s;
+      if (s) t[w + k + 1] |= mag[k] >> (64 - s);
+    }
+    (neg ? mpn_sub_n : mpn_add_n)(L(acc), L(acc), L(t), 8);
+  }
+  int neg = acc[7] >> 63;
+  if (neg) mpn_neg(L(acc), L(acc), 8);
+  divrem(q, r, acc, 8, m);
+  int exact = is_zero(r);
+  if (neg && !exact) mpn_sub_n(L(r), L(m), L(r), 4);
+  if (!exact || used(q, 8) > 4 || geq_p(q)) return 0;
+  if (neg && !is_zero(q)) sub4(q, P, q);
+  return store(pool, q, dst);
+}
+value cvm_sf_pack_byte(value *argv, int argc) {
+  (void)argc;
+  return Val_long(cvm_sf_pack(argv[0], Long_val(argv[1]), Long_val(argv[2]), Long_val(argv[3]), argv[4], argv[5],
+                              Long_val(argv[6])));
+}
+
+/* The 86-bit limb i (0..2) of a value, as a felt code. */
+intnat cvm_sf_limb86(value pool, value va, intnat i, intnat dst) {
+  const u64 *a = BUF(va);
+  int w = 86 * i / 64, s = 86 * i % 64;
+  u64 x[4] = {0};
+  for (int k = 0; k < 2 && w + k < 4; k++) {
+    x[k] = a[w + k] >> s;
+    if (s && w + k + 1 < 4) x[k] |= a[w + k + 1] << (64 - s);
+  }
+  x[1] &= ((u64)1 << 22) - 1;
+  return store(pool, x, dst);
+}
+value cvm_sf_limb86_byte(value pool, value a, value i, value dst) {
+  return Val_long(cvm_sf_limb86(pool, a, Long_val(i), Long_val(dst)));
+}
 
 /* ---------- Stark curve (alpha = 1) in Montgomery Jacobian coordinates ---------- */
 

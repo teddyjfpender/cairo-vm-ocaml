@@ -42,6 +42,7 @@ type dict_tracker = {
 
 type dyn =
   | Int of Z.t
+  | Field of Secp_field.t
   | Value of Felt.t
   | Ints of int list
   | Values of Felt.t list
@@ -74,7 +75,15 @@ let var_opt s name = Str_tbl.find_opt (top s) name
 let set s name v = Str_tbl.replace (top s) name v
 let del s name = Str_tbl.remove (top s) name
 
-let var_z s name = match var s name with Int z -> z | Value v when Felt.is_felt v -> Felt.to_z v | _ -> fail "Variable %s is not an integer" name
+(* An integer variable, converted to Z only where needed. *)
+let var_num s name =
+  match var s name with
+  | (Int _ | Field _) as d -> d
+  | Value v as d when Felt.is_felt v -> d
+  | _ -> fail "Variable %s is not an integer" name
+
+let num_z = function Int z -> z | Field v -> Secp_field.to_z v | Value v -> Felt.to_z v | _ -> assert false
+let var_z s name = num_z (var_num s name)
 
 (* ---- canonical keys (big felts interned so keys are plain ints) ---- *)
 
