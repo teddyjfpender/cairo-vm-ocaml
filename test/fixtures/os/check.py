@@ -16,7 +16,8 @@ def main():
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
     for name in ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
-                 "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512", "storage-2048"):
+                 "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
+                 "storage-2048", "storage-4096", "syscalls-scaled-32"):
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"
@@ -26,7 +27,7 @@ def main():
             pie = Path(directory) / f"{name}.zip"
             command = [args.binary.resolve(), args.program, "--os_hints", source,
                             "--layout", "all_cairo", "--cairo_pie_output", pie]
-            if name == "storage-2048":
+            if name in ("storage-2048", "storage-4096", "syscalls-scaled-32"):
                 command.append("--merge_extra_segments")
             subprocess.run(command, check=True)
             with zipfile.ZipFile(pie) as z:
