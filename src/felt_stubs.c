@@ -670,20 +670,15 @@ static int aff_on_curve(const u64 x[4], const u64 y[4]) { /* Montgomery inputs *
   return eq4(lhs, rhs);
 }
 
-static void jac_add(jac *r, const jac *p, const jac *q) {
-  if (is_zero(p->z)) { *r = *q; return; }
-  if (is_zero(q->z)) { *r = *p; return; }
-  u64 z1z1[4], z2z2[4], u1[4], u2[4], s1[4], s2[4], h[4], i[4], j[4], rr[4], v[4], t[4];
+/* Called only after the EC builtin's mandatory unequal-x check. */
+static void ec_add(jac *r, const jac *p, const jac *q,
+                   const u64 z1z1[4], const u64 z2z2[4],
+                   const u64 u1[4], const u64 u2[4]) {
+  u64 s1[4], s2[4], h[4], i[4], j[4], rr[4], v[4], t[4];
   jac o;
-  mont_sqr(z1z1, p->z); mont_sqr(z2z2, q->z);
-  mont_mul(u1, p->x, z2z2); mont_mul(u2, q->x, z1z1);
   mont_mul(s1, p->y, q->z); mont_mul(s1, s1, z2z2);
   mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
   msub(h, u2, u1); msub(rr, s2, s1);
-  if (is_zero(h)) {
-    if (is_zero(rr)) { jac_double(r, p); return; }
-    memset(r, 0, sizeof *r); return;
-  }
   madd(i, h, h); mont_sqr(i, i);
   mont_mul(j, h, i);
   madd(rr, rr, rr);
@@ -701,21 +696,41 @@ intnat cvm_ec_op(value pool, intnat i0, intnat o0) {
   to_mont(px, SLOT(pool, i0)); to_mont(py, SLOT(pool, i0 + 1));
   to_mont(qx, SLOT(pool, i0 + 2)); to_mont(qy, SLOT(pool, i0 + 3));
   memcpy(m, SLOT(pool, i0 + 4), 32);
-  if (!aff_on_curve(px, py) || !aff_on_curve(qx, qy)) return 2;
-  jac ps, dp;
+  /* Powers are deterministic functions of a validated Q. Keep one ladder
+     per native thread; every call starts a fresh accumulator for its P. */
+  static _Thread_local struct {
+    jac power[256];
+    u64 z_squared[256][4];
+    int count;
+  } ladder;
+  if (!aff_on_curve(px, py)) return 2;
+  if (!ladder.count || !eq4(qx, ladder.power[0].x) || !eq4(qy, ladder.power[0].y)) {
+    if (!aff_on_curve(qx, qy)) return 2;
+    memcpy(ladder.power[0].x, qx, 32); memcpy(ladder.power[0].y, qy, 32);
+    memcpy(ladder.power[0].z, ONE_M, 32); memcpy(ladder.z_squared[0], ONE_M, 32);
+    ladder.count = 1;
+  }
+  jac ps;
+  u64 ps_z_squared[4];
   memcpy(ps.x, px, 32); memcpy(ps.y, py, 32); memcpy(ps.z, ONE_M, 32);
-  memcpy(dp.x, qx, 32); memcpy(dp.y, qy, 32); memcpy(dp.z, ONE_M, 32);
+  memcpy(ps_z_squared, ONE_M, 32);
   int bits = 0;
   for (int k = 3; k >= 0; k--) if (m[k]) { bits = k * 64 + 64 - __builtin_clzll(m[k]); break; }
-  if (bits > 256) bits = 256;
   for (int b = 0; b < bits; b++) {
-    /* projective x comparison as in cairo-vm (Jacobian: X1 Z2^2 == X2 Z1^2) */
-    u64 a1[4], a2[4], z[4];
-    mont_sqr(z, dp.z); mont_mul(a1, ps.x, z);
-    mont_sqr(z, ps.z); mont_mul(a2, dp.x, z);
-    if (eq4(a1, a2)) return 1;
-    if ((m[b >> 6] >> (b & 63)) & 1) jac_add(&ps, &ps, &dp);
-    jac_double(&dp, &dp);
+    if (b == ladder.count) {
+      jac_double(&ladder.power[b], &ladder.power[b-1]);
+      mont_sqr(ladder.z_squared[b], ladder.power[b].z);
+      ladder.count++;
+    }
+    const jac *q = &ladder.power[b];
+    u64 u1[4], u2[4];
+    mont_mul(u1, ps.x, ladder.z_squared[b]);
+    mont_mul(u2, q->x, ps_z_squared);
+    if (eq4(u1, u2)) return 1;
+    if ((m[b >> 6] >> (b & 63)) & 1) {
+      ec_add(&ps, &ps, q, ps_z_squared, ladder.z_squared[b], u1, u2);
+      mont_sqr(ps_z_squared, ps.z);
+    }
   }
   if (is_zero(ps.z)) return 3;
   aff r;
