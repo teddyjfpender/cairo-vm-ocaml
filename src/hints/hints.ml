@@ -241,11 +241,19 @@ let () =
       let q, r = Z.ediv_rem value div in
       set_val vm c "q" (zf q);
       set_val vm c "r" (zf r));
-  reg H.memcpy_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "len")) ]);
-  reg H.memcpy_continue_copying (fun c vm ->
-      let n = Z.pred (var_z c.scopes "n") in
-      set c.scopes "n" (Int n);
-      set_val vm c "continue_copying" (of_bool (Z.gt n Z.zero)));
+  (* memcpy and memset loops: n -= 1; ids.<flag> = 1 if n > 0 else 0, on
+     felts as in cairo-vm (felts are never negative). *)
+  let step_loop flag c vm =
+    let n = cell c.scopes "n" in
+    match !n with
+    | Value v when Felt.is_felt v ->
+        let v = Felt.sub v Felt.one in
+        n := Value v;
+        set_val vm c flag (of_bool (not (Felt.equal v Felt.zero)))
+    | _ -> fail "Variable n is not an integer"
+  in
+  reg H.memcpy_enter_scope (fun c vm -> enter c.scopes [ ("n", Value (get_felt vm c "len")) ]);
+  reg H.memcpy_continue_copying (fun c vm -> step_loop "continue_copying" c vm);
   (* assert_lt_felt *)
   reg H.assert_lt_felt (fun c vm ->
       let a = felt_z vm c "a" and b = felt_z vm c "b" in
@@ -255,11 +263,8 @@ let () =
       write_ap vm (of_bool (if Felt.is_small a then a < Felt.empty else Felt.bits a > 128)));
   reg H.is_nn_out_of_range (fun c vm ->
       write_ap vm (of_bool (Felt.bits (Felt.sub (Felt.neg (get_felt vm c "a")) Felt.one) > 128)));
-  reg H.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Int (felt_z vm c "n")) ]);
-  reg H.memset_continue_loop (fun c vm ->
-      let n = Z.pred (var_z c.scopes "n") in
-      set c.scopes "n" (Int n);
-      set_val vm c "continue_loop" (of_bool (Z.gt n Z.zero)));
+  reg H.memset_enter_scope (fun c vm -> enter c.scopes [ ("n", Value (get_felt vm c "n")) ]);
+  reg H.memset_continue_loop (fun c vm -> step_loop "continue_loop" c vm);
   (* uint256_add *)
   reg H.uint256_add (fun c vm ->
       let shift = Option.value (const_opt c "SHIFT") ~default:rc_bound in
@@ -417,14 +422,16 @@ let () =
       set c.scopes "key" (Value first);
       set_val vm c "first_key" first);
   let pop_value name scopes =
-    match var scopes name with
-    | Values (x :: xs) -> set scopes name (Values xs); x
+    let r = cell scopes name in
+    match !r with
+    | Values (x :: xs) -> r := Values xs; x
     | Values [] -> fail "pop from empty list"
     | _ -> fail "%s is not a list of values" name
   in
   let pop_index name scopes =
-    match var scopes name with
-    | Ints (x :: xs) -> set scopes name (Ints xs); x
+    let r = cell scopes name in
+    match !r with
+    | Ints (x :: xs) -> r := Ints xs; x
     | Ints [] -> fail "pop from empty list"
     | _ -> fail "%s is not a list of indices" name
   in

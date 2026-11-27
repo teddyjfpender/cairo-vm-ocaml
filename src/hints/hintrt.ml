@@ -48,8 +48,9 @@ type dyn =
   | Nothing
 
 (* Hint bodies pass literal names, so a physical match almost always settles
-   a lookup in these short association lists before any string comparison. *)
-let named name l = match List.assq_opt name l with None -> List.assoc_opt name l | hit -> hit
+   a lookup in these short association lists before any string comparison.
+   Raises [Not_found]; a hit allocates nothing. *)
+let named name l = try List.assq name l with Not_found -> List.assoc name l
 
 (* A scope holds a handful of variables. *)
 type frame = { mutable vars : (string * dyn ref) list }
@@ -60,7 +61,7 @@ let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
 let assign f name v =
-  match named name f.vars with Some r -> r := v | None -> f.vars <- (name, ref v) :: f.vars
+  match named name f.vars with r -> r := v | exception Not_found -> f.vars <- (name, ref v) :: f.vars
 
 let enter s vars =
   let f = { vars = [] } in
@@ -73,8 +74,13 @@ let exit_scope s =
   | _ :: rest -> s.stack <- rest
   | [] -> assert false
 
-let var_opt s name = match named name (top s).vars with Some r -> Some !r | None -> None
-let var s name = match var_opt s name with Some v -> v | None -> fail "Variable %s not present in current execution scope" name
+let var_opt s name = match named name (top s).vars with r -> Some !r | exception Not_found -> None
+
+(* The mutable cell of a variable, for hints that update it in place. *)
+let cell s name =
+  try named name (top s).vars with Not_found -> fail "Variable %s not present in current execution scope" name
+
+let var s name = !(cell s name)
 let set s name v = assign (top s) name v
 let del s name = let f = top s in f.vars <- List.filter (fun (n, _) -> not (String.equal n name)) f.vars
 
@@ -201,8 +207,8 @@ let rec compile_expr ctx (r : P.reference) expr =
 
 let binding ctx name =
   match named name ctx.bindings with
-  | Some plan -> plan
-  | None ->
+  | plan -> plan
+  | exception Not_found ->
       let r = find_ref ctx name in
       let plan = match r.r_expr with
         | P.Deref e ->
@@ -356,8 +362,8 @@ let resolve_constant ctx name =
    on every iteration. Keep lookup lazy for hints that never execute. *)
 let const_opt ctx name =
   match named name ctx.constants with
-  | Some cached -> cached
-  | None ->
+  | cached -> cached
+  | exception Not_found ->
       let value = resolve_constant ctx name in
       ctx.constants <- (name, value) :: ctx.constants;
       value
