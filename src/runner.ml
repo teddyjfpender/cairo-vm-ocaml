@@ -228,14 +228,25 @@ let write_memory r path =
   let sizes = Array.init vm.nsegs (used_size vm) in
   c_write_memory path vm.segs sizes (relocation_table vm) vm.nsegs !Felt.pool
 
-let output_lines r =
-  let vm = r.vm in
-  match List.find_opt (fun b -> b.kind = Output) vm.builtins with
-  | None -> []
+let output_segment r =
+  List.find_opt (fun b -> b.kind = Output) r.vm.builtins
+
+let output_line vm seg i =
+  let v = read vm seg i in
+  if v = 0 then "<missing>"
+  else if Felt.is_small v then string_of_int (Felt.small_val v)
+  else if Felt.is_reloc v then Printf.sprintf "%d:%d" (Felt.rseg v) (Felt.roff v)
+  else Z.to_string (Felt.to_signed_z v)
+
+let iter_output_lines r emit =
+  match output_segment r with
+  | None -> ()
   | Some b ->
-      let n = used_size vm b.base in
-      List.init n (fun i ->
-          let v = read vm b.base i in
-          if v = 0 then "<missing>"
-          else if Felt.is_reloc v then Printf.sprintf "%d:%d" (Felt.rseg v) (Felt.roff v)
-          else Z.to_string (Felt.to_signed_z v))
+      for i = 0 to used_size r.vm b.base - 1 do
+        emit (output_line r.vm b.base i)
+      done
+
+let output_lines r =
+  match output_segment r with
+  | None -> []
+  | Some b -> List.init (used_size r.vm b.base) (output_line r.vm b.base)

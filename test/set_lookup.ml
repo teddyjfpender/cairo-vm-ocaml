@@ -41,3 +41,31 @@ let () =
   for i = 0 to 99 do Vm.write other 0 i (small i) done;
   assert (find other base 100 [small 97] = 97);
   assert (find other base 100 [big ()] = -1)
+
+let () =
+  let vm = Vm.create ~trace:false in
+  let seg = Vm.add_segment vm and cache = ref None in
+  let base = Felt.reloc seg 0 and tag = Felt.small 7 in
+  let big () = Felt.of_z (Z.shift_left Z.one 201) in
+  let row i a b =
+    Vm.write vm seg (3*i) tag;
+    Vm.write vm seg (3*i+1) a;
+    Vm.write vm seg (3*i+2) b in
+  for i = 0 to 63 do row i (Felt.small i) base done;
+  let query n a b = Hints.find_set_element cache vm base (3*n) [|tag;a;b|] in
+  for _ = 1 to 3 do assert (query 64 (Felt.small 99) base = -1) done;
+  assert ((Option.get !cache).composite <> None);
+  assert (query 64 (Felt.small 63) base = 63);
+  assert (query 40 (Felt.small 63) base = -1);
+  row 64 (big ()) base; row 65 (big ()) base;
+  assert (query 66 (big ()) base = 64);
+  (* Third field is missing. A mismatch in the second field skips it. *)
+  Vm.write vm seg 198 tag; Vm.write vm seg 199 Felt.zero;
+  row 67 Felt.one base;
+  assert (query 68 Felt.one base = 1);
+  assert (query 68 (Felt.small 77) base = -1);
+  (match query 68 Felt.zero (Felt.small 4) with
+  | exception Vm.Vm_error msg -> assert (msg = "Unknown memory cell 0:200")
+  | _ -> failwith "queried missing suffix was skipped");
+  Vm.write vm seg 200 (Felt.small 4);
+  assert (query 68 Felt.zero (Felt.small 4) = 66)

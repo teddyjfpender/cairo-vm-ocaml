@@ -323,18 +323,27 @@ let deduce_builtin vm (b : builtin) seg off =
               cache_set b off r;
               r
           | Bitwise ->
-              let check v k =
-                if Felt.bits v > 251 then
-                  fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg (inst + k)
-              in
-              check inp.(0) 0;
-              check inp.(1) 1;
-              for k = 2 to 4 do
-                reserve 1;
-                let r = c_bitwise !pool (k - 2) inp.(0) inp.(1) !pool_n in
-                commit r;
-                cache_set b (inst + k) r
-              done;
+              let x = inp.(0) and y = inp.(1) in
+              if both_small x y && x >= 0 && y >= 0 then begin
+                (* The low tag is 01 for both inputs. AND and OR retain it;
+                   XOR needs the tag restored. All three results fit. *)
+                cache_set b (inst + 2) (x land y);
+                cache_set b (inst + 3) ((x lxor y) lor 1);
+                cache_set b (inst + 4) (x lor y)
+              end else begin
+                let check v k =
+                  if Felt.bits v > 251 then
+                    fail "Bitwise builtin: integer at %d:%d is bigger than 2^251" seg (inst + k)
+                in
+                check x 0;
+                check y 1;
+                for k = 2 to 4 do
+                  reserve 1;
+                  let r = c_bitwise !pool (k - 2) x y !pool_n in
+                  commit r;
+                  cache_set b (inst + k) r
+                done
+              end;
               cache_get b off
           | Poseidon ->
               reserve 6;

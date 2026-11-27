@@ -1,0 +1,3 @@
+(test
+ (name canonical_product)
+ (libraries cairovm))

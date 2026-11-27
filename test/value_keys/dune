@@ -1,0 +1,3 @@
+(test
+ (name value_keys)
+ (libraries cairovm))
