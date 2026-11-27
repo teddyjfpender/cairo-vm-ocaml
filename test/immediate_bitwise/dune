@@ -1,0 +1,3 @@
+(test
+ (name immediate_bitwise)
+ (libraries cairovm))
