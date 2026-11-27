@@ -121,6 +121,28 @@ value batch(value state, value cache, value segs, value flags, value highs,
       if (next_ap > high) high = next_ap;
       goto complete;
     }
+    /* A compiler-generated pointer increment or counter update typically
+       writes a fresh cell at ap. Keep the common small immediate entirely in
+       registers; preassigned destinations and wider felts need deduction. */
+    if ((shape == 0xe14 || shape == 0xe16) && (uint16_t)d == 0x8000) {
+      intnat from = (shape == 0xe14 ? ap : fp) + (int)((d >> 16) & 65535) - 32768;
+      if (!fits(ap, length) || !fits(from, length) || !fits(pc+1, program_length)) break;
+      intnat a = stack[from], imm = program[pc+1], out;
+      if (stack[ap] || (imm & 3) != 1) goto general;
+      if ((a & 3) == 1) {
+        intnat n = (a >> 2) + (imm >> 2);
+        if (n <= -SMALL_BOUND || n >= SMALL_BOUND) goto general;
+        out = small_code(n);
+      } else if ((a & 3) == 2 && !temporary(a)) {
+        intnat off = offset(a) + (imm >> 2);
+        if ((uintnat)off > OFFSET_MASK) break;
+        out = (a & ~((intnat)OFFSET_MASK << 2)) | (off << 2);
+      } else goto general;
+      stack[ap] = out;
+      next_ap = ap+1; next_pc = pc+2;
+      if (next_ap > high) high = next_ap;
+      goto complete;
+    }
     if (shape == 0x84b) {
       if (fp < 2 || fp > length) break;
       intnat frame = stack[fp-2], ret = stack[fp-1];
