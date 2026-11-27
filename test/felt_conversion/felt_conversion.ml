@@ -43,3 +43,13 @@ let () =
   List.iter (fun i ->
       assert (Z.equal (Felt.to_z (Felt.of_int i)) (Z.erem (Z.of_int i) Felt.p)))
     [min_int; min_int/2; -Felt.small_bound; Felt.small_bound; max_int/2; max_int]
+
+let () =
+  let p = Felt.p and state = Random.State.make [|137; 192|] in
+  for i = 0 to 99 do
+    let x = if i < 2 then Z.of_int i else
+      Z.erem (Z.of_bits (String.init 32 (fun _ -> Char.chr (Random.State.int state 256)))) p in
+    let square = Z.erem (Z.mul x x) p in
+    assert (Stark_sqrt.sqrt square = Some (Z.min x (Z.sub p x)));
+    if Z.sign x <> 0 then assert (Stark_sqrt.sqrt (Z.mul (Z.of_int 3) square) = None)
+  done

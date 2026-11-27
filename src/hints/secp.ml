@@ -149,13 +149,7 @@ let sqrt_prime_power a p =
   end
 
 let felt_max_halved = Z.shift_right (Z.pred stark_p) 1
-
-(* Felt252::sqrt: the smaller root, or None for a non-residue *)
-let felt_sqrt a =
-  let a = Z.erem a stark_p in
-  if Z.sign a = 0 then Some Z.zero
-  else if not (Z.equal (Z.powm a felt_max_halved stark_p) Z.one) then None
-  else Some (tonelli_shanks a stark_p)
+let felt_sqrt = Stark_sqrt.sqrt
 
 (* ---- memory access in cairo-vm's style ---- *)
 
