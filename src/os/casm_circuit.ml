@@ -28,6 +28,8 @@ let compile ~arg ~ptr =
     let words = read_range vm mul 4 and values = mem_at vm mul 4 in
     let mo = mem_at vm mul 5 in
     let ao = if na = 0 then mo else mem_at vm add 5 in
+    if not (Felt.is_reloc values && Felt.is_reloc mo && Felt.is_reloc ao) then
+      fail "Invalid circuit values or offsets pointer";
     let gate offsets idx =
       let address i = Vm.reloc_add_felt values (mem_at vm offsets (3*idx+i)) in
       address 0, address 1, address 2 in

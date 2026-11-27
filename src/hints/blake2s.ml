@@ -9,51 +9,14 @@ module C = Hint_codes
 (* Blake2s uses SHA-256's initial hash value. *)
 let iv = Sha256.iv
 
-let sigma =
-  [|
-    [| 0; 1; 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 15 |];
-    [| 14; 10; 4; 8; 9; 15; 13; 6; 1; 12; 0; 2; 11; 7; 5; 3 |];
-    [| 11; 8; 12; 0; 5; 2; 15; 13; 10; 14; 3; 6; 7; 1; 9; 4 |];
-    [| 7; 9; 3; 1; 13; 12; 11; 14; 2; 6; 5; 10; 4; 0; 15; 8 |];
-    [| 9; 0; 5; 7; 2; 4; 10; 15; 14; 1; 11; 12; 6; 8; 3; 13 |];
-    [| 2; 12; 6; 10; 0; 11; 8; 3; 4; 13; 7; 5; 15; 14; 1; 9 |];
-    [| 12; 5; 1; 15; 14; 13; 4; 10; 0; 7; 6; 3; 9; 2; 8; 11 |];
-    [| 13; 11; 7; 14; 12; 1; 3; 9; 5; 0; 15; 4; 8; 6; 2; 10 |];
-    [| 6; 15; 14; 9; 11; 3; 0; 8; 12; 2; 13; 7; 1; 4; 10; 5 |];
-    [| 10; 2; 8; 4; 7; 6; 1; 5; 15; 11; 9; 14; 3; 12; 13; 0 |];
-  |]
+external compress_into : int array -> int array -> int -> int -> int -> int -> unit
+  = "cvm_blake2s_byte" "cvm_blake2s" [@@noalloc]
 
-let compress (h : int array) (msg : int array) t0 t1 f0 f1 =
-  let s = Array.make 16 0 in
-  Array.blit h 0 s 0 8;
-  Array.blit iv 0 s 8 4;
-  s.(12) <- (iv.(4) lxor t0) land m32;
-  s.(13) <- (iv.(5) lxor t1) land m32;
-  s.(14) <- (iv.(6) lxor f0) land m32;
-  s.(15) <- (iv.(7) lxor f1) land m32;
-  let mix a b c d m0 m1 =
-    s.(a) <- (s.(a) + s.(b) + m0) land m32;
-    s.(d) <- rotr (s.(d) lxor s.(a)) 16;
-    s.(c) <- (s.(c) + s.(d)) land m32;
-    s.(b) <- rotr (s.(b) lxor s.(c)) 12;
-    s.(a) <- (s.(a) + s.(b) + m1) land m32;
-    s.(d) <- rotr (s.(d) lxor s.(a)) 8;
-    s.(c) <- (s.(c) + s.(d)) land m32;
-    s.(b) <- rotr (s.(b) lxor s.(c)) 7
-  in
-  for r = 0 to 9 do
-    let sg = sigma.(r) in
-    let m i = msg.(sg.(i)) in
-    mix 0 4 8 12 (m 0) (m 1);
-    mix 1 5 9 13 (m 2) (m 3);
-    mix 2 6 10 14 (m 4) (m 5);
-    mix 3 7 11 15 (m 6) (m 7);
-    mix 0 5 10 15 (m 8) (m 9);
-    mix 1 6 11 12 (m 10) (m 11);
-    mix 2 7 8 13 (m 12) (m 13);
-    mix 3 4 9 14 (m 14) (m 15)
-  done;
-  Array.init 8 (fun i -> h.(i) lxor s.(i) lxor s.(8 + i))
+let compress h msg t0 t1 f0 f1 =
+  if Array.length h <> 8 || Array.length msg < 16 then fail "Invalid BLAKE2s block";
+  let state = Array.copy h in
+  compress_into state msg t0 t1 f0 f1;
+  state
 
 let to_u32 v =
   let n = Felt.to_nat v in

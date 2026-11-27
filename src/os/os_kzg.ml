@@ -14,14 +14,16 @@ let twice x = add x x
 let half = Z.shift_right p 1
 let sqrt_exp = Z.shift_right (Z.succ p) 2
 
-let points = Array.init 4096 (fun i -> lazy (
+let setup_size = 4096
+
+let points = lazy (Array.init setup_size (fun i -> lazy (
     let data = String.sub Kzg_setup.points (48*i) 48 in
     let encoded = Hintrt.z_of_be data in
     let x = Z.extract encoded 0 381 in
     let rhs = add (mul x (square x)) (Z.of_int 4) in
     let y = Z.powm rhs sqrt_exp p in
     if not (Z.equal (square y) rhs) then fail "Invalid BLS12-381 setup point";
-    x, if Z.gt y half = Z.testbit encoded 381 then y else Z.sub p y))
+    x, if Z.gt y half = Z.testbit encoded 381 then y else Z.sub p y)))
 
 type point = Infinity | Jacobian of Z.t * Z.t * Z.t
 
@@ -67,8 +69,9 @@ let encode = function
 
 let commit coefficients =
   let n = Array.length coefficients in
-  if n > Array.length points then fail "Too many DA coefficients";
+  if n > setup_size then fail "Too many DA coefficients";
   let width = if n < 32 then 3 else if n < 192 then 5 else if n < 640 then 7 else 9 in
+  let points = Lazy.force points in
   let buckets = Array.make (1 lsl width) Infinity in
   let bits = Array.fold_left (fun bits z -> max bits (Z.numbits z)) 0 coefficients in
   let acc = ref Infinity in
@@ -92,7 +95,7 @@ let register reg =
   reg "GuessKzgCommitmentsAndStoreDaSegment" (fun c vm ->
       let data = get_ptr vm c "state_updates_start" and size = Felt.to_nat (get_felt vm c "da_size") in
       let blob = Z.to_int (const_z c "BLOB_LENGTH") in
-      if blob <= 0 || blob > Array.length points then fail "Invalid KZG blob length";
+      if blob <= 0 || blob > setup_size then fail "Invalid KZG blob length";
       let count = (size + blob - 1) / blob in
       let commitments = Felt.reloc (Vm.add_temp_segment vm) 0 in
       let evals = Felt.reloc (Vm.add_temp_segment vm) 0 in
