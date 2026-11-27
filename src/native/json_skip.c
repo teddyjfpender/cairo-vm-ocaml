@@ -26,9 +26,16 @@ static const unsigned char *string_end(const unsigned char *p, const unsigned ch
     while (end-p >= 8) {
       uint64_t w;
       memcpy(&w, p, sizeof(w));
-      if (zero_bytes(w ^ UINT64_C(0x2222222222222222)) ||
-          zero_bytes(w ^ UINT64_C(0x5c5c5c5c5c5c5c5c)) ||
-          zero_bytes(w & UINT64_C(0xe0e0e0e0e0e0e0e0))) break;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+      w = __builtin_bswap64(w);
+#endif
+      uint64_t special = zero_bytes(w ^ UINT64_C(0x2222222222222222)) |
+                         zero_bytes(w ^ UINT64_C(0x5c5c5c5c5c5c5c5c)) |
+                         zero_bytes(w & UINT64_C(0xe0e0e0e0e0e0e0e0));
+      if (special) {
+        p += __builtin_ctzll(special) / 8;
+        break;
+      }
       p += 8;
     }
     if (p == end) break;
