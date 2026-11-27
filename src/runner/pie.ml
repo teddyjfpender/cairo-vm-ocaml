@@ -168,7 +168,7 @@ let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t)
                  let verified = List.sort_uniq compare (pedersen_extra @ Artifacts.pedersen_verified ~secure r b) in
                  Arr (List.map (fun o -> Arr [ int b.base; int o ]) verified)
              | Ecdsa ->
-                 let sigs = List.sort compare (Hashtbl.fold (fun o rs acc -> (o, rs) :: acc) Builtins_ext.signatures []) in
+                 let sigs = List.sort compare (Builtins_ext.segment_signatures vm b.base) in
                  let num z = Num (Z.to_string (Z.erem z Felt.p)) in
                  Arr (List.map (fun (o, (r_, s_)) -> Arr [ Arr [ int b.base; int o ]; Arr [ num r_; num s_ ] ]) sigs)
              | _ -> Null ))

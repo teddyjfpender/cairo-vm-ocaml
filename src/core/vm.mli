@@ -31,6 +31,7 @@ type vm = {
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable last_trace : int;  (* starting word of the last trace entry *)
+  signatures : (Felt.t, Z.t * Z.t) Hashtbl.t;
   mutable builtins : Builtin.builtin list;
   mutable tsegs : Segment.seg array;  (** temporary segments *)
   mutable thi : int array;

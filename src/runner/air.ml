@@ -194,7 +194,7 @@ let ecdsa_private_input (r : Runner.t) b =
   let vm = r.vm in
       (* signatures recorded by the verify_ecdsa_signature hints, ordered by
          instance index *)
-      let sigs = Hashtbl.fold (fun off rs acc -> (off, rs) :: acc) Builtins_ext.signatures [] in
+      let sigs = Builtins_ext.segment_signatures vm b.base in
       let sigs = List.stable_sort (fun (a, _) (b, _) -> compare (a / 2) (b / 2)) (List.sort compare sigs) in
       List.filter_map
         (fun (off, (r_, s_)) ->

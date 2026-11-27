@@ -17,4 +17,4 @@ let register reg =
             fail "Signature hint must point to the signature builtin segment, not %d:%d" (Felt.rseg ptr) (Felt.roff ptr);
           if Felt.roff ptr mod 2 <> 0 then
             fail "Signature hint must point to the public key cell, not %d:%d" (Felt.rseg ptr) (Felt.roff ptr);
-          Builtins_ext.add_signature (Felt.roff ptr) (r, s))
+          Builtins_ext.add_signature vm ptr (r, s))

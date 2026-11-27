@@ -98,11 +98,13 @@ let verify ~pubkey ~msg ~r ~s =
   in
   Z.equal (x_of (ec_add zw_g rw_q)) r || Z.equal (x_of (ec_add zw_g (ec_neg rw_q))) r
 
-(* signatures added by hints, keyed by offset in the ecdsa segment; the first
-   signature for an address wins (HashMap::entry().or_insert) *)
-let signatures : (int, Z.t * Z.t) Hashtbl.t = Hashtbl.create 16
+(* First signature at each full VM address wins, including simulated builtins. *)
+let add_signature vm ptr rs =
+  if not (Hashtbl.mem vm.signatures ptr) then Hashtbl.add vm.signatures ptr rs
 
-let add_signature off rs = if not (Hashtbl.mem signatures off) then Hashtbl.replace signatures off rs
+let segment_signatures vm base =
+  Hashtbl.fold (fun ptr rs acc ->
+      if Felt.rseg ptr = base then (Felt.roff ptr, rs) :: acc else acc) vm.signatures []
 
 (* SignatureBuiltinRunner validation rule, run on every new cell write *)
 let ecdsa_validate vm seg off =
@@ -119,7 +121,7 @@ let ecdsa_validate vm seg off =
     in
     if proceed then begin
       let r, s =
-        match Hashtbl.find_opt signatures pk_off with
+        match Hashtbl.find_opt vm.signatures (Felt.reloc seg pk_off) with
         | Some rs -> rs
         | None -> fail "Signature hint is missing for ECDSA builtin at address %d:%d" seg pk_off
       in
@@ -374,6 +376,6 @@ let add_zero_segment vm mods =
   done;
   seg
 
-let reset () = Hashtbl.reset signatures; accessed_log := []
+let reset () = accessed_log := []
 
 let install () = Vm.ecdsa_validate := ecdsa_validate

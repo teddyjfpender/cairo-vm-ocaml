@@ -45,11 +45,12 @@ The four-block storage test also matched all five PIE members after 196,893 step
 It exercises funded Invoke transactions, modern account validation, nested Cairo 0 contract
 execution, storage writes and fee transfer. The account flow covers Declare, DeployAccount and Invoke, including an L2-to-L1 message.
 A four-block variant of the storage flow ran 512 funded Invoke transactions in 3,417,265 steps.
-Both fixtures matched all five Rust PIE members. Other transaction and syscall paths remain experimental.
+The 2,048-transaction variant ran 13,101,755 steps. Both runners merged extra segments
+for that fixture to fit the PIE address encoding. All three fixtures matched all five Rust PIE members. Other transaction and syscall paths remain experimental.
 
 The saved inputs and Rust archive member digests come from the upstream flow tests
 `test_initial_empty_block`, `test_load_bottom`, `test_new_account_flow` (calldata DA), and
-a 512-transaction variant of `test_load_bottom`, with the chain ID encoded as
+512- and 2,048-transaction variants of `test_load_bottom`, with the chain ID encoded as
 hex as required by the sequencer's input deserializer. To check the fixture, compile the
 pinned checkout's `starkware/starknet/core/os/os.cairo` with cairo-lang 0.14.3a3, then run
 `python3 test/fixtures/os/check.py _build/default/bin/main.exe /path/to/os.json`.
@@ -79,3 +80,20 @@ Hints that only exist in Rust's `test_utils` build fail with an explicit error.
 
 !!! note
     Matching outputs on a corpus is strong evidence of compatibility, not a proof of it.
+
+## Simple bootloader
+
+The experimental `--bootloader_input FILE` option runs Cairo 0 programs and Cairo PIE
+tasks inside the compiled simple bootloader shipped by `cairo-program-runner-lib 1.3.1`.
+Use the crate's `resources/compiled_programs/bootloaders/simple_bootloader_compiled.json`
+with `--proof_mode --layout starknet_with_keccak`. A task file contains a `tasks` array
+and a `single_page` boolean. A task has a `type` of `RunProgramTask` or `CairoPiePath`,
+a `path` to its input, and a `program_hash_function` of `pedersen`, `poseidon`, or `blake`.
+
+The pinned Rust runner and OCaml produced identical stdout, relocated trace and memory for
+an empty task list, Fibonacci under each program hash, EC-op, Keccak, signature programs,
+the saved bitwise PIE and the sequencer's public ten-transfer virtual-OS PIE. Output page
+sizes and fact-tree structure matched for the ten-transfer task. To repeat the saved bitwise
+comparison, run `python3 test/fixtures/bootloader/check.py OCAML_CLI SIMPLE_BOOTLOADER_JSON`.
+The Rust oracle is in `bench/bootloader_reference.rs`. It uses the pinned sequencer workspace
+and the same crate, layout and trace padding.

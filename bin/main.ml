@@ -27,7 +27,7 @@ let () =
   let secure = ref None and allow_missing = ref None and stats = ref false in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
-  let from_pie = ref false and os_hints = ref None in
+  let from_pie = ref false and os_hints = ref None and bootloader_input = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
   let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.1.0)"; exit 0 in
@@ -48,6 +48,7 @@ let () =
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
+      ("--bootloader_input", Arg.String (fun s -> bootloader_input := Some s), "FILE  read simple bootloader tasks");
       ("--os_hints", Arg.String (fun s -> os_hints := Some s), "FILE  read sequencer OS hints and block inputs");
       ("--run_from_cairo_pie", Arg.Set from_pie, " the input file is a Cairo PIE zip to re-execute");
       ("--", Arg.Rest positional, " end of options");
@@ -90,6 +91,8 @@ let () =
   if !from_pie && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--run_from_cairo_pie cannot be used with --proof_mode or the AIR inputs";
   if !from_pie && Option.is_some !os_hints then usage_error "--os_hints requires a compiled program";
+  if Option.is_some !bootloader_input && (!from_pie || Option.is_some !os_hints) then
+    usage_error "--bootloader_input requires a compiled bootloader and its own hint processor";
   try
     let t0 = Unix.gettimeofday () in
     let proof = !proof in
@@ -121,16 +124,17 @@ let () =
         res.runner, t1, Unix.gettimeofday ()
       end else
       let prog = Program.load_file file in
-      let r = match !os_hints with
-        | Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
-        | None -> Runner.initialize ?layout_def ~proof cfg prog in
+      let r = match !bootloader_input, !os_hints with
+        | Some path, _ -> Bootloader.initialize ?layout_def ~proof ~path cfg prog
+        | _, Some path -> Os_hints.initialize ?layout_def ~record_trace:cfg.trace ~proof ~path cfg prog
+        | None, None -> Runner.initialize ?layout_def ~proof cfg prog in
       let t1 = Unix.gettimeofday () in
       Runner.run_until_end r;
       let t2 = Unix.gettimeofday () in
       Finalize.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
-    with Errors.Vm_error msg when rust <> None && !os_hints = None && not !stats -> delegate msg in
+    with Errors.Vm_error msg when rust <> None && !os_hints = None && !bootloader_input = None && not !stats -> delegate msg in
     if !print_output then begin
       print_string "Program Output:\n";
       Artifacts.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');

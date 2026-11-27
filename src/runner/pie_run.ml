@@ -220,7 +220,7 @@ let check_compatibility (r : Runner.t) pie ~sorted ~pages ~attributes =
       | Output, Some j -> if output_data j <> (pages, attributes) then mismatch ()
       | Ecdsa, Some j ->
           let theirs = List.sort compare (signature_data b.base j) in
-          let ours = List.sort compare (Hashtbl.fold (fun o rs acc -> (o, rs) :: acc) Builtins_ext.signatures []) in
+          let ours = List.sort compare (Builtins_ext.segment_signatures vm b.base) in
           let canon = List.map (fun (o, (r, s)) -> (o, (Z.erem r Felt.p, Z.erem s Felt.p))) in
           if canon theirs <> canon ours then mismatch ()
       | _, Some `Null -> ()
@@ -229,14 +229,15 @@ let check_compatibility (r : Runner.t) pie ~sorted ~pages ~attributes =
 
 (* ---- cairo_run_pie ---- *)
 
-let run ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
-  let occupied = validity_checks pie in
-  let prog =
+let stripped_program pie =
     {
       Program.data = pie.data; builtins = pie.builtins; main = Some pie.main; start = None; end_ = None; hints = [];
       references = [||]; identifiers = Hashtbl.create 1;
     }
-  in
+
+let run ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
+  let occupied = validity_checks pie in
+  let prog = stripped_program pie in
   let cfg = { Runner.layout; trace; secure_run = secure; allow_missing_builtins; entrypoint = "main" } in
   let r = Runner.initialize cfg prog in
   let vm = r.vm in
@@ -253,7 +254,7 @@ let run ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_fi
               let p, a = output_data j in
               pages := p;
               attributes := a
-          | Ecdsa -> List.iter (fun (o, rs) -> Builtins_ext.add_signature o rs) (signature_data b.base j)
+          | Ecdsa -> List.iter (fun (o, rs) -> Builtins_ext.add_signature vm (Felt.reloc b.base o) rs) (signature_data b.base j)
           | Pedersen -> if not secure then pedersen_extra := pedersen_data b.base j
           | _ -> ()))
     pie.additional;
@@ -284,3 +285,54 @@ let replay_file ?(layout = "all_cairo") ?trace ?memory ?output path =
       ~secure:true ~allow_missing_builtins:false ~fill_holes:false (Pie_file.read path) in
   Artifacts.with_artifacts result.runner ~trace ~memory (fun () ->
       Option.iter (write_output ~secure:true ~merge_extra_segments:false result) output)
+
+(* The bootloader nests the task's segments in the caller's VM. In particular,
+   a builtin can start at a nonzero offset or be represented by an integer. *)
+let load_subtask vm pie ~code ~stack ~ret_fp ~ret_pc =
+  let occupied = validity_checks pie in
+  let bases = Array.make (Array.length occupied) Felt.empty in
+  let map index target =
+    if index < 0 || index >= Array.length bases || bases.(index) <> Felt.empty then
+      fail "Invalid or duplicate task segment mapping";
+    bases.(index) <- target in
+  map pie.program_segment.index code;
+  map pie.execution_segment.index stack;
+  map pie.ret_fp_segment.index ret_fp;
+  map pie.ret_pc_segment.index ret_pc;
+  let nb = List.length pie.builtins in
+  let mapped = ref 0 and i = ref 0 in
+  while !mapped < nb && !i < n_cells pie do
+    let pos = !i * cell_bytes in
+    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le pie.memory pos)) in
+    if seg = pie.execution_segment.index && off < nb then begin
+      let ptr = decode_value pie.memory (pos + 8) in
+      if not (Felt.is_reloc ptr) then fail "Expected task builtin pointer";
+      map (Felt.rseg ptr) (Hintrt.mem_at vm stack off);
+      incr mapped
+    end;
+    incr i
+  done;
+  if !mapped <> nb then fail "Missing builtin pointers on task stack";
+  List.iter (fun info -> map info.index (Felt.reloc (Vm.add_segment vm) 0)) pie.extra_segments;
+  let relocate seg off =
+    if seg < 0 || seg >= Array.length bases || bases.(seg) = Felt.empty then fail "Unmapped task segment";
+    let base = bases.(seg) in
+    if Felt.is_reloc base then Vm.reloc_add_felt base (Felt.of_int off) else base in
+  (match List.assoc_opt "ecdsa" pie.additional, List.assoc_opt "ecdsa" pie.builtin_segments with
+   | Some j, Some segment ->
+       List.iter (fun (off, rs) ->
+           let ptr = relocate segment.index off in
+           if not (Felt.is_reloc ptr) then fail "Task signature address is not relocatable";
+           (match vm.seg_builtin.(Felt.rseg ptr) with
+            | Some b when b.kind = Ecdsa -> ()
+            | _ -> fail "Task signature address is outside the ECDSA builtin");
+           Builtins_ext.add_signature vm ptr rs) (signature_data segment.index j)
+   | _ -> ());
+  for i = 0 to n_cells pie - 1 do
+    let pos = i * cell_bytes in
+    let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le pie.memory pos)) in
+    let dest = relocate seg off and value = decode_value pie.memory (pos + 8) in
+    if not (Felt.is_reloc dest) then fail "Task memory address is not relocatable";
+    let value = if Felt.is_reloc value then relocate (Felt.rseg value) (Felt.roff value) else value in
+    Vm.write_checked vm (Felt.rseg dest) (Felt.roff dest) value
+  done

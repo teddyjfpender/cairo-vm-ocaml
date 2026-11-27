@@ -3,6 +3,30 @@
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Native Starknet OS on Apple M4 Max
+
+On the saved four-block, 2,048-Invoke workload, both runners executed 13,101,755 Cairo
+steps from sequencer block inputs. Each row gives the median wall time for each binary
+and the median of three alternating speedup ratios. OCaml revision `5fee19a` ran on
+the 36 GB laptop with unrelated builds active.
+
+| Requested result | Rust (s) | OCaml (s) | Paired speedup |
+| --- | ---: | ---: | ---: |
+| Printed OS output | 2.101 | 0.331 | 6.38× |
+| Printed OS output and merged PIE | 8.053 | 0.540 | 14.75× |
+
+Rust uses the sequencer's `run_os_stateless` API at `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`
+with cairo-vm 3.2.0. This API constructs an in-memory PIE even when only output is requested.
+OCaml reads its compiled OS JSON at startup. Rust embeds the same bytecode. For the archive
+row Rust deflates the members and OCaml stores them uncompressed. File sizes and compression
+work therefore differ. Every timed pair matched field output and every requested uncompressed
+archive member. The measurements include input parsing, execution, finalization and process
+startup. Both runs use `all_cairo`.
+
+Reproduce with `bench/compare_native_os.py --ocaml OCAML_CLI --rust OS_REFERENCE --program OS_JSON
+--pairs 3 --merge-extra-segments test/fixtures/os/storage-2048.json.gz` using `bench/os_reference.rs`
+as the Rust example. [Paired observations](../bench/results/native-os-storage-2048-m4-max.csv).
+
 ## Starknet OS PIE replay on Apple M4 Max
 
 Rust cairo-vm v4.0.0 and the OCaml candidate ran sequentially with secure

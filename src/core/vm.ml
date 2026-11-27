@@ -27,6 +27,7 @@ type vm = {
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
   mutable last_trace : int;  (* starting word of the last trace entry *)
+  signatures : (Felt.t, Z.t * Z.t) Hashtbl.t;
   mutable builtins : builtin list;
   (* Temporary segments (negative indices, -1 is tseg.(0)) and relocation
      rules keyed by temporary index, as in cairo-vm's Memory.temp_data and
@@ -64,6 +65,7 @@ let create ~trace =
     trace = (if trace then seg_make ((1 lsl 26) + 2) else empty_seg);
     tlen = 0;
     last_trace = 0;
+    signatures = Hashtbl.create 8;
     builtins = [];
     tsegs = [||];
     thi = [||];

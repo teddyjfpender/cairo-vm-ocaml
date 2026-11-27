@@ -35,3 +35,10 @@ val replay_file :
 (** Securely re-execute a PIE and write the requested artifacts. Layout
     defaults to [all_cairo]. Calls must be serialized with all other VM runs
     in this process because the felt pool and builtin state are global. *)
+
+val stripped_program : Pie_file.t -> Program.t
+
+val load_subtask : Vm.vm -> Pie_file.t -> code:Felt.t -> stack:Felt.t -> ret_fp:Felt.t -> ret_pc:Felt.t -> unit
+(** Load task memory using the simple bootloader's segment relocation map. *)
+
+val output_data : Yojson.Safe.t -> (int * (int * int)) list * (string * int list) list
