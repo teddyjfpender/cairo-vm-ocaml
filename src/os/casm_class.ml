@@ -6,7 +6,7 @@ module U = Yojson.Safe.Util
 let segment vm = Felt.reloc (Vm.add_segment vm) 0
 let at ptr offset = Vm.reloc_add_felt ptr (Felt.small offset)
 
-let load ~source ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
+let load ?(encoded=false) ~source ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let compiled = segment vm in
   let entry_points = U.member "entry_points_by_type" j in
   let load_entries kind =
@@ -29,6 +29,7 @@ let load ~source ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_co
   let words = match source, bytecode with
     | Some src, `List [`Int first; `Int last] ->
         Os_input.decode_words src (first, last)
+    | None, `String raw when encoded -> Os_input.decode_words raw (0, String.length raw)
     | _ -> Array.of_list (List.map felt (U.to_list bytecode)) in
   let code = segment vm in
   Array.iteri (Vm.write_checked vm (Felt.rseg code)) words;

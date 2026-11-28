@@ -24,7 +24,9 @@ type input = {
   prepared : Legacy_class.Prepared.t option;
 }
 
-let classes_cache = Domain.DLS.new_key Json_reader.create_cache
+let classes_cache = Domain.DLS.new_key (fun () ->
+  let casm = Json_reader.create_cache ~entries:12 ~max_entry:2_097_152 ~encoded_field:"bytecode" () in
+  casm, Json_reader.create_cache ())
 
 let read_input ?cache ?(prepare=false) ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
@@ -33,11 +35,13 @@ let read_input ?cache ?(prepare=false) ~virtual_os path =
   let info = if virtual_os then Os_calls.execution_projection else Offset in
   let block_fields = Fields ["transactions", Elements Offset; "tx_execution_infos", Elements info] in
   let fields = ["os_block_inputs", Elements block_fields] in
-  (* Resident class-cache entries can outlive this input and therefore retain
-     complete JSON. Cold class bytecode can point into this witness instead. *)
+  (* Resident entries own their bytecode because the surrounding witness can
+     change between jobs. Cold bytecode points into this request only. *)
   let fields = match cache with
     | None -> ("compiled_classes", Values (Fields ["bytecode", Span])) :: fields
-    | Some c -> ("compiled_classes", Values (Cached c)) :: ("deprecated_compiled_classes", Values (Cached c)) :: fields in
+    | Some (classes, legacy) ->
+        ("compiled_classes", Values (Cached classes)) ::
+        ("deprecated_compiled_classes", Values (Cached legacy)) :: fields in
   let projection = Fields ["os_input", Fields fields] in
   let source = In_channel.with_open_bin path In_channel.input_all in
   let hints = Json_reader.from_string ~projection source in
@@ -120,7 +124,7 @@ let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {doc
       let syscall = Os_syscalls.bind calls ~block ~secp c in
       List.iteri (fun i (hash, cls) ->
           let class_hash = Felt.of_z hash in
-          let tree = Casm_class.load ~source:bytecode_source ~watch ~rng ~syscall vm c ~felt ~class_hash
+          let tree = Casm_class.load ~encoded:(not bytecode_spans) ~source:bytecode_source ~watch ~rng ~syscall vm c ~felt ~class_hash
             ~fact:(Casm_class.at facts (2*i)) ~builtin_costs:(get_ptr vm c "builtin_costs") cls in
           Felt_tbl.replace structures class_hash tree) classes);
   reg "ChainIdAndFeeTokenAddress" (fun c vm ->
