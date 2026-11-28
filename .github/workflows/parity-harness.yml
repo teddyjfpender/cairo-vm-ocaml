@@ -1,0 +1,42 @@
+name: Parity harness regressions
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  fault-injection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 test/test_parity.py -v
+
+  native-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      OXCAML_SWITCH: 5.2.0+ox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/oxcaml
+      - name: Build OxCairo
+        run: opam exec --switch "$OXCAML_SWITCH" -- dune build --profile release bin/main.exe
+      - uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/cairo-vm
+          ref: 3c3f112d8a40ec465bde6b59e2c659df39b7dbc6 # v4.0.0
+          path: _rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: _rust
+      - name: Build pinned Rust CLI
+        working-directory: _rust
+        run: cargo build --locked --release -p cairo-vm-cli
+      - name: Check real execution and reviewed rejections
+        run: |
+          rust=_rust/target/release/cairo-vm-cli
+          vm=_build/default/bin/main.exe
+          python3 test/parity.py "$rust" "$vm" test/parity_fixtures/core \
+            --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+          python3 test/parity.py "$rust" "$vm" test/parity_fixtures/malformed \
+            --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose

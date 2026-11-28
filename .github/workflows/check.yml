@@ -37,7 +37,7 @@ jobs:
         if: runner.os == 'Linux'
         with:
           repository: starkware-libs/cairo-vm
-          ref: v4.0.0
+          ref: 3c3f112d8a40ec465bde6b59e2c659df39b7dbc6 # v4.0.0
           path: upstream
       - uses: actions/setup-python@v5
         if: runner.os == 'Linux'
@@ -64,8 +64,14 @@ jobs:
           vm=_build/default/bin/main.exe
           programs=upstream/cairo_programs
           python test/cli_exit_codes.py "$rust" "$vm" "$programs"
-          for mode in '' --pie --from_pie; do
+          python test/parity.py "$rust" "$vm" test/parity_fixtures/core \
+            --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+          python test/parity.py "$rust" "$vm" test/parity_fixtures/malformed \
+            --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose
+          for mode in '' --pie; do
             python test/parity.py "$rust" "$vm" "$programs" -j 1 $mode
           done
+          python test/parity.py "$rust" "$vm" "$programs" --from_pie -j 1 \
+            --expect-rejections test/parity_fixtures/rust-v4-replay-rejections.json
           python test/parity.py "$rust" "$vm" "$programs/proof_programs" --proof -j 1
           python test/parity.py "$rust" "$vm" "$programs/stwo_exclusive_programs" --layout stwo_no_ecop -j 1
