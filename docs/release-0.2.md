@@ -40,9 +40,9 @@ The 17-program generic suite ran **8.05×** faster than stock Rust v4 in aggrega
 
 Compared directly with the earlier traced-kernel checkpoint `e559436`, the final PGO build improved median cold time by **1.11×** and median shuffled worker time by **1.24×**. Under lighter load, the last loader revision alone improved median cold time **1.10×** relative to `43598c9` over 490 pairs. The earlier busy comparison measured **1.004×** over 350 pairs.
 
-Both Linux and macOS CI passed on the runtime revision. The four historical production archives reproduced complete traces, relocated memory, output and archive contents. All seven native trace/memory cases matched Rust in every pair. Ten complete Stwo prover inputs reproduced the independently verified Rust digests, and all ten proof files passed the upstream verifier.
+The packaged worker completed 4,049 fresh VMs across 74 shuffled witnesses at a peak sampled RSS of 641 MiB. All outputs matched stock Rust. Both Linux and macOS CI passed on the runtime revision. The four historical production archives reproduced complete traces, relocated memory, output and archive contents. All seven native trace/memory cases matched Rust in every pair. Ten complete Stwo prover inputs reproduced the independently verified Rust digests, and all ten proof files passed the upstream verifier.
 
-[Release candidate measurements and reproduction commands](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/ff6fbc0bd363b99b2e9097b307b83cfa4eb02998/bench/results/v0.2.0-m4-max/candidate-d884acc) · [Hosted checks for this runtime](https://github.com/teddyjfpender/cairo-vm-ocaml/actions/runs/46110168349) · [Run the packaged OS worker](getting-started.md#run-successive-blocks-in-one-process)
+[Release candidate measurements and reproduction commands](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/e9f95e47910eebab1591b8a4ac38efd97fd86768/bench/results/v0.2.0-m4-max/candidate-d884acc) · [Hosted checks for this runtime](https://github.com/teddyjfpender/cairo-vm-ocaml/actions/runs/46110168349) · [Run the packaged OS worker](getting-started.md#run-successive-blocks-in-one-process)
 
 ## Earlier checkpoint
 
