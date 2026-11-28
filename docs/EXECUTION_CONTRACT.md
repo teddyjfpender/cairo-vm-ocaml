@@ -28,4 +28,6 @@ A complete archive comparison requires the same Rust publication profile on both
 
 The versioned process host defines resource and input refusal classes, deadline and memory semantics, publication boundaries, concurrency and retry behavior. A worker signal, uncaught exception or timeout cannot satisfy an expected semantic rejection. An implementation fault reported as `internal_fault` fails qualification. [Process contract](os-host.md)
 
+The process probe and normalized state schema are documented in `test/execution_contract/README.md`.
+
 Run the installed-package checks for typed request validation, exact step boundaries, independent archive member digests, repeated and concurrent outputs, invalid field prime, truncated archives, output locking and recovery after interruption. The bounded request generator records its seed in `test/os_host.py`. Independently authenticated mainnet inputs require the corpus handoff and receipt checks. The handoff records the Rust and candidate full-archive digests at each admitted block.
