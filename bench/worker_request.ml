@@ -52,7 +52,7 @@ let limits ?ceiling initial json =
    wall=get "wall_ms" (fun l -> l.wall); output_bytes=get "output_bytes" (fun l -> l.output_bytes);
    files=get "open_files" (fun l -> l.files)}
 
-type publication = Stored | Fast_one | Rust | Standard
+type publication = Stored | Fast_one | Rust | Standard | Production
 type job = {witness:string; output:string; limits:limits; profile:publication}
 
 let request ceiling raw =
@@ -67,6 +67,7 @@ let request ceiling raw =
   let profile = match List.assoc_opt "publication" xs with
     | None | Some (`String "os-host-standard") -> Standard
     | Some (`String "fast-1") -> Fast_one
+    | Some (`String "os-host-production") -> Production
     | Some (`String "rust-3.2") -> Rust | Some (`String "stored") -> Stored
     | _ -> refuse 2 "unknown publication" in
   {witness=path "witness"; output=path "output"; limits; profile}
