@@ -50,7 +50,7 @@ let register ~accessed ~structures reg =
       let seg = Felt.rseg ptr and off = Felt.roff ptr in
       if accessed ptr 1 || not (Vm.seg_ok vm seg) || off >= Vm.used_size vm seg then
         fail "Cannot remove accessed or unallocated class word";
-      Segment.sset vm.segs.(seg) off Felt.empty);
+      Vm.clear_code_cell vm seg off);
   reg "LoadClass" (fun c vm ->
       exit_scope c.scopes;
       if not (Felt.equal (get_felt vm c "hash") (get_member vm c "compiled_class_fact" ["hash"])) then
