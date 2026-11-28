@@ -248,3 +248,11 @@ CAMLprim value cvm_json_debug_span(value input, value bounds) {
   }
   return Val_false;
 }
+
+/* Match exactly the bytes of a previously parsed complete JSON value. */
+CAMLprim value cvm_json_matches_at(value source, value offset, value key) {
+  size_t at = Long_val(offset), length = caml_string_length(source);
+  size_t size = caml_string_length(key);
+  return Val_bool(at <= length && size <= length - at &&
+                  !memcmp(String_val(source) + at, String_val(key), size));
+}

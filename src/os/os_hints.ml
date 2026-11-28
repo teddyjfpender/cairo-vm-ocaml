@@ -24,13 +24,19 @@ let felt = function
 
 type input = { document : Yojson.Safe.t; source : string; virtual_os : bool }
 
-let read_input ~virtual_os path =
+let classes_cache = Domain.DLS.new_key Json_reader.create_cache
+
+let read_input ?cache ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
   let info = if virtual_os then Os_calls.execution_projection else Offset in
   let block_fields = Fields ["transactions", Elements Offset; "tx_execution_infos", Elements info] in
-  let projection = Fields ["os_input", Fields ["os_block_inputs", Elements block_fields]] in
+  let fields = ["os_block_inputs", Elements block_fields] in
+  let fields = match cache with
+    | None -> fields
+    | Some c -> ("compiled_classes", Values (Cached c)) :: ("deprecated_compiled_classes", Values (Cached c)) :: fields in
+  let projection = Fields ["os_input", Fields fields] in
   let source = In_channel.with_open_bin path In_channel.input_all in
   let hints = Json_reader.from_string ~projection source in
   if virtual_os then begin
@@ -156,7 +162,9 @@ let initialize_input ?on_da ?image ?layout_def ?(record_trace=true) ~proof hints
   r
 
 let initialize ?on_da ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
-  initialize_input ?on_da ?image ?layout_def ?record_trace ~proof (read_input ~virtual_os path) cfg prog
+  let cache = Option.map (fun _ -> Domain.DLS.get classes_cache) image in
+  let hints = read_input ?cache ~virtual_os path in
+  initialize_input ?on_da ?image ?layout_def ?record_trace ~proof hints cfg prog
 
 let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path cfg program_path =
   (* Parsing only produces immutable program and witness data. VM setup and

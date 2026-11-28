@@ -10,6 +10,12 @@ let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
 external string_end : string -> int -> int = "cvm_json_string_end" [@@noalloc]
 external skip_value : string -> int -> int = "cvm_json_skip" [@@noalloc]
 
+(* Entries contain only fully parsed immutable JSON. Each reader domain owns
+   its table. At most eight keys of at most one MiB are retained. *)
+type cache = { entries : (string * J.t) option array; mutable next : int }
+external matches_at : string -> int -> string -> bool = "cvm_json_matches_at" [@@noalloc]
+let create_cache () = { entries = Array.make 8 None; next = 0 }
+
 type projection =
   | Json
   | Program
@@ -18,6 +24,7 @@ type projection =
   | Only of (string * projection) list
   | Values of projection
   | Elements of projection
+  | Cached of cache
   | Encoded
   | Offset (* Validate the entire value and retain its offset in the source. *)
 
@@ -82,6 +89,23 @@ let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
   let rec value projection =
     let token = peek () in
     match projection, token with
+    | Cached cache, '{' ->
+        let start = !pos in
+        let rec lookup i =
+          if i = Array.length cache.entries then begin
+            let tree = value Json in
+            let size = !pos - start in
+            if size <= 1_048_576 then begin
+              cache.entries.(cache.next) <- Some (String.sub src start size, tree);
+              cache.next <- (cache.next + 1) mod Array.length cache.entries
+            end;
+            tree
+          end else match cache.entries.(i) with
+          | Some (key, tree) when matches_at src start key ->
+              pos := start + String.length key; tree
+          | _ -> lookup (i + 1)
+        in lookup 0
+    | Cached _, _ -> value Json
     | Offset, _ ->
         let start = !pos in pos := skip start; `Int start
     | Encoded, _ ->

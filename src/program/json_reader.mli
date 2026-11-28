@@ -7,6 +7,10 @@ val json_error : ('a, unit, string, 'b) format4 -> 'a
 val string_end : string -> int -> int
 val skip_value : string -> int -> int
 
+type cache
+val create_cache : unit -> cache
+(** Bounded storage for immutable JSON objects. Use one cache per domain. *)
+
 type projection =
   | Json
   | Program
@@ -15,6 +19,7 @@ type projection =
   | Only of (string * projection) list
   | Values of projection
   | Elements of projection
+  | Cached of cache (** Reuse a previously parsed object on exact source-byte equality. *)
   | Encoded
   | Offset
 

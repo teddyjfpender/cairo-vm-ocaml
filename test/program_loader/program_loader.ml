@@ -196,3 +196,21 @@ let () =
           assert (pread_program fd (size - 1) = None);
           assert (pread_program fd (size + 1) = None);
           assert (In_channel.input_all ic = contents)))
+
+let () =
+  let open Json_reader in
+  let cache = create_cache () in
+  let parse = from_string ~projection:(Fields ["classes", Values (Cached cache)]) in
+  let input obj = {|{"classes":{"same":|} ^ obj ^ "}}" in
+  let read str = assert (parse str = Yojson.Safe.from_string str) in
+  let first = {|{"code":["one",{"nested":42}]}|} in
+  read (input first);
+  read (input first);
+  read (input {|{"code":["one",{"nested":43}]}|});
+  read (input {|{"code":["one",{"nested":42}],"extra":true}|});
+  read (input "null");
+  for i = 0 to 11 do read (input (Printf.sprintf {|{"v":%d}|} i)) done;
+  read (input first);
+  match parse (input (first ^ "x")) with
+  | exception Yojson.Json_error _ -> ()
+  | _ -> failwith "invalid bytes following a cached class were accepted"
