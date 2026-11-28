@@ -6,6 +6,8 @@ external lock : string -> Unix.file_descr = "cvm_worker_lock"
 external rss : int -> int = "cvm_worker_rss"
 external set_limits : int -> int -> int -> int -> int -> unit = "cvm_worker_limit"
 external digest_fast : string -> Unix.file_descr option -> bytes -> bool = "cvm_worker_sha256"
+external hash_while_writing : Unix.file_descr -> (unit -> unit) -> bytes -> bool
+  = "cvm_worker_hash_during_write"
 
 let emit json = Printf.printf "%s\n%!" (Yojson.Safe.to_string json)
 let hex s = String.concat "" (List.init (String.length s) (fun i -> Printf.sprintf "%02x" (Char.code s.[i])))
@@ -98,13 +100,25 @@ let child job program image archive digest_path supervisor =
   Runner.run_until_end ~max_steps:l.steps r;
   Finalize.end_run r ~secure:true ~allow_missing:false;
   let profile,level = match job.profile with
-    | Stored -> Pie_zip.Fast,0 | Fast_one -> Pie_zip.Fast,1
+    | Stored -> Pie_zip.Stored_headers,0 | Fast_one -> Pie_zip.Fast,1
     | Rust | Standard -> Pie_zip.Rust_3_2,0 in
-  Pie.write ~profile ~compression_level:level ~merge_extra_segments:(job.profile=Standard)
-    ~main:(Runner.entry_pc cfg program) ~secure:true r archive;
-  let digest = with_fd (Unix.openfile archive [O_RDONLY;O_CLOEXEC] 0) (fun fd ->
+  let write () =
+    Pie.write ~profile ~compression_level:level ~merge_extra_segments:(job.profile=Standard)
+      ~main:(Runner.entry_pc cfg program) ~secure:true r archive in
+  let finish fd hash =
     if (Unix.fstat fd).st_size > l.output_bytes then refuse 23 "output limit";
-    let hash = hash_fd fd in Unix.fsync fd; hash) in
+    Unix.fsync fd; hash in
+  let digest =
+    match job.profile with
+    | Stored ->
+        with_fd (Unix.openfile archive [O_RDONLY;O_CREAT;O_EXCL;O_CLOEXEC] 0o666) (fun fd ->
+          let dst = Bytes.create 32 in
+          let hash = if hash_while_writing fd write dst then hex (Bytes.unsafe_to_string dst)
+                     else hash_fd fd in
+          finish fd hash)
+    | _ ->
+        write ();
+        with_fd (Unix.openfile archive [O_RDONLY;O_CLOEXEC] 0) (fun fd -> finish fd (hash_fd fd)) in
   Out_channel.with_open_bin digest_path (fun oc -> output_string oc digest)
 
 let run (program,image,program_stat) job =

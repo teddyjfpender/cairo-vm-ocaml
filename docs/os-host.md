@@ -17,6 +17,8 @@ The default publication profile `os-host-standard` matches the serial Rust servi
 
 A consumer that applies its own final compression policy can request `"publication":"stored"`. The host emits an uncompressed ZIP with the five `rust-3.2` members in the same order and preserves separate extra segments. This avoids compressing an intermediate archive before the consumer validates and repackages it. Budget the output limit and temporary disk space for the uncompressed members, including 40 bytes per initialized memory cell and the ZIP headers. The response digest covers the complete stored archive.
 
+The guarded worker can compute that SHA-256 while writing the stored archive. It computes each member CRC before emitting the local ZIP header so every published byte is final. Builds without native SHA-256 and jobs that cannot start the digest thread compute the receipt synchronously. The file sync, rename and directory sync complete before the worker reports success.
+
 The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
 
 The deterministic host requires empty or absent encryption recipients for generation. A nonempty `os_hints_config.public_keys` receives exit 6 before VM stepping. The general native CLI supports encrypted generation with fresh randomness. Secure replay accepts an already produced archive.
