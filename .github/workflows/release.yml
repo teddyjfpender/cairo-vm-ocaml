@@ -33,6 +33,13 @@ jobs:
           gh release view "$TAG" >/dev/null 2>&1 \
             || gh release create "$TAG" --title "OxCairo $v" --notes-file notes.md
 
+  reproducible-linux:
+    needs: notes
+    uses: ./.github/workflows/reproducible-linux.yml
+    with:
+      publish: true
+      tag: ${{ github.event.inputs.tag || github.ref_name }}
+
   build:
     needs: notes
     strategy:
@@ -40,7 +47,6 @@ jobs:
       matrix:
         include:
           - { os: macos-latest, target: macos-arm64 }
-          - { os: ubuntu-24.04, target: linux-x86_64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
