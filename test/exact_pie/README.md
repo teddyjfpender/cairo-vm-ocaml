@@ -21,3 +21,9 @@ The ordinary archive references used the stock sequencer revision ffdf1f9e148575
 Encryption uses fresh operating-system randomness in both production implementations. The encrypted one-block fixture uses public test keys. For its reference only, the sequencer's calculate_keys_using_sha256_hash received bytes 0 through 31 in order in place of its single SysRng call. The reference ran the usual key derivation, OS, output checks and archive writer. The OCaml test driver supplies the same bytes and asserts exactly one entropy draw. No CLI or service option selects these test bytes.
 
 An authorized library caller can supply its own previously recorded private entropy via Os_hints.initialize's optional entropy_source callback. Each invoked key-generation hint consumes exactly 32 bytes. Protect a real entropy transcript as secret key material and reject unexpected, missing or unused draws. Independent fresh encrypted executions can verify public output semantics and decrypted state, but reproducible bytes require an identical private transcript.
+
+The installed package smoke also checks the complete `os-host-production` ZIP
+against digests from an independent production publisher reading the stock Rust
+PIE. Apollo genesis covers one memory range (847,040 bytes). The public account
+fixture covers seven ranges (8,284,320 bytes). Both tests validate all ZIP
+members and repeat the run with a 64-byte output limit against an existing archive.
