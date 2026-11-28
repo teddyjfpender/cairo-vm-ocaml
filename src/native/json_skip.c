@@ -184,6 +184,8 @@ CAMLprim value cvm_json_project_key(value input, value position, value fields) {
 }
 
 #include "json_schema.h"
+#include "json_references.h"
+#include "json_identifiers.h"
 
 /* Find a candidate debug object in indented compiler JSON. Its actual key,
    start and end are checked independently by the parser and schema validator.

@@ -256,3 +256,25 @@ let () =
      "{\"error\":[1,{\"code\":2}]}", `Assoc ["error", `Bool true]];
   (match from_string ~projection:proj "{\"error\":[1,]}" with
    | _ -> assert false | exception Yojson.Json_error _ -> ())
+
+let () =
+  let prime = Z.to_string Felt.p in
+  let check fields =
+    let source = Printf.sprintf {|{"prime":"%s","data":[],"builtins":[],%s}|} prime fields in
+    let expected = Program.load_json (Yojson.Safe.from_string source) |> Program.pack in
+    with_json source (fun path -> assert (Program.pack (Program.load_file path) = expected)) in
+  let reference expression =
+    Printf.sprintf {|{"ap_tracking_data":{"group":1,"offset":2},"pc":3,"value":%s}|} expression in
+  (* Cross a native block boundary before an escaped expression or a
+     noncanonical record forces fallback. Duplicate root keys still use the
+     first manager, while duplicate identifier names replace older entries. *)
+  let prefix = List.init 512 (fun _ -> reference {|"[cast(ap + (-2), felt**)]"|}) in
+  List.iter (fun last ->
+      let references = String.concat "," (prefix @ [last]) in
+      check (Printf.sprintf
+        {|"identifiers":{"a":{"type":"const","value":7},"s":{"type":"struct","members":{"m":{"offset":2,"cairo_type":"felt"}}},"\u0061":{"type":"const","value":-987654321098765432109876},"b":{"pc":5,"type":"label"},"b":{"type":"alias","destination":"a"}},"reference_manager":{"references":[%s]},"reference_manager":{"references":[]}|}
+        references))
+    [reference {|"x\n\t\"y\\"|}; reference {|"\u0061p"|};
+     {|{"value":"ap","pc":0,"other":[1,2],"ap_tracking_data":{"offset":0,"group":2}}|}];
+  check {|"reference_manager":{"references":[]},"reference_manager":{"references":[{"ap_tracking_data":{"group":0,"offset":0},"pc":0,"value":"ap"}]}|};
+  check {|"identifiers":{"first":{"type":"const","value":"0xbeef"},"last":{"type":"const","value":17,"value":99},"p":{"type":"label","pc":-2},"s":{"type":"alias","destination":"\u0061"}}|}

@@ -45,7 +45,12 @@ val program_document :
     debug maps may be validated concurrently with independent program fields. *)
 
 val with_program_document :
+  ?add_batch:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->
+  ?reference_offsets:int array option ref ->
   add_identifier:((string, 'a) Hashtbl.t -> string -> Yojson.Safe.t -> unit) ->
   consume:((string, 'a) Hashtbl.t -> Yojson.Safe.t -> 'b) -> string -> 'b
 (** Invoke the consumer once, after the complete document and debug metadata
-    validate. The worker is joined on either a return value or an exception. *)
+    validate. The worker is joined on either a return value or an exception.
+    Program.load_file can additionally consume canonical identifier rows and
+    reference offsets. The ordinary projections handle other valid shapes;
+    a speculative retry clears the previous reference offsets. *)

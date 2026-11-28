@@ -49,8 +49,28 @@ external project_key : string -> int ref -> (string * projection) list -> (strin
 external validate_schema : string -> int ref -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_schema" [@@noalloc]
 
-let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
+external reference_block : string -> int ref -> bool -> int array -> int
+  = "cvm_json_reference_block" [@@noalloc]
+
+let reference_spans src position =
+  let cursor = ref !position in
+  let rec fill first previous =
+    let block = Array.make 2048 0 in
+    match reference_block src cursor first block with
+    | -1 -> None
+    | 0 -> fill false (block :: previous)
+    | count ->
+        position := !cursor;
+        let last = if count = Array.length block then block else Array.sub block 0 count in
+        Some (Array.concat (List.rev (last :: previous))) in
+  fill true []
+
+external identifier_block : string -> int ref -> int array -> int
+  = "cvm_json_identifier_block" [@@noalloc]
+
+let parse_value ?identifier_batch ?reference_offsets ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
   let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
+  let seen_references = ref false in
   let n = String.length src and pos = ref start in
   let peek () =
     while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
@@ -138,10 +158,15 @@ let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
                      seen_identifiers := true;
                      if peek () = '{' then begin
                        let add = Option.get identifiers in
-                       fold_items '}' () (fun () ->
-                           let name = string () in
-                           expect ':';
-                           add name (value identifier));
+                       let ordinary () =
+                         let name = string () in expect ':'; add name (value identifier) in
+                       (match identifier_batch with
+                        | None -> fold_items '}' () ordinary
+                        | Some batch ->
+                            let rows = Array.make 512 0 in
+                            fold_items '}' () (fun () ->
+                                let used = identifier_block src pos rows in
+                                if used = 0 then ordinary () else batch src rows used));
                        `Null
                      end else (pos := skip !pos; `Null)
                  | Program, "attributes" ->
@@ -166,7 +191,15 @@ let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
                          Program_metadata.validate key Program_metadata.instruction
                            (value (Only ["inst", Json; "hints", Json])));
                      `Assoc []
-                 | Program, "reference_manager" -> value reference_manager
+                 | Program, "reference_manager" ->
+                     let first = not !seen_references in
+                     seen_references := true;
+                     (match reference_offsets with
+                      | Some saved when first ->
+                          (match reference_spans src pos with
+                           | None -> value reference_manager
+                           | Some spans -> saved := Some spans; `Null)
+                      | _ -> value reference_manager)
                  | Program, "hints" -> value hint_table
                  | Values v, _ -> value v
                  | Debug_info, _ | Program, "identifiers" ->
@@ -219,11 +252,13 @@ let from_file ?identifiers ?projection path =
 
 external find_debug_span : string -> int array -> bool = "cvm_json_debug_span" [@@noalloc]
 
-let with_program_document ~add_identifier ~consume src =
+let with_program_document ?add_batch ?reference_offsets ~add_identifier ~consume src =
   let read ?debug_span () =
+    Option.iter (fun saved -> saved := None) reference_offsets;
     (* Ambiguous suffix lookup follows the original identifier table order. *)
     let identifiers = Hashtbl.create 1024 in
-    let root = parse_value ~identifiers:(add_identifier identifiers) ?debug_span
+    let identifier_batch = Option.map (fun add -> add identifiers) add_batch in
+    let root = parse_value ?identifier_batch ?reference_offsets ~identifiers:(add_identifier identifiers) ?debug_span
         ~projection:Program ~start:0 ~whole:true src in
     identifiers, root in
   let full () = let ids, root = read () in consume ids root in

@@ -157,7 +157,31 @@ let add_identifier identifiers name v =
   Hashtbl.replace identifiers name
     { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types }
 
-let load_with_identifiers identifiers (j : J.t) : t =
+(* Kind numbers and row fields match json_identifiers.h. Sharing these empty
+   immutable records leaves identifier insertion and duplicate replacement
+   in exactly the order used by the general reader. *)
+let identifier_kinds =
+  Array.map (fun i_type ->
+      {i_type; i_value=None; i_pc=None; i_destination=None; i_members=[]; i_member_types=[]})
+    [|""; "reference"; "type_definition"; "namespace"; "function"; "alias"; "const"; "label"|]
+
+let add_identifier_batch table source rows used =
+  for i = 0 to used / 8 - 1 do
+    let p = i * 8 in
+    let name = String.sub source rows.(p) rows.(p + 1) in
+    let common = identifier_kinds.(rows.(p + 2)) in
+    let pc = rows.(p + 3) and dest = rows.(p + 4) and number = rows.(p + 6) in
+    let identifier =
+      if pc < 0 && dest < 0 && number < 0 then common
+      else
+        {common with
+         i_pc = (if pc < 0 then None else Some pc);
+         i_destination = (if dest < 0 then None else Some (String.sub source dest rows.(p + 5)));
+         i_value = (if number < 0 then None else Some (Z.of_string (String.sub source number rows.(p + 7))))} in
+    Hashtbl.replace table name identifier
+  done
+
+let load_with_identifiers ?reference_offsets identifiers (j : J.t) : t =
   let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
   let data =
@@ -187,15 +211,23 @@ let load_with_identifiers identifiers (j : J.t) : t =
   let label n = match resolve n 0 with Some { i_pc = Some pc; _ } -> Some pc | _ -> None in
   let main_scope = match U.member "main_scope" j with `String s -> s | _ -> "__main__" in
   let refs =
-    match U.member "reference_manager" j with
-    | `Assoc _ as rm ->
-        let expressions = Hashtbl.create (if Array.length data >= 4096 then 512 else 64) in
-        let parse value =
-          match Hashtbl.find_opt expressions value with
-          | Some e -> e
-          | None ->
-              let e = try parse_expr value with Parse_error _ -> Int Z.minus_one in
-              Hashtbl.add expressions value e; e in
+    let expressions = Hashtbl.create (if Array.length data >= 4096 then 512 else 64) in
+    let parse value =
+      match Hashtbl.find_opt expressions value with
+      | Some e -> e
+      | None ->
+          let e = try parse_expr value with Parse_error _ -> Int Z.minus_one in
+          Hashtbl.add expressions value e; e in
+    match reference_offsets, U.member "reference_manager" j with
+    | Some (source, spans), _ ->
+        Array.init (Array.length spans / 4) (fun i ->
+            let p = i * 4 in
+            let start = spans.(p + 2) and length = spans.(p + 3) in
+            let expr =
+              if length >= 0 then String.sub source start length
+              else U.to_string (J.from_string (String.sub source (start - 1) (2 - length))) in
+            {r_group = spans.(p); r_offset = spans.(p + 1); r_expr = parse expr})
+    | None, (`Assoc _ as rm) ->
         U.member "references" rm |> U.to_list
         |> List.map (fun r ->
                let apt = U.member "ap_tracking_data" r in
@@ -271,7 +303,11 @@ let load_file path =
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
-    Json_reader.with_program_document ~add_identifier ~consume:load_with_identifiers contents
+    let reference_offsets = ref None in
+    let consume ids root =
+      let offsets = Option.map (fun spans -> contents, spans) !reference_offsets in
+      load_with_identifiers ?reference_offsets:offsets ids root in
+    Json_reader.with_program_document ~add_batch:add_identifier_batch ~reference_offsets ~add_identifier ~consume contents
 
 let pack program =
   try Packed_program.encode program
