@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--host", required=True, type=Path)
     args = parser.parse_args()
     try:
-        receipt = qualify(args.manifest, args.trusted_sha256, args.host.resolve())
+        receipt = qualify(args.manifest, args.trusted_sha256, args.host.absolute())
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
         parser.exit(1, f"corpus qualification failed: {exc}\n")
     print(json.dumps(receipt, indent=2))
