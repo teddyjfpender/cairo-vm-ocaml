@@ -37,6 +37,7 @@ type vm = {
   trace_on : bool;
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
+  mutable incomplete_blake : (int * int) list;  (** Trace entry and successful output prefix on a rejected BLAKE operation. *)
   mutable last_trace : int;  (* starting word of the last trace entry *)
   signatures : (Felt.t, Z.t * Z.t) Hashtbl.t;
   mutable builtins : Builtin.builtin list;
@@ -76,6 +77,10 @@ val add_temp_segment : vm -> int
 
 val seg_ok : vm -> int -> bool
 (** Whether the index names an existing real segment. *)
+
+val clear_code_cell : vm -> int -> int -> unit
+(** Clear an allocated permanent word and invalidate its cached decoded instruction.
+    The caller must establish the word is unaccessed before clearing it. *)
 
 val used_size : vm -> int -> int
 (** Last assigned offset + 1 of a real segment. *)

@@ -33,6 +33,7 @@ type vm = {
   trace_on : bool;
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
+  mutable incomplete_blake : (int * int) list;  (** Trace entry and successful output prefix on a rejected BLAKE operation. *)
   mutable last_trace : int;  (* starting word of the last trace entry *)
   signatures : (Felt.t, Z.t * Z.t) Hashtbl.t;
   mutable builtins : builtin list;
@@ -83,6 +84,7 @@ let create ~trace =
        doubling at every size *)
     trace = (if trace then seg_make ((1 lsl 26) + 2) else empty_seg);
     tlen = 0;
+    incomplete_blake = [];
     last_trace = 0;
     signatures = Hashtbl.create 8;
     builtins = [];
@@ -346,6 +348,15 @@ let relocate_temp_memory ?on_resolved vm =
   end
 
 (* last assigned offset + 1 *)
+let clear_code_cell vm seg off =
+  Segment.sset vm.segs.(seg) off Felt.empty;
+  if seg = 0 then begin
+    if off < Array.length vm.icache then vm.icache.(off) <- 0
+  end else
+    match Hashtbl.find_opt vm.code_pages (seg, off land lnot 1023) with
+    | None -> ()
+    | Some page -> page.(off land 1023) <- 0
+
 let used_size vm seg = vm.hi.(seg)
 
 (* ---------------- value arithmetic (MaybeRelocatable) ---------------- *)

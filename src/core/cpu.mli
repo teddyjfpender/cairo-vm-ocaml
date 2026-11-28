@@ -19,6 +19,9 @@ val update : Vm.vm -> int -> int -> int -> int -> int -> int -> Felt.t -> Felt.t
 val step : Vm.vm -> unit
 (** Execute the instruction at the current pc, without hints. *)
 
+val skip_instruction : Vm.vm -> unit
+(** Decode and advance the PC without executing, recording trace or incrementing steps. *)
+
 val hint_bit : int
 (** Flag of a cached decoded word whose pc carries hints. *)
 
