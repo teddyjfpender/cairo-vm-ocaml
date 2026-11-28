@@ -1,0 +1,104 @@
+[
+  {
+    "case": 0,
+    "job": 0,
+    "ms": {
+      "archive_other": 0,
+      "builtin_deduction": 0,
+      "finalization": 0,
+      "hints": 0,
+      "memory_encoding": 0,
+      "payload_write": 0,
+      "program": 4.527,
+      "runner_setup": 0,
+      "stepping": 0,
+      "witness_read_parse": 0
+    },
+    "launch_ready_ms": 7.753729
+  },
+  {
+    "case": 0,
+    "job": 1,
+    "ms": {
+      "archive_other": 9.447,
+      "builtin_deduction": 1.0015,
+      "finalization": 5.003,
+      "hints": 12.511,
+      "memory_encoding": 1.185,
+      "payload_write": 13.4485,
+      "program": 0,
+      "runner_setup": 5.6085,
+      "stepping": 8.4195,
+      "witness_read_parse": 11.8855
+    },
+    "launch_ready_ms": 0
+  },
+  {
+    "case": 0,
+    "job": 2,
+    "ms": {
+      "archive_other": 9.283,
+      "builtin_deduction": 0.397,
+      "finalization": 4.9775,
+      "hints": 12.818,
+      "memory_encoding": 1.102,
+      "payload_write": 19.4785,
+      "program": 0,
+      "runner_setup": 6.4265,
+      "stepping": 7.6065,
+      "witness_read_parse": 5.727
+    },
+    "launch_ready_ms": 0
+  },
+  {
+    "case": 1,
+    "job": 0,
+    "ms": {
+      "archive_other": 0,
+      "builtin_deduction": 0,
+      "finalization": 0,
+      "hints": 0,
+      "memory_encoding": 0,
+      "payload_write": 0,
+      "program": 4.5935,
+      "runner_setup": 0,
+      "stepping": 0,
+      "witness_read_parse": 0
+    },
+    "launch_ready_ms": 7.7933545
+  },
+  {
+    "case": 1,
+    "job": 1,
+    "ms": {
+      "archive_other": 16.177,
+      "builtin_deduction": 1.584,
+      "finalization": 7.1615,
+      "hints": 29.325,
+      "memory_encoding": 3.017,
+      "payload_write": 44.361,
+      "program": 0,
+      "runner_setup": 15.0125,
+      "stepping": 29.162,
+      "witness_read_parse": 17.3835
+    },
+    "launch_ready_ms": 0
+  },
+  {
+    "case": 1,
+    "job": 2,
+    "ms": {
+      "archive_other": 15.349,
+      "builtin_deduction": 0.865,
+      "finalization": 7.182,
+      "hints": 34.444,
+      "memory_encoding": 3.0715,
+      "payload_write": 42.258,
+      "program": 0,
+      "runner_setup": 11.221,
+      "stepping": 22.701,
+      "witness_read_parse": 8.2435
+    },
+    "launch_ready_ms": 0
+  }
+]
