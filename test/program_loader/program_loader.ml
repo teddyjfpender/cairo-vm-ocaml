@@ -109,6 +109,30 @@ let () =
   let p = {data=[|huge; Z.zero; huge; Z.one|]; builtins=["output"]; main=Some 0;
            start=None; end_=Some 1; hints=[0,[h;h]]; identifiers=ids;
            references=[|{r_expr=e; r_group=3; r_offset=min_int}; {r_expr=e; r_group=1; r_offset=max_int}|]} in
+  let constant v = { (Hashtbl.find ids "__main__.main") with i_type="const"; i_value=Some v } in
+  let entries = ("z_other.inner.shared", constant (Z.of_int 99)) :: List.init 64 (fun i ->
+      Printf.sprintf "scope_%02d.shared" i, constant (Z.of_int i)) in
+  let build entries =
+    let identifiers = Hashtbl.create ~random:true 1 in
+    List.iter (fun (name, id) -> Hashtbl.add identifiers name id) entries;
+    {p with identifiers}
+  in
+  let ordered = build entries and reversed = build (List.rev entries) in
+  assert (pack ordered = pack reversed);
+  let runtime = Hintrt.new_scopes () in
+  let lookup program scopes name =
+    let ctx = Hintrt.make_ctx program runtime {h with scopes} in
+    Hintrt.const_z ctx name
+  in
+  with_json (pack ordered) (fun path ->
+      List.iter (fun prog ->
+          assert (Z.equal (lookup prog [] "shared") Z.zero);
+          assert (Z.equal (lookup prog [] "inner.shared") (Z.of_int 99));
+          assert (Z.equal (lookup prog ["scope_17"] "shared") (Z.of_int 17)))
+        [ordered; reversed; load_file path]);
+  let other = build ["z_other.shared", constant Z.one] in
+  assert (Z.equal (lookup other [] "shared") Z.one);
+  assert (Z.equal (lookup ordered [] "shared") Z.zero);
   let packed = pack p in
   with_json packed (fun path ->
       let q = load_file path in

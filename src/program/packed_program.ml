@@ -69,9 +69,11 @@ module Write = struct
     array number w p.data; list string w p.builtins;
     option int w p.main; option int w p.start; option int w p.end_;
     list (pair int (list hint)) w p.hints; array reference w p.references;
-    (* Preserve the source loader's per-bucket traversal order when rebuilding
-       the identifier table, including scoped constant suffix lookups. *)
-    list (pair string ident) w (Hashtbl.fold (fun k v acc -> (k,v)::acc) p.identifiers []);
+    (* Identifier names are unique in a loaded program. Table traversal varies
+       with the runtime hash seed, so emit names in bytewise order. *)
+    let identifiers = Hashtbl.to_seq p.identifiers |> List.of_seq in
+    list (pair string ident) w
+      (List.sort (fun (a, _) (b, _) -> String.compare a b) identifiers);
     Buffer.contents w.bytes
 end
 
