@@ -6,7 +6,7 @@
 #include <string.h>
 #include <zlib.h>
 
-enum { MAX_BLOCKS = 4 };
+enum { MAX_BLOCKS = 8 };
 
 struct block {
   const Bytef *src;
