@@ -19,7 +19,7 @@ def digest(path):
 archive = Path(sys.argv[1])
 inputs = dict(line.split("=", 1) for line in Path("scripts/reproducible/sources.env").read_text().splitlines()
               if line and not line.startswith("#"))
-programs = sorted(Path("test/fixtures/programs").glob("*.gz"))
+programs = sorted(Path("test/fixtures/programs").rglob("*.gz"))
 metadata = sorted(Path("/home/opam/release-opam/release/.opam-switch/packages").glob("*/opam"))
 native_sources = sorted(p for p in Path("src/native").iterdir() if p.suffix in {".c", ".h"})
 executables = ["_build/default/bin/main.exe", "_build/default/bench/native_os_worker.exe",
