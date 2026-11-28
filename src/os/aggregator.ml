@@ -3,24 +3,6 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
-external word_count : string -> int = "cvm_hex_array_count" [@@noalloc]
-external decode_hex : Felt.pool -> string -> Felt.t array -> int -> int = "cvm_hex_array_parse" [@@noalloc]
-
-(* A failed speculative decode leaves the pool cursor unchanged. The general
-   JSON reader handles escaped strings, decimal words and empty arrays. *)
-let decode_input raw =
-  let fallback () =
-    Array.of_list (List.map Os_hints.felt (U.to_list (Json_reader.from_string raw))) in
-  let count = word_count raw in
-  if count = 0 || count > 4 * 1024 * 1024 then fallback ()
-  else
-    let words = Array.make count Felt.zero in
-    let next = decode_hex Felt.pool raw words !(Felt.pool_n) in
-    if next < 0 then fallback () else begin
-      Felt.pool_n := next;
-      words
-    end
-
 let initialize ?layout_def ?on_da ~proof ~path cfg prog =
   let input = Json_reader.from_file ~projection:(Fields ["bootloader_output", Encoded]) path in
   let member name = U.member name input in
@@ -57,7 +39,7 @@ let initialize ?layout_def ?on_da ~proof ~path cfg prog =
       | None -> fail "Aggregator bootloader input already consumed"
       | Some words ->
           bootloader_output := None;
-          Aggregator_output.load vm c (decode_input (U.to_string words)));
+          Aggregator_output.load vm c (Aggregator_output.decode_input (U.to_string words)));
   reg "GetUseKzgDaAndFullOutputFromInput" (fun c vm ->
       set_val vm c "use_kzg_da" (of_bool blob);
       set_val vm c "full_output" (of_bool full));

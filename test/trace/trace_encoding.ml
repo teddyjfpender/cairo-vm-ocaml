@@ -28,3 +28,31 @@ let () =
       List.iteri (fun j expected ->
         assert (String.get_int64_le raw (24 * i + 8 * j) = Int64.of_int expected))
         [bases.(1) + ap; bases.(1) + fp; bases.(seg) + pc]) rows)
+
+let () =
+  (* Two relative jumps reach the proof program's end loop in three steps. *)
+  let jump = Z.of_string "0x10780017fff7fff" in
+  let program = {Program.data=[|jump; Z.of_int 2; jump; Z.of_int 2; jump; Z.zero|];
+                 builtins=[]; main=Some 0; start=Some 0; end_=Some 4;
+                 hints=[]; references=[||]; identifiers=Hashtbl.create 0} in
+  let runner layout =
+    Runner.initialize ~proof:true {Cairo_run.default_config with layout} program in
+  let run disable_trace_padding =
+    let r = runner "plain" in
+    Runner.run_until_end r;
+    Finalize.end_run ~disable_trace_padding r ~secure:true ~allow_missing:false;
+    r in
+  let unpadded = run true and padded = run false in
+  assert (unpadded.vm.steps = 3 && unpadded.vm.tlen = 3);
+  assert (padded.vm.steps >= 4 && padded.vm.steps land (padded.vm.steps - 1) = 0);
+  for i = 0 to 2 do
+    assert (Resources.trace_entry unpadded.vm.trace i = Resources.trace_entry padded.vm.trace i)
+  done;
+  let r = runner "small" in
+  let b = List.find (fun b -> b.Builtin.kind = Builtin.Range_check) r.vm.builtins in
+  let capacities () = Resources.used_and_allocated ~disable_trace_padding:true r b in
+  assert (capacities () = (0,0));
+  Vm.write r.vm b.base 0 Felt.zero;
+  assert (capacities () = (1,16));
+  Vm.write r.vm b.base 16 Felt.zero;
+  assert (capacities () = (17,32))

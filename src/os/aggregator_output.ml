@@ -4,6 +4,24 @@
 open Errors
 open Hintrt
 
+external word_count : string -> int = "cvm_hex_array_count" [@@noalloc]
+external decode_hex : Felt.pool -> string -> Felt.t array -> int -> int = "cvm_hex_array_parse" [@@noalloc]
+
+(* A failed speculative decode leaves the pool cursor unchanged. The general
+   JSON reader handles escaped strings, decimal words and empty arrays. *)
+let decode_input raw =
+  let fallback () =
+    Array.of_list (List.map Os_hints.felt (Yojson.Safe.Util.to_list (Json_reader.from_string raw))) in
+  let count = word_count raw in
+  if count = 0 || count > 4 * 1024 * 1024 then fallback ()
+  else
+    let words = Array.make count Felt.zero in
+    let next = decode_hex Felt.pool raw words !(Felt.pool_n) in
+    if next < 0 then fallback () else begin
+      Felt.pool_n := next;
+      words
+    end
+
 type reader = { words : Felt.t array; mutable index : int }
 
 let take r =

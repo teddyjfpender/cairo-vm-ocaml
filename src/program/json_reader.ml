@@ -35,6 +35,11 @@ let hint_table =
 external project_key : string -> int ref -> (string * projection) list -> (string * projection) list
   = "cvm_json_project_key" [@@noalloc]
 
+(* Advances the cursor only after validating the whole value. On fallback the
+   projection below retains the precise error handling of the OCaml reader. *)
+external validate_schema : string -> int ref -> Program_metadata.schema -> Program_metadata.schema -> bool
+  = "cvm_json_validate_schema" [@@noalloc]
+
 let from_string ?identifiers ?(projection=Json) src : J.t =
   let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
   let n = String.length src and pos = ref 0 in
@@ -111,11 +116,13 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
                  | Program, "attributes" ->
                      if !seen_attributes then Program_metadata.fail k;
                      seen_attributes := true;
-                     Program_metadata.validate k Program_metadata.attributes (value Json); `Null
+                     if not (validate_schema src pos Program_metadata.attributes Program_metadata.instruction) then
+                       Program_metadata.validate k Program_metadata.attributes (value Json); `Null
                  | Program, "debug_info" ->
                      if !seen_debug then Program_metadata.fail k;
                      seen_debug := true;
-                     Program_metadata.validate k Program_metadata.debug (value Debug_info); `Null
+                     if not (validate_schema src pos Program_metadata.debug Program_metadata.instruction) then
+                       Program_metadata.validate k Program_metadata.debug (value Debug_info); `Null
                  | Debug_info, "instruction_locations" when peek () = '{' ->
                      fold_items '}' () (fun () ->
                          let key = string () in expect ':';

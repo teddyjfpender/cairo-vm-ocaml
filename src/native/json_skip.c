@@ -169,3 +169,5 @@ CAMLprim value cvm_json_project_key(value input, value position, value fields) {
   }
   return fields;
 }
+
+#include "json_schema.h"

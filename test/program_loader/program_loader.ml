@@ -122,3 +122,19 @@ let () =
         | exception Parse_error _ -> ()
         | _ -> failwith "invalid packed program accepted"))
     [packed ^ "x"; String.sub packed 0 (String.length packed-1); Packed_program.magic ^ "\255"]
+
+let () =
+  let parse member =
+    let raw = "{" ^ member ^ "}" in
+    Json_reader.from_string ~projection:Json_reader.Program ~identifiers:(fun _ _ -> ()) raw in
+  let accepted member = ignore (parse member) in
+  let rejected member = match parse member with
+    | exception Yojson.Json_error _ -> ()
+    | _ -> failwith ("invalid metadata accepted " ^ member) in
+  accepted {|"attributes":[{"name":"\u0078","start_pc":18446744073709551615,"end_pc":0,"value":"x"}]|};
+  accepted {|"attributes":[["x",0,1,"y",null]]|};
+  accepted {|"debug_info":{"\u0069nstruction_locations":{},"file_contents":{"x":"content"}}|};
+  rejected {|"attributes":[{"name":"x","name":"y","start_pc":0,"end_pc":1,"value":"x"}]|};
+  rejected {|"attributes":[{"name":"x","start_pc":18446744073709551616,"end_pc":0,"value":"x"}]|};
+  rejected {|"debug_info":{"instruction_locations":{"1":{}}}|};
+  rejected {|"debug_info":{"instruction_locations":{},"file_contents":[null,]}}|}
