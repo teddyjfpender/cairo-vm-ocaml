@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import select
 import signal
 import stat
 import subprocess
@@ -66,8 +67,33 @@ def unique(pairs):
         result[key] = value
     return result
 
+def operator_limits():
+    ceiling = DEFAULTS.copy()
+    configured = os.environ.get("OXCAIRO_HOST_LIMITS")
+    if configured is not None:
+        overrides = json.loads(configured, object_pairs_hook=unique)
+        if not isinstance(overrides, dict) or overrides.keys() - ceiling.keys():
+            raise ValueError("invalid operator limit configuration")
+        for key, value in overrides.items():
+            if type(value) is not int or not 1 <= value <= (1 << 62) - 1:
+                raise ValueError("invalid operator ceiling for " + key)
+        ceiling.update(overrides)
+    return ceiling
+
+
 def request():
-    raw = sys.stdin.buffer.read(65537)
+    ceiling = operator_limits()
+    deadline = time.monotonic() + min(ceiling["wall_ms"], DEFAULTS["wall_ms"]) / 1000
+    raw = bytearray()
+    fd = sys.stdin.fileno()
+    while len(raw) <= 65536:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise Refusal("wall_limit", "request input deadline exceeded")
+        chunk = os.read(fd, 65537 - len(raw))
+        if not chunk:
+            break
+        raw.extend(chunk)
     if len(raw) > 65536:
         raise Refusal("invalid_request", "maximum request size is 65536 bytes")
     obj = json.loads(raw, object_pairs_hook=unique)
@@ -97,16 +123,6 @@ def request():
     supplied = obj.get("limits", {})
     if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
         raise ValueError("unknown limit")
-    ceiling = DEFAULTS.copy()
-    configured = os.environ.get("OXCAIRO_HOST_LIMITS")
-    if configured is not None:
-        overrides = json.loads(configured, object_pairs_hook=unique)
-        if not isinstance(overrides, dict) or overrides.keys() - ceiling.keys():
-            raise ValueError("invalid operator limit configuration")
-        for key, value in overrides.items():
-            if type(value) is not int or not 1 <= value <= (1 << 62) - 1:
-                raise ValueError("invalid operator ceiling for " + key)
-        ceiling.update(overrides)
     limits = {key: min(value, ceiling[key]) for key, value in DEFAULTS.items()} | supplied
     for k, value in limits.items():
         if type(value) is not int or value < 1 or value > ceiling[k]:
