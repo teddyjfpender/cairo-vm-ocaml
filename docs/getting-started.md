@@ -2,6 +2,27 @@
 
 ## Install
 
+### Use the release binaries
+
+Published archives and their adjacent SHA-256 files appear on
+[GitHub Releases](https://github.com/teddyjfpender/cairo-vm-ocaml/releases).
+For a locally built 0.2.0 candidate, use the archive and checksum under `dist/`.
+On Apple Silicon the 0.2.0 binaries link to Homebrew GMP at
+`/opt/homebrew/opt/gmp/lib/libgmp.10.dylib`. Install it with `brew install gmp`.
+From the directory containing the downloaded files, run:
+
+```sh
+shasum -a 256 -c oxcairo-v0.2.0-macos-arm64.tar.gz.sha256
+tar -xzf oxcairo-v0.2.0-macos-arm64.tar.gz
+export PATH="$PWD/oxcairo-v0.2.0-macos-arm64:$PATH"
+cairo-vm-cli --version
+```
+
+The version string identifies OxCairo alongside the Rust CLI version it targets.
+Use absolute executable paths when comparing two installations.
+
+### Build from source
+
 PIE archives use zlib. On Linux install the zlib development headers (`zlib1g-dev` on Debian and Ubuntu). On macOS the SDK provides them.
 
 The VM builds with OxCaml, an OCaml compiler with extra optimisations, installed through opam:
@@ -40,6 +61,39 @@ cairo-vm-cli program.json --layout all_cairo --print_output \
 | `--trace_file F` / `--memory_file F` | write the binary trace and relocated memory |
 | `--proof_mode` | run as a proof-mode program (see below) |
 | `--stats` | OCaml-only: print steps, timing and steps per second |
+
+## Run a Starknet block from a fresh checkout
+
+Use a checkout of this repository matching your release. From its root, the
+following commands run the pinned OS and genesis witness using the packaged CLI.
+The checkout supplies both inputs. The first command expands the compiled
+program into a temporary directory.
+
+```sh
+work=$(mktemp -d)
+gzip -dc test/fixtures/programs/starknet-os-training.json.gz > "$work/os.json"
+cairo-vm-cli "$work/os.json" --layout all_cairo \
+  --os_hints test/fixtures/os/genesis.json --print_output
+```
+
+This genesis run emits 16 public field elements. The fixture contains the full
+executable program with debug information removed. Repeating this recipe
+requires neither Cargo nor a sequencer build. The matching Rust execution
+uses the Starknet sequencer's OS hint processor. The general Rust v4 CLI can
+execute ordinary compiled programs and replay a recorded OS PIE directly.
+
+| Starting input or desired output | What supplies it |
+| --- | --- |
+| CairoZero source | `cairo-compile` from cairo-lang produces compiled program JSON. Both CLIs consume that JSON. |
+| Cairo assembly and contract classes for the OS | A compatible upstream compiler supplies the OS program and compiled contracts. The checkout includes compiled OS, Virtual OS and aggregator fixtures. |
+| Transactions or a block number | The native runner takes a prepared sequencer witness, including the state and execution information required by that block. The pinned Rust sequencer and Blockifier produce these witnesses in the reference workflow. Any producer that emits compatible OsHints JSON can supply them. RPC queries and state collection happen upstream. |
+| A recorded Cairo PIE | The CLI and replay library consume the archive directly. Secure replay uses the supplied memory and execution resources. |
+| AIR public and private input | The CLI writes these files, the trace and relocated memory in proof mode. |
+| A verified Stwo proof | The CLI emits proof inputs. The repository’s proof workflow separately builds the OCaml snapshot exporter and the pinned Rust adapter, prover and verifier. |
+
+[Compiled program fixtures](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/main/test/fixtures/programs)
+· [Reference witness tooling](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/main/bench/reference)
+· [Stwo proving workflow](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/main/bench/reference/stwo)
 
 ## Proof mode
 

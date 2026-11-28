@@ -2,6 +2,17 @@
 
 The general-purpose CLI uses Rust Cairo VM **v4.0.0** as its reference. Native Starknet OS, Virtual OS and aggregator checks use sequencer revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`, which uses Cairo VM **v3.2.0**. [Rust VM](https://github.com/starkware-libs/cairo-vm) · [Pinned sequencer](https://github.com/starkware-libs/sequencer/tree/ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45)
 
+## Optional Cairo 0 hints and Rust forwarding
+
+The following ten upstream fixtures were checked against the Rust v4.0.0 CLI. With the listed features enabled, stdout, relocated trace and relocated memory matched on every fixture.
+
+| Upstream fixtures | OxCairo | Reference Rust build |
+| --- | --- | --- |
+| Nine optional Cairo 0 secp fixtures | All nine reject by default and pass with `CAIRO_VM_CAIRO0_SECP_HINTS=1`. | All nine reject by default and pass with `cairo-vm/cairo-0-secp-hints`. |
+| Data availability `reduced_mul` | Passes by default. | Requires `cairo-vm/cairo-0-data-availability-hints`. |
+
+Generic execution can forward a VM error to an explicitly configured `CAIRO_VM_RUST_CLI` when `--stats` is off. For native comparisons, leave this variable unset. The OS, Virtual OS, aggregator and bootloader execution paths handle their own VM errors. The clean-install check used an empty `PATH`: a native OS run produced 24 words, the native aggregator consumed them and emitted 43, and an independent Virtual OS run emitted six.
+
 ## Running the gate
 
 `test/parity.py` runs each selected, top-level compiled JSON program with the same layout and flags
@@ -258,3 +269,5 @@ reproduce the pinned sequencer's five PIE members. The two multicall witnesses
 contain sixteen and sixty-four repetitions of Keccak, EC and SHA-512 calls within one
 transaction. Run the virtual suite with
 `python3 test/fixtures/os/check.py OCAML_CLI VIRTUAL_OS_JSON --virtual-os`.
+
+Native Starknet contract execution has a separate CASM hint dispatcher. The pinned sequencer forwards core hints to `cairo-lang-runner` 2.19.6, which implements `DebugPrint` and seven deprecated core variants that OxCairo currently lacks. A direct comparison confirmed that Rust accepts a serialized `AssertAllKeysUsed` hint and OxCairo rejects it. None of the eight serialized names appeared in the 33 checked-in OS witnesses examined. This gap concerns CASM contract hints during Starknet execution. The Cairo 0 CLI fixture comparison above uses a separate hint processor.
