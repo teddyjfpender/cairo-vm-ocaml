@@ -15,6 +15,8 @@ Run `oxcairo-os-host v1` from the release package, with Python 3.9 or newer on P
 
 The default publication profile `os-host-standard` matches the serial Rust service writer using standard deflate and merged extra segments. Select `"publication":"rust-3.2"` to preserve separate extra segments, corresponding to `CairoPie::write_zip_file(path, false)`. The service's concurrent compression, level-one and platform-native writers produce different archive encodings. The selected serial profile is part of the comparison and workload configuration.
 
+A consumer that applies its own final compression policy can request `"publication":"stored"`. The host emits an uncompressed ZIP with the five `rust-3.2` members in the same order and preserves separate extra segments. This avoids compressing an intermediate archive before the consumer validates and repackages it. Budget the output limit and temporary disk space for the uncompressed members, including 40 bytes per initialized memory cell and the ZIP headers. The response digest covers the complete stored archive.
+
 The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
 
 The deterministic host requires empty or absent encryption recipients for generation. A nonempty `os_hints_config.public_keys` receives exit 6 before VM stepping. The general native CLI supports encrypted generation with fresh randomness. Secure replay accepts an already produced archive.
