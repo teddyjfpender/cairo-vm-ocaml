@@ -11,6 +11,7 @@ import random
 import statistics
 import subprocess
 import tempfile
+import threading
 import time
 
 from qualify_os_host import asset, digest, require
@@ -26,14 +27,20 @@ def run_arm(command, archive, destination, scratch, expected, timeout):
     with subprocess.Popen(["/usr/bin/time", "-f", "%M", "-o", str(usage), "--", *args],
                           cwd=scratch, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                           start_new_session=True) as proc:
+        def interrupt():
+            with suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+        watchdog = threading.Timer(timeout, interrupt)
+        watchdog.start()
         try:
-            proc.wait(timeout=timeout)
+            proc.wait()
+            elapsed = time.monotonic_ns() - start
         finally:
+            watchdog.cancel()
+            watchdog.join()
             if proc.poll() is None:
-                with suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
+                interrupt()
                 proc.wait()
-    elapsed = time.monotonic_ns() - start
     require(proc.returncode == 0, f"job exited {proc.returncode}")
     require(digest(destination) == expected, "published PIE differs from authenticated reference")
     return {"wall_ns": elapsed, "max_rss_kib": int(usage.read_text().strip()), "pie_sha256": expected}
