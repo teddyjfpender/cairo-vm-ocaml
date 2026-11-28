@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Supervise one native OS job. The command's JSON protocol is defined in docs/os-host.md."""
 
-from contextlib import contextmanager, suppress
-import ctypes
+from contextlib import ExitStack, closing, contextmanager, suppress
 import errno
 import fcntl
 import hashlib
@@ -165,10 +164,34 @@ def copy_program(source, dest, hashes):
     if digest.hexdigest() not in hashes:
         raise Refusal("program_mismatch", "compiler SHA-256 does not match the requested revision")
 
+@contextmanager
+def process_waiter(proc):
+    """Wait for child exit or the next resource check without sleep polling."""
+    with ExitStack() as resources:
+        if sys.platform == "darwin":
+            try:
+                queue = resources.enter_context(closing(select.kqueue()))
+                event = select.kevent(proc.pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD, fflags=select.KQ_NOTE_EXIT)
+                queue.control([event], 0, 0)
+            except OSError:
+                # An exited child or a descriptor limit can prevent registration.
+                pass
+            else:
+                def wait(timeout):
+                    if queue.control([], 1, timeout):
+                        return proc.wait()
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+
+                yield wait
+                return
+        yield proc.wait
+
 def child(stage, parent):
     job = json.load(sys.stdin)
     lim = job["limits"]
     if sys.platform.startswith("linux"):
+        import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent:
             raise Refusal("interrupted", "unable to bind job to supervisor")
@@ -210,7 +233,7 @@ def child(stage, parent):
         os.execve(exe, argv, env)
     # macOS lacks Linux's parent-death signal. Keep a parent for the native
     # process so an interrupted supervisor cannot strand a VM holding the lock.
-    with subprocess.Popen(argv, env=env) as vm:
+    with subprocess.Popen(argv, env=env) as vm, process_waiter(vm) as wait:
         try:
             while vm.poll() is None:
                 if os.getppid() != parent:
@@ -220,7 +243,7 @@ def child(stage, parent):
                 if usage and int(usage) * 1024 > lim["memory_bytes"]:
                     raise Refusal("memory_limit", "job exceeded resident memory limit")
                 try:
-                    vm.wait(timeout=0.03)
+                    wait(timeout=0.03)
                 except subprocess.TimeoutExpired:
                     pass
         finally:
@@ -251,9 +274,9 @@ def check_exit(rc, log):
 
 def supervise(job, stage, lock, deadline):
     lim = job["limits"]
-    command = [sys.executable, str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
+    command = [sys.executable, "-S", str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
     with (stage / "error").open("w+b") as log, subprocess.Popen(command, stdin=subprocess.PIPE,
-           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc:
+           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc, process_waiter(proc) as wait:
         try:
             proc.stdin.write(json.dumps(job).encode())
             proc.stdin.close()
@@ -262,7 +285,7 @@ def supervise(job, stage, lock, deadline):
                 if remaining <= 0:
                     raise Refusal("wall_limit", "job exceeded wall-clock limit")
                 try:
-                    proc.wait(timeout=min(remaining, 0.05))
+                    wait(timeout=min(remaining, 0.05))
                 except subprocess.TimeoutExpired:
                     pass
         finally:
