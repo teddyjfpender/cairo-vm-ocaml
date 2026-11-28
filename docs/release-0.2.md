@@ -10,6 +10,18 @@ In 350 randomized cold comparisons, summed case medians fell from **28.24 s for 
 
 The strict differential suite matched all 150 execution, 150 PIE-output and 150 proof-mode cases. Of 150 replays, 146 succeeded and the other four matched reviewed invalid-address diagnostics. Both Stwo opcode cases passed. All ten previously verified Stwo proofs had identical regenerated prover inputs. [Strict parity harness and reviewed rejections](parity.md)
 
+| Workload | Rust | OxCairo | Ratio of summed times | Median per case | Cases at 10× |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Cold stock sequencer scenarios | 28.24 s | 2.46 s | 11.48× | 3.02× | 19/70 |
+| Warm shuffled sequencer scenarios | 5.15 s | 0.93 s | 5.52× | 4.91× | 0/70 |
+| Scaled native OS workloads | 157.44 s | 12.82 s | 12.28× | 11.45× | 18/22 |
+| Virtual OS and aggregator, public output | 5.14 s | 0.49 s | 10.49× | 7.04× | 2/10 |
+| Virtual OS and aggregator, output PIE | 17.55 s | 0.86 s | 20.32× | 19.36× | 9/10 |
+| General Cairo execution | 7.49 s | 0.99 s | 7.59× | 7.66× | 5/17 |
+| General Cairo trace and memory | 13.34 s | 2.14 s | 6.23× | 6.49× | 0/17 |
+
+The production archive comparisons against stock Rust v4 measured **15.25×** for secure SN_PIE_2 replay, **15.95×** for SN_PIE_3 and **10.71×** for compressed SN_PIE_2 output. The 17 general programs ran at 1.012× the starting OCaml main in aggregate for execution and 0.993× with trace and memory output. [Raw timings, binary identities and strict parity receipts](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/release/os-performance/bench/results/v0.2.0-m4-max/candidate-f6e37bd)
+
 ## Performance after builtin loop and compiler changes
 
 Runtime `86fd938` was measured before including the three release-quality PRs. Timings use fresh processes unless marked warm. Rust comparisons use the stock VM v4 CLI for generic programs and production replay, and the pinned sequencer for native witnesses. The 22 scaled cases include stock and memory-bounded checked sequencer runs, identified in the raw data.
