@@ -193,6 +193,14 @@ def child(stage, parent):
     set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
     signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_DETERMINISTIC": "1", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
+    if sys.platform.startswith("linux"):
+        # OxCaml reserves an address range for every potential domain's nursery.
+        # Configure that reservation before runtime startup under RLIMIT_AS.
+        budget = lim["memory_bytes"]
+        domains = max(1, min(4, budget // (128 << 20)))
+        nursery_words = min(4 << 20, budget // 256)
+        env["OCAMLRUNPARAM"] = f"d={domains},s={nursery_words},o=250"
+        env["MALLOC_ARENA_MAX"] = "2"
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
             "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
@@ -226,6 +234,9 @@ def check_exit(rc, log):
     if rc == 0:
         return
     detail = log[:2000].strip()
+    if rc == 2 and detail in ("Fatal error: Not enough heap memory to reserve minor heaps",
+                             "Fatal error: out of memory"):
+        raise Refusal("memory_limit", detail)
     if rc < 0:
         kind = {-signal.SIGXFSZ: "output_limit", -signal.SIGXCPU: "wall_limit"}.get(rc, "internal_fault")
     elif rc - 80 in CODES.values():
