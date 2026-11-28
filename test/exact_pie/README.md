@@ -8,7 +8,7 @@ Release builds include the statically linked archive library and redistribution 
 
 ```sh
 export OXC_PIE_ARCHIVE="$(python3 scripts/build_pie_archive.py /absolute/path/to/pie-archive)"
-dune build --profile release bin/main.exe test/exact_pie/replay_encrypted.exe
+dune build --profile release bin/main.exe test/exact_pie/replay_encrypted.exe test/exact_pie/errno_check.exe
 python3 test/exact_pie/check.py _build/default/bin/main.exe _build/default/test/exact_pie/replay_encrypted.exe
 ```
 
