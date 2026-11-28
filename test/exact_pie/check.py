@@ -4,6 +4,8 @@ from concurrent.futures import ThreadPoolExecutor
 import gzip
 import hashlib
 import json
+import resource
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -60,6 +62,14 @@ def main():
     parser.add_argument("cli", type=Path)
     parser.add_argument("encrypted_driver", type=Path)
     args = parser.parse_args()
+    # Force write/flush to report EFBIG without delivering a signal to other
+    # processes. The OCaml helper distinguishes Unix.Unix_error from Vm_error.
+    def output_limit():
+        signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (64, 64))
+    with tempfile.TemporaryDirectory() as tmp:
+        helper = args.encrypted_driver.resolve().with_name("errno_check.exe")
+        subprocess.run([helper, Path(tmp) / "rejected.zip"], check=True, preexec_fn=output_limit)
     cases = json.loads((HERE / "references.json").read_text())
     for workers in (1, 2):
         with ThreadPoolExecutor(max_workers=workers) as pool:

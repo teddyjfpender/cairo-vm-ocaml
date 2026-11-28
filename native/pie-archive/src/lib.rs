@@ -1,24 +1,47 @@
 //! Container-only bridge. The OCaml runner supplies all five uncompressed members.
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{self, BufWriter, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::ptr;
 use std::slice;
+use zip::result::{ZipError, ZipResult};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
 pub struct Archive(ZipWriter<BufWriter<File>>);
 
+// 0 is success, a positive value is the original platform errno, and -1
+// identifies a container error without a platform error code.
+fn io_status(error: io::Error) -> i32 {
+    error.raw_os_error().unwrap_or(-1)
+}
+
+fn zip_status(result: ZipResult<()>) -> i32 {
+    match result {
+        Ok(()) => 0,
+        Err(ZipError::Io(error)) => io_status(error),
+        Err(_) => -1,
+    }
+}
+
 /// # Safety
-/// The filename is a valid byte buffer of the given length for this call.
+/// The filename is a valid byte buffer and out points to writable pointer storage.
 #[no_mangle]
-pub unsafe extern "C" fn ox_pie_create(path: *const u8, length: usize) -> *mut Archive {
+pub unsafe extern "C" fn ox_pie_create(
+    path: *const u8,
+    length: usize,
+    out: *mut *mut Archive,
+) -> i32 {
     let bytes = unsafe { slice::from_raw_parts(path, length) };
     match File::create(Path::new(OsStr::from_bytes(bytes))) {
-        Ok(file) => Box::into_raw(Box::new(Archive(ZipWriter::new(BufWriter::new(file))))),
-        Err(_) => ptr::null_mut(),
+        Ok(file) => {
+            unsafe {
+                *out = Box::into_raw(Box::new(Archive(ZipWriter::new(BufWriter::new(file)))));
+            }
+            0
+        }
+        Err(error) => io_status(error),
     }
 }
 
@@ -29,16 +52,16 @@ pub unsafe extern "C" fn ox_pie_start(
     archive: *mut Archive,
     name: *const u8,
     length: usize,
-) -> bool {
+) -> i32 {
     let bytes = unsafe { slice::from_raw_parts(name, length) };
     let Ok(name) = std::str::from_utf8(bytes) else {
-        return false;
+        return -1;
     };
     let options = FileOptions::default()
         .compression_method(CompressionMethod::Deflated)
         .last_modified_time(DateTime::default())
         .large_file(true);
-    unsafe { &mut *archive }.0.start_file(name, options).is_ok()
+    zip_status(unsafe { &mut *archive }.0.start_file(name, options))
 }
 
 /// # Safety
@@ -48,22 +71,26 @@ pub unsafe extern "C" fn ox_pie_append(
     archive: *mut Archive,
     data: *const u8,
     length: usize,
-) -> bool {
-    unsafe { &mut *archive }
+) -> i32 {
+    match unsafe { &mut *archive }
         .0
         .write_all(unsafe { slice::from_raw_parts(data, length) })
-        .is_ok()
+    {
+        Ok(()) => 0,
+        Err(error) => io_status(error),
+    }
 }
 
 /// # Safety
 /// The caller has exclusive access to a live archive, and calls finish at most once.
 #[no_mangle]
-pub unsafe extern "C" fn ox_pie_finish(archive: *mut Archive) -> bool {
-    unsafe { &mut *archive }
-        .0
-        .finish()
-        .and_then(|mut f| Ok(f.flush()?))
-        .is_ok()
+pub unsafe extern "C" fn ox_pie_finish(archive: *mut Archive) -> i32 {
+    zip_status(
+        unsafe { &mut *archive }
+            .0
+            .finish()
+            .and_then(|mut writer| Ok(writer.flush()?)),
+    )
 }
 
 /// # Safety
