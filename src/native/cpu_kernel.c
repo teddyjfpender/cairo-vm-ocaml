@@ -257,7 +257,7 @@ general:;
         next_ap = ap + (ap_update == 2);
         if (pc_update == 3) {
           next_pc = dst == small_code(0) ? pc + 2 : pc + (imm >> 2);
-          if (!tracing && !queue && code_seg == 0 && d == VALIDATE_FIRST &&
+          if (!tracing && !queue && code_seg == 0 && code_base == 0 && d == VALIDATE_FIRST &&
               dst > small_code(0) && imm == small_code(4) &&
               validation_entry(cache, pc, cache_size)) {
             int steps = validate_builtins_block(cache, pc, cache_size, program, program_length,

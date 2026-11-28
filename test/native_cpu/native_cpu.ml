@@ -459,10 +459,22 @@ let () =
       write vm 3 i (value i); write vm 4 i (value (i+i*3)); write vm 5 i (Felt.small 3)
     done; vm in
   let tests=ref 0 in
-  let verify size n tweak =
+  let verify ?(base=0) size n tweak =
     let vm=state size n and reference=state size n in
+    if base<>0 then begin
+      (* Direct callers can supply a cache page beginning at a nonzero code
+         offset. Its indices differ from absolute program-memory offsets. *)
+      List.iter (fun machine->
+        let code=seg_make (base+Array.length words) in
+        Array.iteri (fun i word->sset code (base+i) word) words;
+        machine.segs.(0)<-code; machine.hi.(0)<-base+Array.length words;
+        machine.pc<-base+6; sset machine.segs.(1) 15 (Felt.reloc 0 (base+27)))
+        [vm;reference];
+      reference.icache<-Array.append (Array.make base 0) reference.icache
+    end;
     tweak vm;tweak reference;
     let regs=[|vm.pc; vm.ap; vm.fp; vm.hi.(1);0;!Felt.pool_n;0;0;0;0;0;0;0;0;0|] in
+    regs.(11)<-base;
     let count=batch_watched regs vm.icache vm.segs vm.seg_flag vm.hi vm.trace Felt.pool vm.nsegs vm.watched [||] in
     assert(count<=8192);
     for i=0 to count-1 do
@@ -490,6 +502,7 @@ let () =
     incr tests; count in
   let no _=() in
   assert(verify 220 8 no>128);
+  assert(verify ~base:64 220 8 no>128);
   List.iter (fun size -> List.iter (fun n->ignore(verify size n no)) [0;1;2;5;8]) [22;32;47;63;78;93;110;220];
   List.iter (fun k->ignore(verify 220 8 (fun vm->vm.icache.(k)<-vm.icache.(k) lor hint_bit))) ops;
   for i=17 to 120 do

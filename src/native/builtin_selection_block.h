@@ -91,6 +91,7 @@ static int select_builtin_block(intnat pc, value segs, value flags, value highs,
 
 value cvm_selection_rows(value state, value cache, value segs, value flags, value highs, value pool,
                          value nsegs_val, value watched) {
+  if (Wosize_val(state) < 17) return Val_int(0);
   intnat nsegs = Long_val(nsegs_val), pc = Long_val(Field(state, 0)),
          ap = Long_val(Field(state, 1)), fp = Long_val(Field(state, 2)),
          high = Long_val(Field(state, 3)), remaining = Long_val(Field(state, 15)), count = 0,
@@ -189,7 +190,7 @@ value cvm_selection_rows_byte(value *v, int argc) {
 /* Discriminate the common conditional jump before calling the full matcher.
    An entry marker on a repeated validation row must return to Cpu.run. */
 static inline int validation_entry(value cache, intnat pc, intnat size) {
-  return Field(cache, pc) == Val_long(VALIDATE_FIRST) && pc + 4 < size &&
+  return fits(pc, size) && pc + 4 < size && Field(cache, pc) == Val_long(VALIDATE_FIRST) &&
          Field(cache, pc + 4) == Val_long(PUSH_RANGE_CHECK);
 }
 
