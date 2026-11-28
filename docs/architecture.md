@@ -6,7 +6,7 @@ This page maps the source tree onto the concepts from the [Learn](learn/index.md
 
 ```
 program.json
-   │  Program.load_file          (src/program)   parse, skip debug_info
+   │  Program.load_file          (src/program)   parse, validate and discard debug_info
    ▼
 Runner.initialize                (src/runner)    segments, builtins, stack, hints compiled
    │

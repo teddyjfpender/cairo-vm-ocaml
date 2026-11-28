@@ -15,6 +15,8 @@ python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [--from_pie]
 `--from_pie` has the Rust CLI write each program's Cairo PIE first, then runs both CLIs with
 `--run_from_cairo_pie` on it and also compares the PIEs they write.
 
+The Linux CI job also checks exact process exit codes with `test/cli_exit_codes.py`. Both CLIs must exit 0 on a valid program and 1 on the upstream `manually_compiled/overflowing_dict.json` and three generated metadata cases covering invalid debug locations, a numeric attribute value and duplicate `debug_info`.
+
 ## Version 0.2
 
 | Comparison | Observed result |

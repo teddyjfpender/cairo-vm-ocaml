@@ -63,6 +63,7 @@ jobs:
           rust=upstream/target/release/cairo-vm-cli
           vm=_build/default/bin/main.exe
           programs=upstream/cairo_programs
+          python test/cli_exit_codes.py "$rust" "$vm" "$programs"
           for mode in '' --pie --from_pie; do
             python test/parity.py "$rust" "$vm" "$programs" -j 1 $mode
           done

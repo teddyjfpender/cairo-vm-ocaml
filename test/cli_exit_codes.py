@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Check exact native CLI exit codes against the Rust v4 reference."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("rust")
+    parser.add_argument("ocaml")
+    parser.add_argument("corpus", type=Path)
+    args = parser.parse_args()
+    env = os.environ.copy()
+    for key in ("CAIRO_VM_RUST_CLI", "CAIRO_VM_DELEGATED"):
+        env.pop(key, None)
+
+    def check(path, expected, flags=()):
+        if not path.is_file():
+            raise SystemExit(f"missing input: {path}")
+        for label, binary in (("Rust", args.rust), ("OCaml", args.ocaml)):
+            result = subprocess.run([binary, path, *flags], env=env,
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode != expected:
+                raise SystemExit(f"{path.name}: expected {label} exit {expected}, "
+                                 f"got {result.returncode}\n{result.stderr}")
+        print(f"{path.name}: both exited {expected}")
+
+    check(args.corpus / "manually_compiled" / "overflowing_dict.json", 1)
+    program = json.loads((args.corpus / "array_sum.json").read_text())
+    program.pop("attributes", None)
+    program.pop("debug_info", None)
+    # Build the final member as JSON text so the duplicate key survives.
+    prefix = json.dumps(program)[:-1] + ","
+    cases = (
+        ("control", '"attributes":[]', 0),
+        ("invalid-debug-locations", '"debug_info":{"instruction_locations":null}', 1),
+        ("numeric-attribute-value",
+         '"attributes":[{"name":"x","start_pc":0,"end_pc":0,"value":7}]', 1),
+        ("duplicate-debug-info", '"debug_info":null,"debug_info":null', 1),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        for name, member, expected in cases:
+            path = Path(directory) / (name + ".json")
+            path.write_text(prefix + member + "}")
+            check(path, expected, ("--layout", "all_cairo"))
+
+
+if __name__ == "__main__":
+    main()
