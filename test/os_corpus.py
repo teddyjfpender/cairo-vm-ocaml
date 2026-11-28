@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
+from fold_receipt import receipt as from_fold
 from qualify_os_host import digest, qualify
 from whole_os_job import measure
 
@@ -22,6 +23,23 @@ class SampleContract(unittest.TestCase):
         path = self.root / name
         path.write_text(value if isinstance(value, str) else json.dumps(value))
         return {"path": name, "sha256": digest(path)}
+
+    def test_original_fold_evidence(self):
+        rows = [
+            dict(first=0,last=12,blocks=13,check="header",root="0x11"),
+            dict(first=13,last=15,blocks=3,check="header+l1",root="0x22")]
+        self.write("header",dict(block_number=12,block_hash="0xa",state_root="0x11"))
+        self.write("anchors",dict(anchors=[dict(block_number=15,global_root="0x22",block_hash="0xc",tx_hash="0x"+"1"*64)]))
+        def read():
+            self.write("rows", "\n".join(json.dumps(row) for row in rows))
+            return from_fold(self.root/"rows",self.root/"header",self.root/"anchors",15)
+        self.assertEqual(read()["l1_anchor"]["covered_through"],15)
+        rows[1]["root"] = "0x23"
+        with self.assertRaisesRegex(ValueError, "anchor root mismatch"):
+            read()
+        rows[1]["first"] = 14
+        with self.assertRaisesRegex(ValueError, "non-contiguous"):
+            read()
 
     def test_receipt_and_measurement(self):
         host = self.write("host", """#!/usr/bin/env python3
