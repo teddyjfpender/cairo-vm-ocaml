@@ -68,9 +68,9 @@ let named name l = try List.assq name l with Not_found -> List.assoc name l
 
 (* A scope holds a handful of variables. *)
 type frame = { mutable vars : (string * dyn ref) list }
-type scopes = { mutable stack : frame list }
+type scopes = { mutable stack : frame list; mutable squash_continuations : (Vm.vm -> unit) list }
 
-let new_scopes () = { stack = [ { vars = [] } ] }
+let new_scopes () = { stack = [ { vars = [] } ]; squash_continuations=[] }
 let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 

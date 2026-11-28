@@ -399,6 +399,7 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
     let pc = vm.pc in
     let hinted = vm.pc_seg = 0 && pc >= 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
     if hinted then begin
+      vm.squash <- None;
       vm.selection <- None;
       incr hint_steps;
       Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
@@ -434,7 +435,17 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
               if registers.(15) <> vm.selection_remaining then descriptor.publish registers.(15);
               hint_steps := !hint_steps + registers.(16);
               count
-          | _ -> 0 in
+          | _ ->
+              match vm.squash with
+              | Some plan when hinted && not vm.trace_on && Array.length hints.(pc) = 1 &&
+                                hints.(pc).(0) == plan.begin_row && pc + 11 < nh &&
+                                Array.length hints.(pc + 11) = 1 &&
+                                (stop_seg <> 0 || stop_pc < pc || stop_pc > pc + 12) ->
+                  vm.squash <- None;
+                  let count = plan.run_rows vm hints.(pc + 11).(0) registers in
+                  if count > 0 then hint_steps := !hint_steps + (2 * (count / 9) - 1);
+                  count
+              | _ -> 0 in
         let count =
           if recurred > 0 then recurred
           else if vm.ntsegs > 0 then begin
@@ -473,4 +484,4 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm hints =
      matching end hint. Restore the caller's cache mode on every return. *)
   let previous = batch_pedersen_cache_active () in
   Fun.protect (fun () -> run_inner ~stop ~steps vm hints)
-    ~finally:(fun () -> vm.selection <- None; ignore (batch_pedersen_cache previous))
+    ~finally:(fun () -> vm.squash <- None; vm.selection <- None; ignore (batch_pedersen_cache previous))
