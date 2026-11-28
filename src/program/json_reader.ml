@@ -10,12 +10,6 @@ let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
 external string_end : string -> int -> int = "cvm_json_string_end" [@@noalloc]
 external skip_value : string -> int -> int = "cvm_json_skip" [@@noalloc]
 
-(* Entries contain only fully parsed immutable JSON. Each reader domain owns
-   its table. At most eight keys of at most one MiB are retained. *)
-type cache = { entries : (string * J.t) option array; mutable next : int }
-external matches_at : string -> int -> string -> bool = "cvm_json_matches_at" [@@noalloc]
-let create_cache () = { entries = Array.make 8 None; next = 0 }
-
 type projection =
   | Json
   | Program
@@ -32,6 +26,22 @@ type projection =
 
 (* Intern common schema keys and skip unused fields while still validating
    their JSON. Object keys in identifier, member and hint maps remain dynamic. *)
+and cache = {
+  entries : (string * J.t) option array;
+  max_entry : int;
+  mutable next : int;
+  projection : projection;
+}
+
+external matches_at : string -> int -> string -> bool = "cvm_json_matches_at" [@@noalloc]
+
+let create_cache ?(entries=8) ?(max_entry=1_048_576) ?encoded_field () =
+  if entries < 1 || max_entry < 1 then invalid_arg "JSON cache size";
+  let projection = match encoded_field with
+    | None -> Json
+    | Some key -> Fields [key, Encoded] in
+  {entries=Array.make entries None; max_entry; next=0; projection}
+
 let identifier =
   Only ["type",Json; "value",Json; "pc",Json; "destination",Json;
         "members",Values (Only ["offset",Json; "cairo_type",Json])]
@@ -137,9 +147,9 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
         let start = !pos in
         let rec lookup i =
           if i = Array.length cache.entries then begin
-            let tree = value Json in
+            let tree = value cache.projection in
             let size = !pos - start in
-            if size <= 1_048_576 then begin
+            if size <= cache.max_entry then begin
               cache.entries.(cache.next) <- Some (String.sub src start size, tree);
               cache.next <- (cache.next + 1) mod Array.length cache.entries
             end;

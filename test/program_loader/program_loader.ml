@@ -370,3 +370,27 @@ let () =
               ignore (Unix.write_substring fd " " 0 1))));
           assert (stream_bounds fd size bounds);
           assert (not (stream_debug fd bounds (fun () -> Unix.ftruncate fd (size / 3))))))
+
+let () =
+  let open Json_reader in
+  let cache = create_cache ~entries:2 ~max_entry:128 ~encoded_field:"bytecode" () in
+  let parse = from_string ~projection:(Fields ["class", Cached cache]) in
+  let cls source = Yojson.Safe.Util.member "class" (parse source) in
+  let first = cls {|{"class":{"bytecode":[15,"0\u0078ff"]}}|} in
+  let hit = cls {|{"unrelated":12345,"class":{"bytecode":[15,"0\u0078ff"]}}|} in
+  assert (first == hit);
+  let decode value =
+    let raw = Yojson.Safe.Util.member "bytecode" value |> Yojson.Safe.Util.to_string in
+    Os_input.decode_words raw (0, String.length raw) |> Array.map Felt.to_z in
+  assert (decode first = [|Z.of_int 15; Z.of_int 255|]);
+  let changed = cls {|{"class":{"bytecode":[16]}}|} in
+  assert (decode changed = [|Z.of_int 16|]);
+  ignore (cls {|{"class":{"bytecode":[]}}|});
+  assert (decode first = [|Z.of_int 15; Z.of_int 255|]);
+  assert (cls {|{"class":{"bytecode":[15,"0\u0078ff"]}}|} != first);
+  (match cls {|{"class":{"bytecode":[15,]}}|} with
+   | exception Yojson.Json_error _ -> ()
+   | _ -> failwith "invalid class bytecode JSON accepted");
+  match decode (cls {|{"class":{"bytecode":"[15]"}}|}) with
+  | exception Yojson.Safe.Util.Type_error _ -> ()
+  | _ -> failwith "stringified bytecode array accepted"

@@ -13,3 +13,8 @@
  (name stwo_snapshot)
  (modules stwo_snapshot)
  (libraries cairovm))
+
+(executable
+ (name supplied_pie)
+ (modules supplied_pie)
+ (libraries cairovm unix))
