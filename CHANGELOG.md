@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 (release candidate)
+
+- Generate and securely replay PIEs through the versioned OS-host process. The host checks the compiled OS identity, bounds execution and publishes the finished file atomically. Its deterministic profile reports a typed refusal for generation that requires fresh encryption randomness.
+- Match the stock cairo-vm 3.2.0 ZIP profile, including compression, headers and member order. The general CLI retains its fast archive profile. The exact profile uses a pinned static Rust archive library for ZIP encoding.
+- Qualify Apollo 0.20.0-rc.1 at sequencer revision `1860b9850b5c51858c50c0f5038933e49f932eef`. Eight fixtures matched execution and proof-mode artifacts. The upstream Stwo verifier accepted direct genesis, Virtual OS and aggregator proofs. The latter two use the simple bootloader.
+- Compare complete instruction state after successful and rejected operations. Correct trace and access-marker handling on failed instructions and retain the observable writes made before an error.
+- Add mainnet handoff verification and paired whole-job benchmarking. A measurement consumes recorded block inputs, runs both full host commands and checks each complete published archive against the authenticated reference digest.
+
 ## 0.2.0 (2026-11-28)
 
 - Execute Starknet OS, Virtual OS and block aggregation with the pinned sequencer's block witnesses. Coverage includes Cairo 0 and Cairo 1 calls, rollback, STRK transfers and blob commitments.
