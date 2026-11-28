@@ -56,3 +56,44 @@ let () =
   assert (capacities () = (1,16));
   Vm.write r.vm b.base 16 Felt.zero;
   assert (capacities () = (17,32))
+
+let () =
+  let jump = Z.of_string "0x10780017fff7fff" in
+  let compare ~hinted ~self_jump =
+    let offset = if self_jump then Z.zero else Z.of_int 2 in
+    let program = {Program.data=[|jump; offset; jump; Z.of_int (-2)|];
+                   builtins=[]; main=Some 0; start=Some 0; end_=Some 0;
+                   hints=[]; references=[||]; identifiers=Hashtbl.create 0} in
+    let create () =
+      let r = Runner.initialize ~proof:true {Cairo_run.default_config with layout="plain"} program in
+      let hits = ref 0 in
+      let r = if hinted then {r with hints=[|[|(fun _ -> incr hits)|]|]} else r in
+      Runner.run_for_steps r 34;
+      r, hits in
+    let ordinary, expected_hits = create () and padded, hits = create () in
+    Runner.run_for_steps ordinary 30;
+    Resources.run_until_next_power_of_2 padded;
+    assert (!hits = !expected_hits);
+    assert (padded.vm.steps = 64 && padded.vm.pc = ordinary.vm.pc);
+    assert (padded.vm.tlen = ordinary.vm.tlen && padded.vm.last_trace = ordinary.vm.last_trace);
+    for i = 0 to ordinary.vm.tlen - 1 do
+      assert (Segment.raw_get ordinary.vm.trace i = Segment.raw_get padded.vm.trace i)
+    done;
+    assert (Resources.perm_range_check_limits padded = Resources.perm_range_check_limits ordinary);
+    assert (Resources.memory_holes padded = Resources.memory_holes ordinary);
+    assert (padded.acc.count = ordinary.acc.count && padded.acc.bits = ordinary.acc.bits)
+  in
+  compare ~hinted:false ~self_jump:true;
+  compare ~hinted:true ~self_jump:true;
+  compare ~hinted:false ~self_jump:false;
+  (* A large AP uses a full three-word trace entry. Include the preceding
+     packed entry and exercise growth and a final partial doubling. *)
+  let vm = Vm.create ~trace:true in
+  Cpu.record_trace vm 0 1 2 2;
+  Cpu.record_trace vm 0 2 (1 lsl 25) 2;
+  let trace, used = Segment.repeat_trace_tail vm.trace ~first:vm.last_trace ~used:vm.tlen ~copies:1347 in
+  assert (used = 1 + 3 * 1348);
+  for i = 0 to 1347 do
+    let pos = 1 + 3 * i in
+    assert (Resources.trace_entry trace pos = (pos + 3, 0, 2, 1 lsl 25, 2))
+  done

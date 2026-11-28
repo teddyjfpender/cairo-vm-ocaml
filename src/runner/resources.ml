@@ -401,4 +401,30 @@ let check_used_cells r =
   check_memory_usage r;
   check_diluted_check_usage r
 
-let run_until_next_power_of_2 r = run_for_steps r (next_pow2 r.vm.steps - r.vm.steps)
+(* After one ordinary step of Cairo's unhinted [jmp rel 0] proof epilogue,
+   all operands, registers, accessed cells and range-check bounds are fixed.
+   Preserve every subsequent trace row, including the final row used by AIR. *)
+let padding_jump = Z.of_string "0x10780017fff7fff"
+
+let run_until_next_power_of_2 r =
+  let vm = r.vm in
+  let steps = next_pow2 vm.steps - vm.steps in
+  let fixed_point =
+    steps > 1 && r.proof && vm.pc_seg = 0 && vm.pc = r.end_pc && vm.pc >= 0 &&
+    (vm.pc >= Array.length r.hints || Array.length r.hints.(vm.pc) = 0) &&
+    let word = Vm.get vm 0 vm.pc in
+    Felt.is_felt word && Z.equal (Felt.to_z word) padding_jump &&
+    Vm.get vm 0 (vm.pc + 1) = Felt.zero in
+  if fixed_point then begin
+    run_for_steps r 1;
+    if vm.trace_on then begin
+      update_accessed r;
+      let width = vm.tlen - vm.last_trace in
+      let trace, finish = Segment.repeat_trace_tail vm.trace ~first:vm.last_trace ~used:vm.tlen ~copies:(steps - 1) in
+      vm.trace <- trace;
+      vm.last_trace <- finish - width;
+      vm.tlen <- finish;
+      r.acc.cursor <- finish
+    end;
+    vm.steps <- vm.steps + steps - 1
+  end else run_for_steps r steps

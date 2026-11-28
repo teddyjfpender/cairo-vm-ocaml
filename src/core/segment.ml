@@ -19,3 +19,22 @@ let range_marked map off length =
   if off < 0 || off >= Bytes.length map || length <= 0 then false
   else if length = 1 then Bytes.unsafe_get map off <> '\000'
   else contains_mark map off (min length (Bytes.length map - off))
+
+(* Repeat the last packed entry, or full register triple, in a trace. *)
+let repeat_trace_tail trace ~first ~used ~copies =
+  let width = used - first in
+  if first < 0 || used > slen trace || (width <> 1 && width <> 3) || copies < 0 ||
+     copies > (max_int - used - 2) / width then invalid_arg "Invalid padding trace length";
+  let finish = used + copies * width in
+  let trace = if finish > slen trace then seg_grow trace (finish + 2) else trace in
+  if width = 1 then BA.fill (BA.sub trace used copies) (raw_get trace first)
+  else begin
+    let rec fill filled =
+      let n = min filled (finish - first - filled) in
+      if n > 0 then begin
+        BA.blit (BA.sub trace first n) (BA.sub trace (first + filled) n);
+        fill (filled + n)
+      end in
+    fill width
+  end;
+  trace, finish

@@ -35,3 +35,7 @@ val snapshot : ?off:int -> seg -> int -> seg
 
 val range_marked : bytes -> int -> int -> bool
 (** Whether any cell in a marked-address bitmap range is set. *)
+
+
+val repeat_trace_tail : seg -> first:int -> used:int -> copies:int -> seg * int
+(** Append [copies] instances of the final encoded trace entry, growing the buffer if needed. *)
