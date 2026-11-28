@@ -22,11 +22,11 @@ let felt = function
   | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
   | j -> felt_slow j
 
-type input = { document : Yojson.Safe.t; source : string; virtual_os : bool }
+type input = { document : Yojson.Safe.t; source : string; virtual_os : bool; prepared : Legacy_class.Prepared.t option }
 
 let classes_cache = Domain.DLS.new_key Json_reader.create_cache
 
-let read_input ?cache ~virtual_os path =
+let read_input ?cache ?(prepare=false) ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
@@ -44,9 +44,12 @@ let read_input ?cache ~virtual_os path =
     List.iter (fun block ->
         List.iter Os_calls.validate_virtual_resources (U.to_list (U.member "tx_execution_infos" block))) blocks
   end;
-  {document=hints; source; virtual_os}
+  let prepared = if prepare then
+      Legacy_class.Prepared.start (U.member "deprecated_compiled_classes" (U.member "os_input" hints))
+    else None in
+  {document=hints; source; virtual_os; prepared}
 
-let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os} =
+let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; prepared} =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let rng = lazy (
@@ -68,7 +71,7 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
     | Some f -> f (make_ctx prog scopes h)
     | None -> Hints.compile prog scopes h in
   reg Hint_codes.relocate_segment (Segments.relocate ~allow_felt:true);
-  Legacy_class.register ~classes:deprecated ~felt ~compile reg;
+  Legacy_class.register ?prepared ~classes:deprecated ~felt ~compile reg;
   let segment vm = Felt.reloc (Vm.add_segment vm) 0 in
   let state_entries = ref None and class_entries = ref None in
   let pointer vm = function Some ptr -> ptr | None -> segment vm in
@@ -179,7 +182,7 @@ let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof
       try Some (Domain.spawn (fun () ->
           let gc = Gc.get () in
           if gc.minor_heap_size < words then Gc.set {gc with minor_heap_size = words};
-          read_input ~virtual_os path)) with Failure _ -> None in
+          read_input ~prepare:true ~virtual_os path)) with Failure _ -> None in
   let program =
     match Program.load_file program_path with
     | p -> p

@@ -9,6 +9,7 @@
 #include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/hash.h>
+#include <caml/threads.h>
 #include "field.h"
 #include "trace_encoding.h"
 #include "constants.h"
@@ -604,14 +605,17 @@ enum { SMALL_PAIR_SETS = 32, BATCH_PAIR_SETS = 4096 };
 static pthread_once_t pair_key_once = PTHREAD_ONCE_INIT;
 static pthread_key_t pair_key;
 static int pair_key_ready;
-static _Thread_local struct pair_set *batch_pairs;
+static _Thread_local struct {
+  struct pair_set *batch;
+  struct pair_set small[SMALL_PAIR_SETS];
+} pair_cache;
 static void create_pair_key(void) { pair_key_ready = pthread_key_create(&pair_key, free) == 0; }
 
 /* An image-backed runner reuses compiled classes across independent VMs.
    Store complete keys and canonical results outside each VM's felt pool. */
 value cvm_batch_pedersen_cache(value enable) {
-  int was_active = batch_pairs != NULL;
-  if (!Bool_val(enable)) batch_pairs = NULL;
+  int was_active = pair_cache.batch != NULL;
+  if (!Bool_val(enable)) pair_cache.batch = NULL;
   else if (!was_active) {
     pthread_once(&pair_key_once, create_pair_key);
     if (pair_key_ready) {
@@ -620,18 +624,29 @@ value cvm_batch_pedersen_cache(value enable) {
         sets = calloc(BATCH_PAIR_SETS, sizeof *sets);
         if (sets && pthread_setspecific(pair_key, sets)) { free(sets); sets = NULL; }
       }
-      batch_pairs = sets;
+      pair_cache.batch = sets;
     }
   }
   return Val_bool(was_active);
 }
 
-static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  static _Thread_local struct pair_set small_pairs[SMALL_PAIR_SETS];
+static inline struct pair_set *pedersen_set(const u64 a[4], const u64 b[4]) {
   u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
   unsigned hash = h ^ (h >> 32);
-  struct pair_set *set = batch_pairs ? &batch_pairs[hash & (BATCH_PAIR_SETS - 1)]
-                                     : &small_pairs[hash & (SMALL_PAIR_SETS - 1)];
+  return pair_cache.batch ? &pair_cache.batch[hash & (BATCH_PAIR_SETS - 1)]
+                          : &pair_cache.small[hash & (SMALL_PAIR_SETS - 1)];
+}
+
+static inline void save_pedersen_pair(struct pair_set *set, const u64 a[4], const u64 b[4], const u64 out[4]) {
+  struct pair_entry *entry = &set->ways[set->next++ & 3];
+  memcpy(entry->a, a, sizeof entry->a);
+  memcpy(entry->b, b, sizeof entry->b);
+  memcpy(entry->hash, out, sizeof entry->hash);
+  entry->valid = 1;
+}
+
+static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
+  struct pair_set *set = pedersen_set(a, b);
   for (int way = 0; way < 4; ++way) {
     struct pair_entry *e = &set->ways[way];
     if (e->valid && eq4(e->a, a) && eq4(e->b, b)) {
@@ -639,7 +654,6 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
       return;
     }
   }
-  struct pair_entry *entry = &set->ways[set->next++ & 3];
   jac acc;
   pedersen_point(&acc, a, b);
   u64 zi[4], x[4];
@@ -647,10 +661,47 @@ static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
   mont_sqr(zi, zi);
   mont_mul(x, acc.x, zi);
   from_mont(out, x);
-  memcpy(entry->a, a, sizeof entry->a);
-  memcpy(entry->b, b, sizeof entry->b);
-  memcpy(entry->hash, out, sizeof entry->hash);
-  entry->valid = 1;
+  save_pedersen_pair(set, a, b, out);
+}
+
+/* A legacy class commits to the hash chain H(0, word[0]), H(h, word[1]), ...
+   Own the packed limbs while outside the runtime so other domains can collect.
+   Only native-computed results are installed, using the ordinary full-key cache. */
+struct pedersen_step { u64 word[4], result[4]; };
+value cvm_compute_pedersen_chain(value bytes) {
+  CAMLparam1(bytes);
+  size_t len = caml_string_length(bytes);
+  if (!len || len % sizeof(struct pedersen_step) || len / sizeof(struct pedersen_step) > 8192)
+    CAMLreturn(Val_false);
+  struct pedersen_step *steps = malloc(len);
+  if (!steps) CAMLreturn(Val_false);
+  memcpy(steps, Bytes_val(bytes), len);
+  caml_release_runtime_system();
+  const u64 zero[4] = {0};
+  const u64 *previous = zero;
+  for (size_t i = 0; i < len / sizeof *steps; ++i) {
+    pedersen(steps[i].result, previous, steps[i].word);
+    previous = steps[i].result;
+  }
+  caml_acquire_runtime_system();
+  memcpy(Bytes_val(bytes), steps, len);
+  free(steps);
+  CAMLreturn(Val_true);
+}
+
+value cvm_install_pedersen_chain(value bytes) {
+  value previous_mode = cvm_batch_pedersen_cache(Val_true);
+  if (!pair_cache.batch) return previous_mode;
+  size_t len = caml_string_length(bytes);
+  const unsigned char *data = Bytes_val(bytes);
+  u64 previous[4] = {0};
+  for (size_t i = 0; i < len / sizeof(struct pedersen_step); ++i) {
+    struct pedersen_step step;
+    memcpy(&step, data + i * sizeof step, sizeof step);
+    save_pedersen_pair(pedersen_set(previous, step.word), previous, step.word, step.result);
+    memcpy(previous, step.result, sizeof previous);
+  }
+  return previous_mode;
 }
 
 static int verify_pedersen_range(const u64 *pool, const intnat *cells, intnat first,

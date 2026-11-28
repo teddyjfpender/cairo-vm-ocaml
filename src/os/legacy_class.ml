@@ -66,8 +66,48 @@ let hinted_hash cls =
   let digest = Keccak.keccak256 (Bytes.of_string raw) in
   Felt.of_z (Z.extract (z_of_be (Bytes.unsafe_to_string digest)) 0 250)
 
-let register ~classes ~felt ~compile reg =
-  let remaining = ref [] and loaded = ref None in
+module Prepared : sig
+  type t
+  val start : Yojson.Safe.t -> t option
+  val install : t -> string -> bool option
+end = struct
+  type t = string * bytes option Lazy.t
+  external compute : bytes -> bool = "cvm_compute_pedersen_chain"
+  external install_computed : bytes -> bool = "cvm_install_pedersen_chain" [@@noalloc]
+
+  (* Only materialize a bounded chain worth computing concurrently with loading
+     the OS program. The ordinary class loader validates every field as usual. *)
+  let start classes =
+    if Sys.big_endian then None else
+    try
+      let select best (hash, cls) =
+        match U.member "data" (U.member "program" cls) with
+        | `List words ->
+            let n = List.length words in
+            if n >= 256 && n <= 8192 && n > fst best then n, Some (hash, words) else best
+        | _ -> best in
+      let len, selected = List.fold_left select (0, None) (U.to_assoc classes) in
+      Option.map (fun (hash, words) ->
+          let packed = Bytes.make (64 * len) '\000' in
+          List.iteri (fun i -> function
+              | `String w ->
+                  let z = Z.of_string w in
+                  if Z.sign z < 0 || Z.geq z Felt.p then raise Exit;
+                  let bits = Z.to_bits z in
+                  Bytes.blit_string bits 0 packed (64 * i) (String.length bits)
+              | _ -> raise Exit) words;
+          let task = Domain.spawn (fun () -> if compute packed then Some packed else None) in
+          hash, lazy (Domain.join task)) selected
+    with Exit | Invalid_argument _ | Failure _ | Yojson.Safe.Util.Type_error _ -> None
+
+  let install (key, chain) hash =
+    if String.equal key hash then Option.map install_computed (Lazy.force chain) else None
+end
+
+external restore_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
+
+let register ?prepared ~classes ~felt ~compile reg =
+  let remaining = ref [] and loaded = ref None and previous_cache = ref None in
   reg "LoadDeprecatedClassFacts" (fun c vm ->
       remaining := List.sort (fun (a,_) (b,_) -> Z.compare (Z.of_string a) (Z.of_string b)) classes;
       set_val vm c "n_compiled_class_facts" (Felt.small (List.length classes));
@@ -91,12 +131,15 @@ let register ~classes ~felt ~compile reg =
           let code = gen_arg vm (Array.to_list (Array.map Felt.of_z p.data)) in
           write_arg vm base ([Felt.of_z (const_z c "DEPRECATED_COMPILED_CLASS_VERSION")] @ external_ @ l1 @ ctor
             @ [Felt.small (List.length p.builtins); names; hinted_hash j; Felt.small (Array.length p.data); code]);
+          previous_cache := Option.bind prepared (fun pending -> Prepared.install pending hash);
           loaded := Some (felt (`String hash), p, code);
           set_val vm c "compiled_class" base);
   reg "LoadDeprecatedClass" (fun c vm ->
       match !loaded with
       | None -> fail "Missing deprecated class"
       | Some (hash, p, code) ->
+          Option.iter (fun mode -> ignore (restore_cache mode)) !previous_cache;
+          previous_cache := None;
           if not (Felt.equal hash (get_member vm c "compiled_class_fact" ["hash"])) then
             fail "Inconsistent deprecated class hash";
           List.iter (fun (pc,hints) ->
