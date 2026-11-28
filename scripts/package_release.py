@@ -37,6 +37,10 @@ def main():
         prefix = os.environ.get(variable)
         if prefix and prefix != "system":
             files[f"licenses/{name}.txt"] = Path(prefix) / source
+    if os.environ.get("OXC_PIE_ARCHIVE"):
+        notices = Path(os.environ["OXC_PIE_ARCHIVE"]).parent / "licenses"
+        for notice in notices.iterdir():
+            files[f"licenses/pie-archive/{notice.name}"] = notice
     name = f"oxcairo-{args.tag}-{args.target}"
     args.output_dir.mkdir(parents=True, exist_ok=True)
     archive = args.output_dir / (name + ".tar.gz")

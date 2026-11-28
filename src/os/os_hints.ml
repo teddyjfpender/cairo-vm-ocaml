@@ -41,7 +41,7 @@ let read_input ?cache ?(prepare=false) ~virtual_os path =
     else None in
   {document=hints; source; virtual_os; prepared}
 
-let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; prepared} =
+let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; prepared} =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let rng = lazy (
@@ -71,7 +71,7 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
   let begin_transactions = Os_transactions.register ~os_program ~source ~virtual_os ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
-  Os_da.register ~set_pages reg;
+  Os_da.register ?entropy_source ~set_pages reg;
   Os_sha.register reg;
   Os_secp.register reg;
   Secp.register_cairo0 reg;
@@ -133,7 +133,7 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
       set_val vm c "full_output" (of_bool full));
   compile
 
-let initialize_input ?on_da ?image ?layout_def ?(record_trace=true) ~proof hints cfg prog =
+let initialize_input ?entropy_source ?on_da ?image ?layout_def ?(record_trace=true) ~proof hints cfg prog =
   let runner = ref None in
   let trace = record_trace || cfg.Runner.trace || proof in
   (* Execution-mode class witnesses only query segment ranges registered while
@@ -145,15 +145,15 @@ let initialize_input ?on_da ?image ?layout_def ?(record_trace=true) ~proof hints
     if watch then Vm.watched_range r.Runner.vm ptr length else Resources.range_accessed r ptr length in
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
-  let compile_hint = register ?on_da ~os_program:prog ~watch ~accessed ~set_pages hints in
+  let compile_hint = register ?entropy_source ?on_da ~os_program:prog ~watch ~accessed ~set_pages hints in
   let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof { cfg with Runner.trace = trace } prog in
   runner := Some r;
   r
 
-let initialize ?on_da ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
+let initialize ?entropy_source ?on_da ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
   let cache = Option.map (fun _ -> Domain.DLS.get classes_cache) image in
   let hints = read_input ?cache ~virtual_os path in
-  initialize_input ?on_da ?image ?layout_def ?record_trace ~proof hints cfg prog
+  initialize_input ?entropy_source ?on_da ?image ?layout_def ?record_trace ~proof hints cfg prog
 
 let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path cfg program_path =
   (* Parsing only produces immutable program and witness data. VM setup and

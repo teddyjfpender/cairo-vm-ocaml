@@ -28,7 +28,7 @@ let () =
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
   let secure = ref None and allow_missing = ref None and stats = ref false in
   let disable_trace_padding = ref false in
-  let compression_level = ref 0 in
+  let compression_level = ref 0 and explicit_level = ref false and archive_profile = ref Pie_zip.Fast in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let pack_program = ref None in
@@ -58,7 +58,10 @@ let () =
       ("--proof_mode", Arg.Set proof, " run in canonical proof mode");
       ("--air_public_input", Arg.String (fun s -> air_public := Some s), "FILE  write the AIR public input (proof mode)");
       ("--air_private_input", Arg.String (fun s -> air_private := Some s), "FILE  write the AIR private input (proof mode)");
-      ("--pie_compression_level", Arg.Set_int compression_level, "N  PIE compression, 0 stores and 1-9 deflate");
+      ("--pie_profile", Arg.Symbol (["fast"; "rust-3.2"], (function
+          | "rust-3.2" -> archive_profile := Pie_zip.Rust_3_2
+          | _ -> archive_profile := Pie_zip.Fast)), "PROFILE  Cairo PIE archive encoding");
+      ("--pie_compression_level", Arg.Int (fun n -> explicit_level := true; compression_level := n), "N  PIE compression, 0 stores and 1-9 deflate");
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
@@ -106,6 +109,8 @@ let () =
   if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
+  if !archive_profile = Pie_zip.Rust_3_2 && !explicit_level then
+    usage_error "--pie_profile rust-3.2 fixes the compression level";
   if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
@@ -211,9 +216,9 @@ let () =
       (fun path ->
         match !pie_input with
         | Some res ->
-            Pie_run.write_output ~compression_level:!compression_level ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra res path
+            Pie_run.write_output ~profile:!archive_profile ~compression_level:!compression_level ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra res path
         | None ->
-            Pie.write ~compression_level:!compression_level r ~main:(Runner.entry_pc cfg r.prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra path)
+            Pie.write ~profile:!archive_profile ~compression_level:!compression_level r ~main:(Runner.entry_pc cfg r.prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra path)
       !pie_out;
     if !stats then
       Printf.eprintf "generic=%d hint_pcs=%d " !Cpu.generic_steps !Cpu.hint_steps;
