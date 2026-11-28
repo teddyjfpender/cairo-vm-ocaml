@@ -63,5 +63,6 @@ val initialize :
 val run_for_steps : t -> int -> unit
 (** Execute the given number of steps with hints. *)
 
-val run_until_end : t -> unit
+exception Step_limit
+val run_until_end : ?max_steps:int -> t -> unit
 (** Execute to the end of the program (proof mode: one step past [__end__]). *)

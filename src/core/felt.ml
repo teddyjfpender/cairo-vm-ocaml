@@ -91,7 +91,13 @@ let () = c_init ()
 let scratch = 64 (* slots 0..63 are scratch for multi-slot builtins *)
 (* One fixed reservation of lazily committed pages: slots never move, so no
    growth copies, and running out fails explicitly. *)
-let pool = pool_make (1 lsl 28)
+let pool =
+  let slots = match Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" with
+    | Some value -> (match int_of_string_opt value with
+        | Some bytes when bytes > 0 -> max 65536 (min (1 lsl 28) (bytes / 128))
+        | _ -> invalid_arg "invalid host memory budget")
+    | None -> 1 lsl 28 in
+  pool_make slots
 let capacity = Bigarray.Array1.dim pool lsr 5 (* slots actually reserved *)
 let pool_n = ref scratch
 

@@ -37,6 +37,8 @@ nav:
   - Architecture: architecture.md
   - Reference:
       - Version 0.2 qualification: release-0.2.md
+      - VM execution contract: EXECUTION_CONTRACT.md
+      - OS host protocol: os-host.md
       - Parity: parity.md
       - Benchmarks: benchmarks.md
   - Contributing: contributing.md

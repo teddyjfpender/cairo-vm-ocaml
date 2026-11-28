@@ -23,6 +23,7 @@ let delegate message =
           | Unix.Unix_error (e, _, _) -> prerr_endline (path ^ ": " ^ Unix.error_message e); exit 2)
 
 let () =
+  let max_steps = ref None in
   let legacy = ref false in
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
@@ -75,6 +76,7 @@ let () =
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
       ("--version", Arg.Unit version, " print version");
+      ("--max_steps", Arg.Int (fun n -> if n < 0 then raise (Arg.Bad "negative step limit"); max_steps := Some n), "N  cap native OS execution steps");
       ("--stats", Arg.Set stats, " print step count and timing to stderr");
     ]
   in
@@ -111,6 +113,8 @@ let () =
   if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
+  if Option.is_some !max_steps && (!proof || (not !from_pie && Option.is_none !os_hints)) then
+    usage_error "--max_steps requires OS execution or PIE replay";
   if !archive_profile = Pie_zip.Rust_3_2 && !explicit_level then
     usage_error "--pie_profile rust-3.2 fixes the compression level";
   if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
@@ -163,6 +167,7 @@ let () =
     let r, t1, t2 = try
       if !from_pie then begin
         let pie,source = Pie_file.read_deferred file in
+        Option.iter (fun limit -> if pie.n_steps > limit then raise Runner.Step_limit) !max_steps;
         let t1 = Unix.gettimeofday () in
         let res =
           Pie_run.run ~source ~allow_legacy_instructions:!legacy ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
@@ -184,7 +189,7 @@ let () =
           | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         r.vm.allow_legacy_instructions <- !legacy;
-        Runner.run_until_end r;
+        Runner.run_until_end ?max_steps:!max_steps r;
         r, t1, Unix.gettimeofday () in
       let r, t1, t2 = if Option.is_some !bootloader_input then Resources.with_pedersen_verifier execute
         else execute ignore in
@@ -231,8 +236,24 @@ let () =
   | Errors.Vm_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
+  | Os_hints.Randomized_encryption -> prerr_endline "Encryption requires a fresh private entropy draw"; exit 6
+  | Runner.Step_limit -> prerr_endline "Cairo step limit exceeded"; exit 20
+  | Out_of_memory -> prerr_endline "VM memory budget exhausted"; exit 21
   | Program.Parse_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
+  | Unix.Unix_error (err, _, _) when Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" <> None ->
+      let code = match err with
+        | Unix.ENOMEM -> 21 | Unix.EFBIG -> 23 | Unix.EMFILE | Unix.ENFILE -> 24
+        | Unix.ENOSPC -> 25 | _ when Unix.error_message err = "Disk quota exceeded" -> 25 | _ -> 27 in
+      prerr_endline (Unix.error_message err); exit code
+  | Sys_error msg when Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" <> None ->
+      (* Stdlib channels retain strerror but discard errno. The worker fixes LC_ALL=C. *)
+      let matches err = let reason = Unix.error_message err in
+        msg = reason || String.ends_with ~suffix:(": " ^ reason) msg in
+      let code = if matches Unix.ENOMEM then 21 else if matches Unix.EFBIG then 23
+        else if matches Unix.EMFILE || matches Unix.ENFILE then 24
+        else if matches Unix.ENOSPC || String.ends_with ~suffix:"Disk quota exceeded" msg then 25 else 27 in
+      prerr_endline msg; exit code
   | Sys_error msg | Failure msg | Yojson.Json_error msg -> prerr_endline ("Error: " ^ msg); exit 1
   | Yojson.Safe.Util.Type_error (msg, _) -> prerr_endline ("Invalid program: " ^ msg); exit 1

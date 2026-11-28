@@ -12,6 +12,8 @@ let configure_batch_gc () =
                     space_overhead = max gc.space_overhead 250}
   end
 
+exception Randomized_encryption
+
 let felt = Os_input.felt
 
 type input = { document : Yojson.Safe.t; source : string; virtual_os : bool; prepared : Legacy_class.Prepared.t option }
@@ -44,6 +46,10 @@ let read_input ?cache ?(prepare=false) ~virtual_os path =
 let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; prepared} =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
+  (match U.member "public_keys" config with
+   | `List (_ :: _) when Sys.getenv_opt "OXCAIRO_HOST_DETERMINISTIC" = Some "1" ->
+       raise Randomized_encryption
+   | _ -> ());
   let rng = lazy (
       let hashes = List.map (fun b -> felt (U.member "new_block_hash" b)) blocks in
       let salt = match U.member "rng_seed_salt" config with `Null -> Felt.zero | v -> felt v in
