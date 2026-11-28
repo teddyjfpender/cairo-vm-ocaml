@@ -20,6 +20,8 @@ jobs:
           eval "$(opam env --switch "$OXCAML_SWITCH")"
           dune build --profile release
           dune runtest --profile release
+      - name: Check corpus receipt and paired-job accounting
+        run: python3 test/os_corpus.py
       - name: Exercise the installed release products
         run: |
           tag="v$(sed -n 's/^version: "\(.*\)"/\1/p' cairo-vm-ocaml.opam)"
