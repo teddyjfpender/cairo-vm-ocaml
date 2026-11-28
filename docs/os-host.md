@@ -73,7 +73,7 @@ jq -n --arg revision "$revision" --arg digest "$packed_sha" \
   '{revision: $revision, program_sha256: $digest}' > apollo-packed-profile.json
 ```
 
-Set the profile in the service environment. Starting from the generation request above, change only the program path. The witness and output fields still name the service-assigned files.
+Distribute this exact packed file with its profile to each host. A separately regenerated file can have a different digest. Set the profile in the service environment. Starting from the generation request above, change only the program path. The witness and output fields still name the service-assigned files.
 
 ```sh
 export OXCAIRO_OS_PROFILE=/srv/os/apollo-packed-profile.json
