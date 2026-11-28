@@ -40,3 +40,16 @@ jobs:
             --expect-rejections test/parity_fixtures/core-rejections.json --verbose
           python3 test/parity.py "$rust" "$vm" test/parity_fixtures/malformed \
             --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose
+      - uses: actions/checkout@v4
+        with:
+          repository: starknet-innovation/cairo-vm-lean
+          ref: 6cae3dd895e89ddde776b589ad2612b0f71d96b1
+          path: _lean-model
+      - name: Build the pinned Lean execution semantics and check three-way agreement
+        env:
+          LEAN_CAIRO_MODEL: ${{ github.workspace }}/_lean-model
+          LEAN_NUM_THREADS: '3'
+        run: |
+          sudo apt-get update && sudo apt-get install -y elan
+          test/lean/prepare.sh
+          python3 test/lean/check.py _rust/target/release/cairo-vm-cli _build/default/bin/main.exe
