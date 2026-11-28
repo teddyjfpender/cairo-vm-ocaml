@@ -7,6 +7,7 @@ All timings here use the PGO executable at `d884acc` on the 36 GiB M4 Max. The b
 | Execution mode | Paired runs | Rust total | OCaml total | Total ratio | Median paired case ratio | Cases at 10× |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Fresh process, full compiler JSON | 350 | 39.04 s | 4.97 s | 7.85× | 2.18× | 19/70 |
+| Fresh process, full compiler JSON, lower host load | 350 | 28.07 s | 2.84 s | 9.89× | 2.68× | 19/70 |
 | Fresh process, packed compiler | 210 | 36.27 s | 2.87 s | 12.65× | 3.76× | 19/70 |
 | Persistent workers, same input after warmup | 350 | 6.02 s | 1.03 s | 5.83× | 5.30× | 0/70 |
 | Persistent workers, shuffled distinct inputs | 350 | 8.97 s | 1.48 s | 6.06× | 5.80× | 3/70 |
@@ -35,6 +36,7 @@ Each worker request starts a new secure VM. The shuffled mode keeps a single pro
 | 1024 STRK transfers, 16 recipients | stock | 2.523 s | 0.164 s | 15.32× |
 | 2048 STRK transfers, 2048 recipients | stock | 8.992 s | 0.479 s | 18.71× |
 | 4096 STRK transfers, 16 recipients | verified | 5.820 s | 0.506 s | 11.48× |
+| 4096 STRK transfers, 4096 recipients | verified | 17.299 s | 0.949 s | 18.19× |
 
 The stock Rust rows use the upstream sequencer entry point. The checked runner executes the same hint processor, return checks and auto-deductions and omits unrequested relocated output objects. These contract workloads use sequencer-generated witnesses. The historical production data below consists of previously executed PIEs.
 
