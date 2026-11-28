@@ -1,0 +1,12 @@
+{
+  "prime": "0x800000000000011000000000000000000000000000000000000000000000001",
+  "builtins": [],
+  "data": [
+    "0x208b7fff7fff7ffe"
+  ],
+  "identifiers": {},
+  "hints": {},
+  "reference_manager": {
+    "references": []
+  }
+}
