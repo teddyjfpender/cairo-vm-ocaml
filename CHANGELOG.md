@@ -4,7 +4,7 @@
 
 - Execute Starknet OS, Virtual OS and block aggregation with the pinned sequencer's block witnesses. Coverage includes Cairo 0 and Cairo 1 calls, rollback, STRK transfers and blob commitments.
 - Replay large OS PIEs with bounded memory, stream output archives, and embed secure replay through the versioned C API. The binary distribution includes the CLI, prepared OS worker, shared library and C header.
-- Verify ten Stwo proofs, including direct OS genesis and multiblock proofs and four OS tasks inside the proof-mode bootloader. Independent Rust runs supply the reference execution artifacts.
+- Verify ten Stwo proofs, including direct OS genesis and multiblock proofs and four OS tasks inside the proof-mode bootloader. Independent Rust runs supply the reference execution artifacts. The release assets include the ten verified proofs in `oxcairo-v0.2.0-stwo-proofs.tar.gz` and its SHA-256 checksum.
 - Load large compiler programs faster, reuse prepared programs between requests, and track class memory accesses directly during traced OS execution. End-to-end comparisons cover cold processes, persistent workers, artifact generation and large PIEs. Performance on repeated storage and short native scenarios remains below the across-the-board 10× goal. [0.2 qualification](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/afc9719298d0d6e68743b5ab079eed602a3d1e9c/docs/release-0.2.md)
 - Accept omitted, null and empty attributes on historical Cairo 0 witnesses. OS and syscall hints share canonical field decoding and advance directly through multiblock witnesses.
 - Require positive output and artifact evidence or matching reviewed diagnostics in differential tests. CI exercises missing artifacts, timeouts, crashes and oracle disagreements.
