@@ -1,51 +1,7 @@
 module J = Yojson.Safe
 module U = Yojson.Safe.Util
 
-type expr =
-  | Reg_ap
-  | Reg_fp
-  | Int of Z.t
-  | Deref of expr
-  | Add of expr * expr
-  | Sub of expr * expr
-  | Mul of expr * expr
-  | Neg of expr
-  | Tuple of expr list
-  | Cast of expr * string
-
-type reference = {
-  r_expr : expr; (* the full reference value, e.g. [cast(fp + (-3), felt-pointer)] *)
-  r_group : int;
-  r_offset : int;
-}
-
-type hint = {
-  code : string;
-  scopes : string list;
-  h_group : int;
-  h_offset : int;
-  ref_ids : (string * int) list; (* full name -> reference index *)
-}
-
-type ident = {
-  i_type : string;
-  i_value : Z.t option;
-  i_pc : int option;
-  i_destination : string option;
-  i_members : (string * int) list; (* struct member offsets *)
-  i_member_types : (string * string) list;
-}
-
-type t = {
-  data : Z.t array;
-  builtins : string list;
-  main : int option;
-  start : int option;
-  end_ : int option;
-  hints : (int * hint list) list;
-  references : reference array;
-  identifiers : (string, ident) Hashtbl.t;
-}
+include Program_types
 
 (* ---- expression parser ---- *)
 
@@ -289,6 +245,15 @@ let load_json j =
   load_with_identifiers identifiers j
 
 let load_file path =
-  let identifiers = Hashtbl.create 1024 in
-  let j = Json_reader.from_file ~identifiers:(add_identifier identifiers) path in
-  load_with_identifiers identifiers j
+  let contents = In_channel.with_open_bin path In_channel.input_all in
+  if String.starts_with ~prefix:Packed_program.magic contents then
+    (try Packed_program.decode contents
+     with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
+  else
+    let identifiers = Hashtbl.create 1024 in
+    let j = Json_reader.from_string ~identifiers:(add_identifier identifiers) contents in
+    load_with_identifiers identifiers j
+
+let pack program =
+  try Packed_program.encode program
+  with Packed_program.Invalid reason -> raise (Parse_error ("Cannot pack program: " ^ reason))

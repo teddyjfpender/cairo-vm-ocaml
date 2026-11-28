@@ -95,3 +95,30 @@ let () =
   match Program_image.load image p (fresh ()) with
   | exception Invalid_argument _ -> ()
   | () -> failwith "stale program image accepted"
+
+let () =
+  let open Program in
+  let huge = Z.shift_left Z.minus_one 300 in
+  let e = Tuple [Reg_ap; Reg_fp; Deref (Int huge); Add (Int Z.zero, Reg_ap);
+                 Sub (Reg_fp, Int Z.one); Neg (Mul (Reg_fp, Cast (Reg_ap, "foo*")))] in
+  let h = {code="shared string"; scopes=["shared string"]; h_group=(-3); h_offset=9;
+           ref_ids=["a",0; "a.b",1]} in
+  let ids = Hashtbl.create 1 in
+  Hashtbl.add ids "__main__.main" {i_type="function"; i_value=Some huge; i_pc=Some 0;
+    i_destination=Some "shared string"; i_members=["a",3]; i_member_types=["a","foo*"]};
+  let p = {data=[|huge; Z.zero; huge; Z.one|]; builtins=["output"]; main=Some 0;
+           start=None; end_=Some 1; hints=[0,[h;h]]; identifiers=ids;
+           references=[|{r_expr=e; r_group=3; r_offset=min_int}; {r_expr=e; r_group=1; r_offset=max_int}|]} in
+  let packed = pack p in
+  with_json packed (fun path ->
+      let q = load_file path in
+      assert (q.data = p.data && q.builtins = p.builtins && q.main = p.main
+              && q.start = p.start && q.end_ = p.end_ && q.references = p.references
+              && q.hints = p.hints && Hashtbl.find ids "__main__.main" = Hashtbl.find q.identifiers "__main__.main");
+      assert (q.references.(0).r_expr == q.references.(1).r_expr);
+      assert (q.data.(0) == q.data.(2)));
+  List.iter (fun malformed ->
+      with_json malformed (fun path -> match load_file path with
+        | exception Parse_error _ -> ()
+        | _ -> failwith "invalid packed program accepted"))
+    [packed ^ "x"; String.sub packed 0 (String.length packed-1); Packed_program.magic ^ "\255"]

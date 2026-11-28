@@ -124,3 +124,14 @@ For a standalone C or Rust process, build the shared library with
 declares `oxcairo_replay_v1`. The first call initializes the embedded OCaml
 runtime. Make all calls from the same OS thread. The function returns zero on
 success and can copy an error message into a caller-owned buffer.
+
+## Reusing a compiled program
+
+A service that launches a fresh native process for each block can pack its compiler JSON once. The packed file holds program words, references, identifiers and hint descriptions. The runner initializes a fresh VM on every invocation.
+
+```sh
+cairo-vm-cli os.json --pack_program os.oxcp
+cairo-vm-cli os.oxcp --os_hints block.json --layout all_cairo --print_output
+```
+
+Keep the compiler JSON for Rust comparisons. Repack after changing the compiled program. The loader checks the format version and table bounds before execution.

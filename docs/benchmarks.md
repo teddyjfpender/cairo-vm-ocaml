@@ -11,6 +11,10 @@ On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revisi
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Native program startup
+
+On the M4 Max, thirty alternating cold pairs compared the same OCaml executable reading compiler JSON and reading the packed version of that program. The full genesis run was 2.15× faster with the packed input, the account flow 1.63× and the 27-transaction syscall flow 1.18×. At 4,096 storage invokes the ratio was 1.004×. All fifteen OS fixtures checked at this revision matched Rust's five PIE member hashes with packed input. [JSON and packed timings](../bench/results/native-packed-program-m4-max.csv).
+
 ## Profile-guided native build
 
 On a Clang-based OxCaml switch, run `python3 scripts/build_pgo.py OS_PROGRAM.json` to train the native kernels on four saved sequencer witnesses and build `_build/pgo/cairo-vm-cli`. Training runs serially by default. The script uses the compiler's LLVM instrumentation and requires a compatible `llvm-profdata`. Both build trees are temporary. The ordinary Dune release profile works with GCC or Clang.

@@ -28,6 +28,7 @@ let () =
   let secure = ref None and allow_missing = ref None and stats = ref false in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
+  let pack_program = ref None in
   let from_pie = ref false and os_hints = ref None and bootloader_input = ref None in
   let virtual_os = ref false in
   let set_os_hints virtual_mode path =
@@ -40,6 +41,7 @@ let () =
   let bool_of s = match s with "true" -> true | "false" -> false | _ -> raise (Arg.Bad ("expected true|false: " ^ s)) in
   let spec =
     [
+      ("--pack_program", Arg.String (fun s -> pack_program := Some s), "FILE  save parsed compiler metadata for subsequent native runs");
       ("--trace_file", Arg.String (fun s -> trace := Some s), "FILE  write the relocated binary trace");
       ("--memory_file", Arg.String (fun s -> memory := Some s), "FILE  write the relocated binary memory");
       ("--layout", Arg.Set_string layout, "LAYOUT  builtin layout (default plain)");
@@ -107,6 +109,20 @@ let () =
   if Option.is_some !aggregator_da && Option.is_none !aggregator_input then
     usage_error "--aggregator_da_output requires --aggregator_input";
   try
+    (match !pack_program with
+     | None -> ()
+     | Some path ->
+         if Hashtbl.length seen <> 1 then usage_error "--pack_program takes only a program file";
+         if Sys.file_exists path then begin
+           let input = Unix.stat file and output = Unix.stat path in
+           if input.st_dev = output.st_dev && input.st_ino = output.st_ino then
+             usage_error "packed output must be separate from the input program"
+         end;
+         let packed = Program.pack (Program.load_file file) in
+         let tmp, out = Filename.open_temp_file ~temp_dir:(Filename.dirname path) ~mode:[Open_binary] "oxcairo-" ".tmp" in
+         Fun.protect ~finally:(fun () -> close_out_noerr out; if Sys.file_exists tmp then Sys.remove tmp)
+           (fun () -> output_string out packed; close_out out; Sys.rename tmp path);
+         exit 0);
     let t0 = Unix.gettimeofday () in
     let proof = !proof in
     let layout_def =

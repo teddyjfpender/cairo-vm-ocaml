@@ -54,6 +54,9 @@ val load_json : Yojson.Safe.t -> t
     @raise Parse_error on a malformed or foreign field prime, or a malformed data word. *)
 
 val load_file : string -> t
-(** [load_json] of a file read as JSON (without Yojson's comment, tuple and
-    variant extensions), skipping its top-level [debug_info].
+(** Read compiler JSON or native packed metadata. The JSON reader validates
+    the top-level [debug_info] and discards it.
     @raise Yojson.Json_error on malformed JSON. *)
+
+val pack : t -> string
+(** Encode previously parsed compiler data for use by [load_file]. *)
