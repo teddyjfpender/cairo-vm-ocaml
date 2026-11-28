@@ -97,3 +97,36 @@ let () =
     let pos = 1 + 3 * i in
     assert (Resources.trace_entry trace pos = (pos + 3, 0, 2, 1 lsl 25, 2))
   done
+
+let () =
+  let jump = Z.of_string "0x10780017fff7fff" in
+  let program = {Program.data=[|jump; Z.zero|]; builtins=[]; main=Some 0;
+                 start=Some 0; end_=Some 0; hints=[]; references=[||];
+                 identifiers=Hashtbl.create 0} in
+  let check cached =
+    let r = Runner.initialize ~proof:false {Cairo_run.default_config with trace=true} program in
+    let vm = r.vm in
+    let code = Vm.add_segment vm in
+    Vm.write vm code 0 (Felt.of_z jump);
+    Vm.write vm code 1 Felt.zero;
+    Vm.write vm code 6 Felt.one;
+    Vm.write vm 1 12 Felt.one;
+    let decoded = Instruction.decode_word jump in
+    vm.icache <- [|decoded; 0|];
+    if cached then begin
+      let page = Array.make 1024 0 in
+      page.(0) <- decoded;
+      Hashtbl.add vm.code_pages (code,0) page
+    end;
+    let steps = 250_007 in
+    for i = 0 to steps - 1 do
+      let seg = if i mod 5 = 0 then code else 0 in
+      let fp = 2 + i mod 7 in
+      Cpu.record_trace vm seg 0 fp fp
+    done;
+    vm.steps <- steps;
+    let published = Resources.pie_memory_holes r in
+    assert (published > 0 && published = Resources.memory_holes r)
+  in
+  check true;
+  check false
