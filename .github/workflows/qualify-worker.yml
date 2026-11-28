@@ -1,0 +1,36 @@
+name: v0.3.0 Linux worker reproduction
+on:
+  push:
+    branches: [qualification/linux-worker-v030]
+permissions:
+  contents: read
+env:
+  OXCAML_SWITCH: 5.2.0+ox
+jobs:
+  worker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/oxcaml
+      - name: Build the tagged worker and report the first request response
+        run: |
+          eval "$(opam env --switch "$OXCAML_SWITCH")"
+          sed -i 's/assert (field "status" first="ok");/Printf.eprintf "first job %s\\n%!" (J.to_string first); assert (field "status" first="ok");/' test/os_worker/os_worker_test.ml
+          dune build --profile release bench/native_os_worker.exe test/os_worker/os_worker_test.exe
+      - name: Exercise unconfigured and bounded startup
+        run: |
+          worker="$PWD/_build/default/bench/native_os_worker.exe"
+          test_exe="$PWD/_build/default/test/os_worker/os_worker_test.exe"
+          host="$PWD/host/oxcairo-os-host"
+          os="$PWD/test/fixtures/programs/apollo-0.20.0-rc.1/os.json.gz"
+          genesis="$PWD/test/fixtures/os/genesis.json"
+          mkdir "$RUNNER_TEMP/unbounded" "$RUNNER_TEMP/bounded"
+          cd "$RUNNER_TEMP/unbounded"
+          if env -u OXCAIRO_HOST_MEMORY_BYTES "$test_exe" "$worker" "$os" "$genesis" "$host" >raw.log 2>&1; then
+            cat raw.log
+            exit 1
+          fi
+          cat raw.log
+          grep -F '"code":"memory_limit"' raw.log
+          cd "$RUNNER_TEMP/bounded"
+          OXCAIRO_HOST_MEMORY_BYTES=4294967296 "$test_exe" "$worker" "$os" "$genesis" "$host"
