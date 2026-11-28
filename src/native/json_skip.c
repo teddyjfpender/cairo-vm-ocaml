@@ -3,6 +3,7 @@
    the native call stack. */
 #include <caml/mlvalues.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -183,3 +184,41 @@ CAMLprim value cvm_json_project_key(value input, value position, value fields) {
 }
 
 #include "json_schema.h"
+
+/* Find a candidate debug object in indented compiler JSON. Its actual key,
+   start and end are checked independently by the parser and schema validator.
+   A compact or differently formatted file uses the ordinary parser. */
+CAMLprim value cvm_json_debug_span(value input, value bounds) {
+  static const char key[] = "\"debug_info\"";
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  const unsigned char *end = base + caml_string_length(input);
+  const unsigned char *p = base;
+  while ((p = memchr(p, 'd', (size_t)(end - p))) != NULL) {
+    const unsigned char *name = p++;
+    if (name == base || (size_t)(end - name) < sizeof key - 2 ||
+        memcmp(name - 1, key, sizeof key - 1) != 0) continue;
+    --name;
+    const unsigned char *indent = name;
+    while (indent > base && indent[-1] == ' ') --indent;
+    if (indent == base || indent[-1] != '\n') continue;
+    size_t spaces = (size_t)(name - indent);
+    if (spaces > 64) continue;
+    const unsigned char *colon = whitespace(name + sizeof key - 1, end);
+    if (colon == end || *colon != ':') continue;
+    const unsigned char *first = whitespace(colon + 1, end);
+    if (first == end || *first != '{') continue;
+    const unsigned char *close = first + 1;
+    while ((close = memchr(close, '}', (size_t)(end-close))) != NULL) {
+      if ((size_t)(close-first) > spaces && close[-(ptrdiff_t)spaces-1] == '\n' &&
+          memcmp(close-spaces, indent, spaces) == 0) {
+        if (close-first < 2000000) return Val_false;
+        Field(bounds, 0) = Val_long((intnat)(first-base));
+        Field(bounds, 1) = Val_long((intnat)(close+1-base));
+        return Val_true;
+      }
+      ++close;
+    }
+    return Val_false;
+  }
+  return Val_false;
+}

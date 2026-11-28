@@ -41,7 +41,7 @@ external project_key : string -> int ref -> (string * projection) list -> (strin
 external validate_schema : string -> int ref -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_schema" [@@noalloc]
 
-let parse ?identifiers ~projection ~start ~whole src : J.t =
+let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
   let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
   let n = String.length src and pos = ref start in
   let peek () =
@@ -124,8 +124,13 @@ let parse ?identifiers ~projection ~start ~whole src : J.t =
                  | Program, "debug_info" ->
                      if !seen_debug then Program_metadata.fail k;
                      seen_debug := true;
-                     if not (validate_schema src pos Program_metadata.debug Program_metadata.instruction) then
-                       Program_metadata.validate k Program_metadata.debug (value Debug_info); `Null
+                     ignore (peek ());
+                     (match debug_span with
+                      | Some (first, last) when first = !pos -> pos := last
+                      | _ ->
+                          if not (validate_schema src pos Program_metadata.debug Program_metadata.instruction) then
+                            Program_metadata.validate k Program_metadata.debug (value Debug_info));
+                     `Null
                  | Debug_info, "instruction_locations" when peek () = '{' ->
                      fold_items '}' () (fun () ->
                          let key = string () in expect ':';
@@ -170,6 +175,9 @@ let parse ?identifiers ~projection ~start ~whole src : J.t =
   end;
   v
 
+let parse ?identifiers ~projection ~start ~whole src =
+  parse_value ?identifiers ~projection ~start ~whole src
+
 let from_string ?identifiers ?(projection=Json) src =
   parse ?identifiers ~projection ~start:0 ~whole:true src
 
@@ -180,3 +188,30 @@ let from_offset ?(projection=Json) src start =
 let from_file ?identifiers ?projection path =
   let contents = In_channel.with_open_bin path In_channel.input_all in
   from_string ?identifiers ?projection contents
+
+external find_debug_span : string -> int array -> bool = "cvm_json_debug_span" [@@noalloc]
+
+let program_document ~add_identifier src =
+  let read ?debug_span () =
+    let identifiers = Hashtbl.create 1024 in
+    let root = parse_value ~identifiers:(add_identifier identifiers) ?debug_span ~projection:Program ~start:0 ~whole:true src in
+    identifiers, root in
+  let bounds = [|0; 0|] in
+  if String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
+     not (find_debug_span src bounds) then read ()
+  else begin
+    let first = bounds.(0) and last = bounds.(1) in
+    let validate () =
+      let pos = ref first in
+      validate_schema src pos Program_metadata.debug Program_metadata.instruction && !pos = last in
+    match (try Some (Domain.spawn validate) with Failure _ -> None) with
+    | None -> read ()
+    | Some worker ->
+        (* Only accept the speculative parse if the complete schema ends at
+           precisely the observed boundary. A retry owns a fresh identifier table. *)
+        match read ~debug_span:(first, last) () with
+        | parsed -> if Domain.join worker then parsed else read ()
+        | exception exn ->
+            let bt = Printexc.get_raw_backtrace () in
+            if Domain.join worker then Printexc.raise_with_backtrace exn bt else read ()
+  end

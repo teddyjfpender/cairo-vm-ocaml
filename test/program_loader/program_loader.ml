@@ -162,3 +162,23 @@ let () =
     | exception Yojson.Json_error _ -> ()
     | _ -> failwith "invalid JSON control character in indentation"
   done
+
+let () =
+  (* Exercise the concurrent compiler reader with both a genuine closing
+     indentation and an earlier nested brace sharing that indentation. *)
+  let large = String.make 4_000_000 'x' in
+  let load indent fields =
+    let doc = Printf.sprintf
+        "{\n%s\"debug_info\": {\n%s\"file_contents\":{\"src\":\"%s\"},%s\n%s},\n%s\"prime\":\"%s\",\"data\":[],\"builtins\":[]}"
+        indent indent large fields indent indent (Z.to_string Felt.p) in
+    with_json doc Program.load_file in
+  List.iter (fun indent ->
+      let valid = load indent "\"instruction_locations\":{}" in
+      assert (Array.length valid.data = 0);
+      let boundary = Printf.sprintf "\"extra\":{\"a\":1\n%s},\"instruction_locations\":{}" indent in
+      let fallback = load indent boundary in
+      assert (Array.length fallback.data = 0);
+      let invalid = Printf.sprintf "\"extra\":{\"a\":1\n%s},\"instruction_locations\":false" indent in
+      match load indent invalid with
+      | exception Yojson.Json_error _ -> ()
+      | _ -> failwith "invalid debug metadata after a speculative boundary") ["  "; "    "]

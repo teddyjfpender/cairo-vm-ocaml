@@ -250,8 +250,7 @@ let load_file path =
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
-    let identifiers = Hashtbl.create 1024 in
-    let j = Json_reader.from_string ~identifiers:(add_identifier identifiers) contents in
+    let identifiers, j = Json_reader.program_document ~add_identifier contents in
     load_with_identifiers identifiers j
 
 let pack program =
