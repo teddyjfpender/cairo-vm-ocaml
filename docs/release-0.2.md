@@ -2,7 +2,15 @@
 
 The release candidate runs the pinned Starknet OS, Virtual OS and aggregator from native witnesses. Secure replay and several large contract workloads exceed 10× Rust. Short native scenarios, repeated storage and some artifact-emitting workloads remain below the release target.
 
-## Release with strict parity and historical witness support
+## Combined package against the stock sequencer
+
+The packaged `9022555` runtime ran 70 distinct upstream native OS scenarios in five matched cold rounds. The median speedup against stock Rust was **3.66×**, and summed per-case times fell from **28.624 s to 2.142 s (13.36×)**. **19 of 70** scenarios reached 10×. In those same rounds the earlier `f6e37bd` binary took 2.391 s and measured 3.31× median against Rust. The new build improved all 70 scenario medians over that binary, by **1.115×** at the median and **1.116×** in total.
+
+The two middle cold scenarios were a two-block declare/deploy run and a Cairo 1 trivial state diff. Their standalone engine medians were 116.5 and 107.4 ms in Rust, against 32.0 and 29.7 ms in OxCairo. Warm workers processing the same 70 witnesses in shuffled order measured **5.18× median and 5.89× total** (4.974 s vs 0.845 s), with **0/70** at 10×.
+
+The macOS arm64 package SHA-256 is `77ade018db0b43a4bbd44af3b210bae0bd04c715c7b16e9c46a52581cd0217aa`. Its packaged smoke and the local strict parity suite passed. [Cold and warm timings, identities and checks](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/cd96ef35b9a131a4a126a2f4deac7cc3346d2b02/bench/results/v0.2.0-m4-max/candidate-9022555)
+
+## Earlier package with strict parity and historical witness support
 
 Runtime `f6e37bd` includes the strict harness from PR #48, the snapshot ABI proposal from PR #49 and the historical witness and dispatcher changes from PR #50. Secure replay also accepts the reordered and identically repeated memory records accepted by Rust 3.2.0. The distributed CLI, worker and file-based C API passed their standalone checks. The byte-oriented snapshot provider described by PR #49 remains a proposal.
 
