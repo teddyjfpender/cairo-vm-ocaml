@@ -111,7 +111,7 @@ let child job program image archive digest_path supervisor =
   let digest =
     match job.profile with
     | Stored ->
-        with_fd (Unix.openfile archive [O_RDONLY;O_CREAT;O_EXCL;O_CLOEXEC] 0o600) (fun fd ->
+        with_fd (Unix.openfile archive [O_RDONLY;O_CREAT;O_EXCL;O_CLOEXEC] 0o666) (fun fd ->
           let dst = Bytes.create 32 in
           let hash = if hash_while_writing fd write dst then hex (Bytes.unsafe_to_string dst)
                      else hash_fd fd in

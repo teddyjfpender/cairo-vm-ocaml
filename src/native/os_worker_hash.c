@@ -79,6 +79,7 @@ CAMLprim value cvm_worker_hash_during_write(value fd, value write, value out) {
   if (Is_exception_result(result)) caml_raise(Extract_exception(result));
 #ifdef OXC_HAVE_OPENSSL
   if (started) {
+    if (job.error == ENOMEM) CAMLreturn(Val_false);
     if (job.error != 0) { errno=job.error; uerror("archive digest", Nothing); }
     memcpy(Bytes_val(out),job.digest,sizeof job.digest);
     CAMLreturn(Val_true);
