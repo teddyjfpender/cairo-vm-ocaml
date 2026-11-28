@@ -68,9 +68,13 @@ let named name l = try List.assq name l with Not_found -> List.assoc name l
 
 (* A scope holds a handful of variables. *)
 type frame = { mutable vars : (string * dyn ref) list }
-type scopes = { mutable stack : frame list; mutable squash_continuations : (Vm.vm -> unit) list }
+type scopes = {
+  mutable stack : frame list;
+  mutable squash_continuations : (Vm.vm -> unit) list;
+  mutable ordered_constants : (P.t * (string * Z.t) array) option;
+}
 
-let new_scopes () = { stack = [ { vars = [] } ]; squash_continuations=[] }
+let new_scopes () = { stack = [ { vars = [] } ]; squash_continuations=[]; ordered_constants=None }
 let only_main_scope s = List.length s.stack = 1
 let top s = List.hd s.stack
 
@@ -330,6 +334,20 @@ let set_member vm ctx name path v =
 
 (* ---- constants (ids.NAME for const identifiers) ---- *)
 
+(* A hint can be compiled for a different program in the same VM. Reuse
+   the index only for the program whose identifiers it describes. *)
+let ordered_constants ctx =
+  match ctx.scopes.ordered_constants with
+  | Some (program, constants) when program == ctx.prog -> constants
+  | _ ->
+      let constants = Hashtbl.fold (fun key (id : P.ident) acc ->
+          match id.i_type, id.i_value with
+          | "const", Some value -> (key, value) :: acc
+          | _ -> acc) ctx.prog.P.identifiers [] |> Array.of_list in
+      Array.sort (fun (a, _) (b, _) -> String.compare a b) constants;
+      ctx.scopes.ordered_constants <- Some (ctx.prog, constants);
+      constants
+
 let resolve_constant ctx name =
   let from_scopes =
     List.find_map
@@ -341,18 +359,11 @@ let resolve_constant ctx name =
   in
   match from_scopes with
   | Some _ as value -> value
-  | None -> (
+  | None ->
       let suffix = "." ^ name in
-      (* The Rust suffix search has no specified priority across namespaces.
-         Use the first qualified name in bytewise order for the unscoped case. *)
-      Hashtbl.fold (fun key (id : P.ident) best ->
-          if id.i_type <> "const" || String.length key <= String.length suffix
-             || not (String.ends_with ~suffix key) then best
-          else match id.i_value, best with
-          | Some v, None -> Some (key, v)
-          | Some v, Some (prior, _) when String.compare key prior < 0 -> Some (key, v)
-          | _ -> best)
-        ctx.prog.P.identifiers None |> Option.map snd)
+      Array.find_map (fun (key, value) ->
+          if String.length key > String.length suffix && String.ends_with ~suffix key
+          then Some value else None) (ordered_constants ctx)
 
 (* The identifier table and accessible scopes are fixed for a compiled hint.
    Cache misses too: optional constants can otherwise scan every identifier
