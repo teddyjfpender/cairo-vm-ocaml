@@ -82,6 +82,14 @@ let () =
     Sys.remove program;
     assert (field "sha256" (job ())=digest && sha output=digest);
     let p=Pie_file.read output in
+    if Sys.getenv_opt "OXC_PIE_ARCHIVE" <> None then begin
+      let production=job ~publication:"os-host-production" () in
+      assert (field "status" production="ok");
+      let expected="3834cc9c97797b03b4df8a047d89b03d73c2716501915e1419e591b8aefb9551" in
+      assert (field "sha256" production=expected && sha output=expected);
+      let limited=job ~publication:"os-host-production" ~limits:["output_bytes",`Int 64] () in
+      assert (field "code" limited="output_limit" && sha output=expected)
+    end;
     let compressed=job ~publication:"fast-1" () in
     assert (field "status" compressed="ok" && field "sha256" compressed<>digest);
     assert (p=Pie_file.read output);

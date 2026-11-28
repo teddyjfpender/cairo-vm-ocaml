@@ -101,9 +101,10 @@ let child job program image archive digest_path supervisor =
   Finalize.end_run r ~secure:true ~allow_missing:false;
   let profile,level = match job.profile with
     | Stored -> Pie_zip.Stored_headers,0 | Fast_one -> Pie_zip.Fast,1
+    | Production -> Pie_zip.Os_host_production,1
     | Rust | Standard -> Pie_zip.Rust_3_2,0 in
   let write () =
-    Pie.write ~profile ~compression_level:level ~merge_extra_segments:(job.profile=Standard)
+    Pie.write ~profile ~compression_level:level ~merge_extra_segments:(job.profile=Standard || job.profile=Production)
       ~main:(Runner.entry_pc cfg program) ~secure:true r archive in
   let finish fd hash =
     if (Unix.fstat fd).st_size > l.output_bytes then refuse 23 "output limit";
