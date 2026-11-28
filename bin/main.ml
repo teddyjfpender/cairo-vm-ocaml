@@ -85,6 +85,7 @@ let () =
     let action = match action with
       | Arg.Unit f -> Arg.Unit (once flag f)
       | Arg.String f -> Arg.String (once flag f)
+      | Arg.Set_int r -> Arg.Int (once flag (fun n -> r := n))
       | Arg.Set r -> Arg.Unit (once flag (fun () -> r := true))
       | Arg.Set_string r -> Arg.String (once flag (fun s -> r := s))
       | other -> other

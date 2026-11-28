@@ -43,6 +43,13 @@ def main():
         ("duplicate-debug-info", '"debug_info":null,"debug_info":null', 1),
     )
     with tempfile.TemporaryDirectory() as directory:
+        packed = Path(directory) / "packed"
+        compression = ["--pie_compression_level", "1"]
+        for extra, diagnostic in [(compression, "option repeated"), (["--pack_program", packed], "takes only a program file")]:
+            result = subprocess.run([args.ocaml, args.corpus / "array_sum.json", *compression, *extra],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            if result.returncode != 2 or diagnostic not in result.stderr or packed.exists():
+                raise SystemExit(f"unexpected compression flag behavior: {result.stderr}")
         for name, member, expected in cases:
             path = Path(directory) / (name + ".json")
             path.write_text(prefix + member + "}")
