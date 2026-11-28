@@ -56,3 +56,28 @@ Every refusal has schema 1, status `rejected`, a stable `code` and a human-reada
 An operator can lower or raise these ceilings for a deployment by setting `OXCAIRO_HOST_LIMITS` to a JSON object with the same limit keys. Each request defaults to the lower of the built-in default and the operator ceiling. To run a larger block, raise its operator ceiling and request the larger budget explicitly. Limits are positive integers. Receiving a request has its own deadline, the lower of 120 seconds and the operator wall ceiling. A sender that leaves the pipe open receives a wall-limit refusal. The request is limited to 64 KiB, compiler staging to 128 MiB, and the worker requires at least 32 MiB and eight descriptors. On Linux the kernel enforces address space, file size and descriptor limits. Before starting OxCaml the host sizes the GC nursery for the requested budget and caps the runtime at four domains, including the main domain. On macOS a short resident-memory peak can fall between samples. Reserve disk for the compiler snapshot, archive, previous output and filesystem metadata. Final filesystem sync latency can extend past the deadline.
 
 The C replay library owns its OCaml runtime and requires one calling OS thread for its process lifetime. The process interface avoids imposing that embedding constraint on callers.
+
+## Use a packed program
+
+A service that runs the same compiled OS repeatedly can pack its parser metadata once. This example uses the [Apollo compact OS pin](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/4f40b032f0bc19b89ba221cebc57c814b6346ec7/test/fixtures/programs/apollo-0.20.0-rc.1/manifest.json) and the CLI from the same release as the host. Run the setup in an operator-owned directory containing the decompressed compact JSON. Only the operator should have write access to that directory and the profile. Never take the profile path or digest from a job request.
+
+```sh
+set -eu
+cd /srv/os
+revision=1860b9850b5c51858c50c0f5038933e49f932eef
+json_sha=794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67
+printf '%s  %s\n' "$json_sha" compiled-os.json | shasum -a 256 -c -
+cairo-vm-cli compiled-os.json --pack_program compiled-os.packed
+packed_sha=$(shasum -a 256 compiled-os.packed | awk '{print $1}')
+jq -n --arg revision "$revision" --arg digest "$packed_sha" \
+  '{revision: $revision, program_sha256: $digest}' > apollo-packed-profile.json
+```
+
+Distribute this exact packed file with its profile to each host. Changing the input bytes or the encoder version can change the packed digest. Set the profile in the service environment. Starting from the generation request above, change only the program path. The witness and output fields still name the service-assigned files.
+
+```sh
+export OXCAIRO_OS_PROFILE=/srv/os/apollo-packed-profile.json
+jq '.program = "/srv/os/compiled-os.packed"' /srv/jobs/request.json | oxcairo-os-host v1
+```
+
+Regenerate the packed file and its profile from the verified JSON when upgrading OxCairo or changing the compiled OS. Confirm the complete archive against the expected Rust digest for a known witness before switching production requests.
