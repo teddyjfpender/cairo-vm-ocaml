@@ -40,3 +40,11 @@ python3 bench/compare_native_os_workers.py --kind virtual-os --pairs 7 \
   --rust /path/to/oxcairo_related_workers --ocaml _build/default/bench/native_os_worker.exe \
   --program /path/to/virtual_os_bytes test/fixtures/os/virtual-multicall-64.json.gz
 ```
+
+The mixed-revert generator runs successful writes between deliberately reverted transactions against predeployed Cairo 0 and Cairo 1 contracts. Append `reverted_witness.rs` to the pinned flow tests and run `test_oxcairo_mixed_reverts` with `OXCAIRO_ROUNDS=3072`. The complete test fixture contains 9,216 transactions in four blocks. Its five member digests come from the independent streaming Rust reference.
+
+The four encrypted witnesses use the publicly specified test private keys from the sequencer's flow suite. Copy `encrypted_os.rs` to the sequencer's `starknet_os/examples` directory and build with its test utilities enabled. The checker runs the stock API and compares decoded common output and plaintext state updates twice per fixture. For committed outputs it also uses the sequencer's KZG segment validator.
+
+```sh
+python3 test/fixtures/os/encrypted/check.py /path/to/cairo-vm-cli /path/to/encrypted_os /path/to/starknet_os_bytes
+```

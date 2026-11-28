@@ -109,7 +109,8 @@ let write_output channel r =
       let total = used_size r.vm b.base in
       if total < 64 then iter_output_lines r (fun line -> output_string channel line; output_char channel '\n')
       else begin
-        let buf = Bytes.create 65536 and cursor = ref 0 in
+        let capacity = if total >= 820 then 65536 else 80 * total in
+        let buf = Bytes.create capacity and cursor = ref 0 in
         while !cursor < total do
           let size = output_chunk Felt.pool r.vm.segs.(b.base) total cursor buf in
           if size <= 0 then invalid_arg "output buffer";

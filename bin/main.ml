@@ -37,7 +37,7 @@ let () =
   let set_os_hints virtual_mode path =
     if Option.is_some !os_hints then raise (Arg.Bad "only one OS hint input may be selected");
     virtual_os := virtual_mode; os_hints := Some path in
-  let aggregator_input = ref None and aggregator_da = ref None in
+  let aggregator_input = ref None and aggregator_da = ref None and os_da = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
   let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.2.0)"; exit 0 in
@@ -63,6 +63,7 @@ let () =
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
       ("--aggregator_input", Arg.String (fun s -> aggregator_input := Some s), "FILE  read sequencer aggregator input");
+      ("--os_da_output", Arg.String (fun s -> os_da := Some s), "FILE  write native OS blob coefficients as JSON");
       ("--aggregator_da_output", Arg.String (fun s -> aggregator_da := Some s), "FILE  write aggregated blob coefficients");
       ("--bootloader_input", Arg.String (fun s -> bootloader_input := Some s), "FILE  read simple bootloader tasks");
       ("--virtual_os_hints", Arg.String (set_os_hints true), "FILE  read virtual OS hints and verify Sierra gas tracking");
@@ -114,6 +115,8 @@ let () =
     usage_error "--bootloader_input requires a compiled bootloader and its own hint processor";
   if Option.is_some !aggregator_input && (!from_pie || Option.is_some !os_hints || Option.is_some !bootloader_input) then
     usage_error "--aggregator_input requires its own compiled program";
+  if Option.is_some !os_da && (Option.is_none !os_hints || !virtual_os) then
+    usage_error "--os_da_output requires --os_hints";
   if Option.is_some !aggregator_da && Option.is_none !aggregator_input then
     usage_error "--aggregator_da_output requires --aggregator_input";
   try
@@ -167,7 +170,9 @@ let () =
               let on_da = Option.map (fun _ words -> da_words := Some words) !aggregator_da in
               Aggregator.initialize ?layout_def ?on_da ~proof ~path cfg (Program.load_file file)
           | None, Some path, _ -> Bootloader.initialize ~on_pie_loaded ?layout_def ~proof ~path cfg (Program.load_file file)
-          | None, _, Some path -> Os_hints.initialize_files ~virtual_os:!virtual_os ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
+          | None, _, Some path ->
+              let on_da = Option.map (fun _ words -> da_words := Some words) !os_da in
+              Os_hints.initialize_files ?on_da ~virtual_os:!virtual_os ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
           | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         r.vm.allow_legacy_instructions <- !legacy;
@@ -179,7 +184,8 @@ let () =
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
     with Errors.Vm_error msg when rust <> None && !aggregator_input = None && !os_hints = None && !bootloader_input = None && not !stats -> delegate msg in
-    (match !aggregator_da, !da_words with
+    let da_path = if Option.is_some !os_da then !os_da else !aggregator_da in
+    (match da_path, !da_words with
      | Some file, Some words ->
          Out_channel.with_open_bin file (fun oc ->
              output_char oc '[';
@@ -187,6 +193,8 @@ let () =
                  if i > 0 then output_char oc ',';
                  Printf.fprintf oc "\"0x%s\"" (Z.format "x" (Felt.to_z word))) words;
              output_char oc ']')
+     | Some file, None when Option.is_some !os_da ->
+         Out_channel.with_open_bin file (fun oc -> output_string oc "null")
      | _ -> ());
     if !print_output then begin
       print_string "Program Output:\n";

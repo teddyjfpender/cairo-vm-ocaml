@@ -152,3 +152,5 @@ An absolute prefix links that library's static archive. Set either variable to `
 ## Unpadded proof execution
 
 Add `--disable_trace_padding` to `--proof_mode` to stop after the final proof instruction and use the unpadded builtin allocation rules from cairo-vm 3.2.0. The default proof invocation pads to the Stone layout's resource requirements. The independent Stwo proof and Rust input comparison can be reproduced from [the qualification instructions](../bench/reference/stwo/README.md).
+
+For native OS blob data, pass `--os_da_output coefficients.json` with `--os_hints`. The file contains a JSON array of hexadecimal field elements in sequencer order. A calldata run writes JSON `null`. The producer captures the cells used for the KZG commitment. The encrypted fixture check decrypts the resulting state diff and verifies the commitment with the pinned sequencer. [Reproduction](../bench/reference/README.md).

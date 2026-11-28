@@ -19,7 +19,7 @@ def main():
     fixture = Path(__file__).resolve().parent
     merged = ("storage-2048", "storage-4096", "syscalls-scaled-32", "storage-8192",
               "syscalls-scaled-64", "sequential-4096", "scattered-4096",
-              "deploy-l1-calldata-2048", "deploy-l1-blob-2048")
+              "deploy-l1-calldata-2048", "deploy-l1-blob-2048", "mixed-reverts-3072")
     cases = ("genesis", "storage", "account", "multi-block", "alternating", "execution-info", "reverted-invoke",
                  "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
                   *merged)

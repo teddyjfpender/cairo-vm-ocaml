@@ -52,6 +52,26 @@ static char *field_decimal(char *dst, const u64 *input) {
   return dst;
 }
 
+/* Decimal representations of repeated public words within one output chunk. */
+struct decimal_entry {
+  u64 value[4];
+  char repr[80];
+  unsigned size;
+};
+static char *cached_field(char *dst, const u64 *limbs,
+                          struct decimal_entry *cache) {
+  uint64_t h = limbs[0] ^ (limbs[3] * UINT64_C(0x9e3779b97f4a7c15));
+  struct decimal_entry *e = &cache[(h ^ (h >> 32)) & 63];
+  if (e->size && eq4(e->value, limbs)) {
+    memcpy(dst, e->repr, e->size);
+    return dst + e->size;
+  }
+  char *end = field_decimal(dst, limbs);
+  memcpy(e->value, limbs, sizeof e->value);
+  e->size = (unsigned)(end - dst);
+  memcpy(e->repr, dst, e->size);
+  return end;
+}
 CAMLprim value cvm_output_chunk(value pool, value segment, value used,
                                 value cursor, value buffer) {
   const intnat *cells = Caml_ba_data_val(segment);
@@ -61,6 +81,7 @@ CAMLprim value cvm_output_chunk(value pool, value segment, value used,
     return Val_long(-1);
   char *start = (char *)Bytes_val(buffer), *p = start;
   size_t capacity = Caml_ba_array_val(segment)->dim[0];
+  struct decimal_entry cache[64] = {0};
   while (index < stop && (size_t)(p - start) <= length - 80) {
     intnat code = (uintnat)index < capacity ? cells[index] : 0;
     if (!code) {
@@ -73,7 +94,7 @@ CAMLprim value cvm_output_chunk(value pool, value segment, value used,
       *p++ = ':';
       p = unsigned_decimal(p, (code >> 2) & UINT64_C(0xffffffffff));
     } else
-      p = field_decimal(p, SLOT(pool, code >> 2));
+      p = cached_field(p, SLOT(pool, code >> 2), cache);
     *p++ = '\n';
     ++index;
   }
