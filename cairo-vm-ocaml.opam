@@ -1,5 +1,5 @@
 opam-version: "2.0"
-version: "0.2.0"
+version: "0.3.0"
 name: "cairo-vm-ocaml"
 synopsis: "OxCairo: a fast Cairo VM in OCaml (OxCaml), byte-compatible with starkware-libs/cairo-vm v4.0.0"
 homepage: "https://github.com/teddyjfpender/cairo-vm-ocaml"
