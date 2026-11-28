@@ -68,7 +68,8 @@ let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {doc
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
   let calls = Os_calls.create () and secp = Os_secp.create () in
   Deprecated_syscalls.register ~os_program calls ~felt reg;
-  let begin_transactions = Os_transactions.register ~os_program ~source ~virtual_os ~calls ~block ~felt reg in
+  let debug = U.to_bool (U.member "debug_mode" config) in
+  let begin_transactions = Os_transactions.register ~debug ~os_program ~source ~virtual_os ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
   Os_da.register ?entropy_source ~set_pages reg;
@@ -84,7 +85,9 @@ let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {doc
   Os_block_hash.register ~block ~felt reg;
   reg "GenerateDummyOsOutputSegment" (fun c vm ->
       let base = segment vm in
-      write_arg vm base [segment vm; Felt.zero; Felt.zero];
+      let first = segment vm in
+      let fields = if Os_da.has_tx_proof_facts c then [first; Felt.zero; Felt.zero] else [first; Felt.zero] in
+      write_arg vm base fields;
       set_val vm c "outputs" base);
   reg "CheckIsDeprecated" (fun c vm ->
       let hash = get_member vm c "execution_context" ["class_hash"] in

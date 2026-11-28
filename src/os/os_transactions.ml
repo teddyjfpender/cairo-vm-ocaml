@@ -23,7 +23,7 @@ let pop item queue =
   | head :: tail -> queue := tail; head
   | [] -> fail "End of OS %s iterator" item
 
-let register ~os_program ~source ~virtual_os ~calls:call_state ~block ~felt reg =
+let register ~debug ~os_program ~source ~virtual_os ~calls:call_state ~block ~felt reg =
   let txs = ref [] and infos = ref [] and active = ref None and info = ref None in
   let calls = ref [] in
   let offsets = lazy (Os_resources.builtin_offsets os_program) in
@@ -52,7 +52,7 @@ let register ~os_program ~source ~virtual_os ~calls:call_state ~block ~felt reg 
       set_val vm c "tx_type" (Os_block_hash.ascii name);
       if Option.is_some !entering then fail "Already in OS transaction";
       entering := Some (resources c vm));
-  let check_calls_closed = Os_calls.register call_state ~resources ~felt
+  let check_calls_closed = Os_calls.register ~debug call_state ~resources ~felt
       ~next:(fun () -> pop "call info" calls) reg in
   let start () =
     if !info <> None then fail "Execution info already active";
