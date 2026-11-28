@@ -1,0 +1,36 @@
+{
+  "machine": "Apple M4 Max",
+  "system": "macOS 15.3.1",
+  "ocamlopt": "5.2.0+ox",
+  "dune": "3.25.0",
+  "profile": "release, without profile-guided optimization",
+  "os_program_sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+  "binaries": {
+    "prior": {
+      "release_branch_commit": "e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c",
+      "cli_sha256": "59f95393fa16086afcc21d399e48d464c42a368fe9a05982e0ed90d391f554fd",
+      "worker_sha256": "7cfdedf39e0e4354852c9071a80d1422028dfaf4289b284e6242d23198090022"
+    },
+    "cache": {
+      "release_branch_commit": "5ad5da4fe3304a79bbea2a22bc9f3a86a67e63f0",
+      "cli_sha256": "937f9cc2424463c46634678205fdb38248e5cdbd954fcdc6b573049063595b72",
+      "worker_sha256": "d655411bc535775672660ad1ddf2c0cb9a45965983b6abab471e7157cf57c6e9"
+    },
+    "cache-and-loader": {
+      "release_branch_commit": "fc1ba5353aefe6b73a912aaf84bc7bc81017a22b",
+      "cli_sha256": "a2fc088bf3b449c14577abe2265957b5b2f162c1c08ad6aa77a2ba243e5500a3"
+    },
+    "integrated": {
+      "release_branch_commit": "43598c9a4d9ee63a8844b34b12d54a0b3f634e49",
+      "cli_sha256": "a456b7c2f3c3002a95ee678f139801c3f1ac352be6f41da53a1e86ede7e4c5ad",
+      "worker_sha256": "4e6d1af79ee0b24304856e575fc11473849868029043c4d9dbf0cf49bb9d6241"
+    }
+  },
+  "large_witness_sha256": {
+    "storage8192": "a7ff1a2be02adb8f3296b733982bfc8bb0970c6f68a042bcb780d67d43914198",
+    "erc8192": "dff34b75a9f541a70e5055de85dc9fcf181b0ab4ff43d4e2a876b00185859daf",
+    "reverts": "4a3f210b08bbd01433a556dc8f48c6ef5d77e39fa9067b40fe077a96b2548bfc",
+    "scattered": "baf228a1a79f70c9b32ce7f721feebf3cc7b431306d8fc5520f221e5d653a9c7"
+  },
+  "pinned_rust_reference_executable_sha256": "fe90a1218e152949d561bccf31bd52be8c69d46455e26197c56f4b1ac5564c53"
+}
