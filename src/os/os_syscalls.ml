@@ -19,7 +19,7 @@ let execution_info ctx =
   let tx = mem_at vm src tx_slot in
   let get field = mem_at vm tx (offset "TxInfo" field) in
   if not (Felt.equal (mem_at vm tx version_slot) (Felt.small 3)) then src else
-  let class_hash = Felt.of_z (Pie_file.z_of_json (U.member "class_hash" (U.member "call" call.witness))) in
+  let class_hash = Os_input.felt (U.member "class_hash" (U.member "call" call.witness)) in
   let data_gas, v1_bound = Lazy.force exclusions in
   let exclude = Felt_tbl.mem data_gas class_hash in
   let v1 = Felt_tbl.mem v1_bound class_hash &&
@@ -74,17 +74,16 @@ let bind state ~block ~secp ctx =
       if not (Felt.is_felt (mem_at vm start i)) then fail "Invalid syscall array element"
     done in
   let call = current state in
-  let as_felt json = Felt.of_z (Pie_file.z_of_json json) in
   let array temp values =
     let base = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
     write_arg vm base values;
     [base; Vm.reloc_add_felt base (Felt.small (List.length values))] in
   let inner_result gas =
     let execution = U.member "execution" (pop "inner calls" call.inner) in
-    let consumed = as_felt (U.member "gas_consumed" execution) in
+    let consumed = Os_input.felt (U.member "gas_consumed" execution) in
     if Felt.compare gas consumed < 0 then fail "Inner call gas exceeds remaining gas";
     Felt.sub gas consumed, U.to_bool (U.member "failed" execution),
-    List.map as_felt (U.to_list (U.member "retdata" execution)) in
+    List.map Os_input.felt (U.to_list (U.member "retdata" execution)) in
   let variable_cost = ref Z.zero in
   let success values gas = gas,Felt.zero,values in
   let units, cost, response =
@@ -92,7 +91,7 @@ let bind state ~block ~secp ctx =
     | "GetExecutionInfo" -> 2,"GET_EXECUTION_INFO", (fun gas -> success [(Lazy.force info) vm call] gas)
     | "GetClassHashAt" ->
         if Felt.bits (integer 2) > 251 then fail "Invalid contract address";
-        3, "GET_CLASS_HASH_AT", (fun gas -> success [as_felt (pop "class hash reads" call.class_reads)] gas)
+        3, "GET_CLASS_HASH_AT", (fun gas -> success [Os_input.felt (pop "class hash reads" call.class_reads)] gas)
     | "GetBlockHash" ->
         let requested = integer 2 in
         if Felt.bits requested > 64 then fail "Block number exceeds u64";
@@ -100,13 +99,13 @@ let bind state ~block ~secp ctx =
             let number = Pie_file.z_of_json (U.member "block_number" (U.member "block_info" (block ()))) in
             if Z.gt (Felt.to_z requested) (Z.sub number (const_z ctx "STORED_BLOCK_HASH_BUFFER")) then
               gas, Felt.one, array false [Os_block_hash.ascii "Block number out of range"]
-            else success [as_felt (pop "block hash reads" call.block_reads)] gas)
+            else success [Os_input.felt (pop "block hash reads" call.block_reads)] gas)
     | "EmitEvent" ->
         span 2; span 4; 6,"EMIT_EVENT",(fun gas -> success [] gas)
     | "StorageRead" | "StorageWrite" ->
         if not (Felt.equal (integer 2) Felt.zero) || Felt.bits (integer 3) > 251 then fail "Invalid storage request";
         if name = "StorageWrite" then begin ignore (integer 4); 5,"STORAGE_WRITE",(fun gas -> success [] gas) end
-        else 4,"STORAGE_READ",(fun gas -> success [as_felt (pop "storage reads" call.reads)] gas)
+        else 4,"STORAGE_READ",(fun gas -> success [Os_input.felt (pop "storage reads" call.reads)] gas)
     | "Keccak" ->
         let first = at 2 and last = at 3 in
         if not (Felt.is_reloc first && Felt.is_reloc last) then fail "Expected Keccak input pointers";
@@ -146,7 +145,7 @@ let bind state ~block ~secp ctx =
         if from_zero <> Felt.zero && from_zero <> Felt.one then fail "Invalid deploy_from_zero";
         variable_cost := Z.mul (Felt.to_z (Vm.value_sub (at 5) (at 4))) (const_z ctx "DEPLOY_CALLDATA_FACTOR_GAS_COST");
         7,"DEPLOY",(fun gas ->
-          let address = as_felt (pop "deployed contracts" call.deployed) in
+          let address = Os_input.felt (pop "deployed contracts" call.deployed) in
           let gas, failed, retdata = inner_result gas in
           let bounds = array true retdata in
           if failed then gas,Felt.one,array true retdata else success (address :: bounds) gas)

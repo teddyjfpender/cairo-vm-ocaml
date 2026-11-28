@@ -1,4 +1,4 @@
-(* Immutable compiler data shared by the JSON reader and packed-program codec. *)
+(** Reference expressions, as cairo-compile prints them. *)
 type expr =
   | Reg_ap
   | Reg_fp
@@ -12,7 +12,7 @@ type expr =
   | Cast of expr * string
 
 type reference = {
-  r_expr : expr; (* the full reference value, e.g. [cast(fp + (-3), felt-pointer)] *)
+  r_expr : expr;  (** the full value, e.g. [cast(fp + (-3), felt-pointer)]; [Int (-1)] if unparsable *)
   r_group : int;
   r_offset : int;
 }
@@ -22,7 +22,7 @@ type hint = {
   scopes : string list;
   h_group : int;
   h_offset : int;
-  ref_ids : (string * int) list; (* full name -> reference index *)
+  ref_ids : (string * int) list;  (** full name -> reference index *)
 }
 
 type ident = {
@@ -30,7 +30,7 @@ type ident = {
   i_value : Z.t option;
   i_pc : int option;
   i_destination : string option;
-  i_members : (string * int) list; (* struct member offsets *)
+  i_members : (string * int) list;  (** struct member offsets *)
   i_member_types : (string * string) list;
 }
 

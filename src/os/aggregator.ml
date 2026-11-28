@@ -16,8 +16,7 @@ let initialize ?image ?layout_def ?on_da ~proof ~path cfg prog =
     | _ -> fail "Unknown aggregator data availability mode" in
   let chain_id = felt (member "chain_id") and fee = felt (member "fee_token_address") in
   let keys = match member "public_keys" with `Null -> [] | xs -> List.map felt (U.to_list xs) in
-  let handlers = Hashtbl.create 32 in
-  let reg = Hashtbl.replace handlers in
+  let reg, compile_hint = Hints.extend () in
   let runner = ref None and pages_enabled = ref false in
   let set_pages pages attributes =
     let r = Option.get !runner in
@@ -53,10 +52,6 @@ let initialize ?image ?layout_def ?on_da ~proof ~path cfg prog =
   reg "GetAggregatorOutput" (fun _ _ -> pages_enabled := true);
   reg "WriteDaSegment" (fun _ _ ->
       if blob then Option.iter (fun save -> save (Option.get !captured)) on_da);
-  let compile_hint p scopes (h : Program.hint) =
-    match Hashtbl.find_opt handlers h.code with
-    | Some f -> f (make_ctx p scopes h)
-    | None -> Hints.compile p scopes h in
   let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof cfg prog in
   runner := Some r;
   r

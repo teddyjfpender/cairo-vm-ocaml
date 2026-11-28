@@ -24,7 +24,7 @@ jobs:
         run: |
           gzip -dc test/fixtures/programs/starknet-os-training.json.gz > "$RUNNER_TEMP/starknet-os.json"
           python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/starknet-os.json" \
-            --only genesis --only account --only storage-2048
+            --only genesis --only account --only deprecated-calls --only storage-2048
 
       - name: Reproduce virtual OS and aggregator outputs
         run: |
