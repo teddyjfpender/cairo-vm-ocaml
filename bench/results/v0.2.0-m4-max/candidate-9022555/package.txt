@@ -1,0 +1,3 @@
+cairo-vm-cli 4.0.0 (OxCairo 0.2.0)
+oxcairo-v0.2.0-macos-arm64.tar.gz 77ade018db0b43a4bbd44af3b210bae0bd04c715c7b16e9c46a52581cd0217aa
+Packaged CLI and two worker requests match stock Rust; C ABI three valid and three invalid requests; trace, memory and five archive members matched.
