@@ -15,6 +15,15 @@ Run `oxcairo-os-host v1` from the release package, with Python 3.9 or newer on P
 
 The default publication profile `os-host-standard` matches the serial Rust service writer using standard deflate and merged extra segments. Select `"publication":"rust-3.2"` to preserve separate extra segments, corresponding to `CairoPie::write_zip_file(path, false)`. The service's concurrent compression, level-one and platform-native writers produce different archive encodings. The selected serial profile is part of the comparison and workload configuration.
 
+To deliver the production ZIP directly, request `"publication":"os-host-production"`.
+This profile merges extra segments and uses level-one raw DEFLATE. The writer splits
+`memory.bin` into ranges of 32,768 initialized cells, verifies each compressed
+range by decoding and comparing its bytes, and writes the ranges in order.
+If a range fails that check or the archive exceeds the classic ZIP limits, the
+writer retries with the serial level-one ZIP64 writer. A failed job preserves
+the previous published archive. Consumers can validate and deliver the returned
+ZIP directly. The CLI exposes the same policy as `--pie_profile os-host-production`.
+
 A consumer that applies its own final compression policy can request `"publication":"stored"`. The host emits an uncompressed ZIP with the five `rust-3.2` members in the same order and preserves separate extra segments. This avoids compressing an intermediate archive before the consumer validates and repackages it. Budget the output limit and temporary disk space for the uncompressed members, including 40 bytes per initialized memory cell and the ZIP headers. The response digest covers the complete stored archive.
 
 The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
@@ -25,7 +34,7 @@ The program is the compiled main OS for the named revision. The witness is the J
 
 OxCairo recognizes the full and compact compiler JSON digests for Apollo revision `1860b9850b5c51858c50c0f5038933e49f932eef` and revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. For an independently qualified build, set the **operator environment** variable `OXCAIRO_OS_PROFILE` to a trusted JSON file with `revision` (40 lowercase hex digits) and `program_sha256` (64 lowercase hex digits). Record the compiler, source, program hash and qualification receipts with that profile. The worker hashes its private compiler snapshot before execution. Adding a digest authorizes those bytes for execution and carries no parity certification.
 
-A successful response has schema 1, status `ok`, the absolute published output path, byte length and SHA-256 of the entire archive. Exit status is zero. The worker validates execution in secure mode and publishes with `--pie_profile rust-3.2`, including the stock ZIP headers and compressed bytes. The static archive dependency is used only for container encoding. The supervisor flushes the completed archive, atomically replaces the destination and syncs the output directory. A killed process can leave the previous or the complete new file, depending on whether publication occurred. Retry the same request to recover. The next job reclaims the previous staging files under the output lock. Linux binds the worker lifetime to its supervisor. On macOS a guardian observes supervisor exit and terminates its own native child before releasing the lock. The lock file is persistent. Removing it while jobs are running would bypass serialization.
+A successful response has schema 1, status `ok`, the absolute published output path, byte length and SHA-256 of the entire archive. Exit status is zero. The worker validates execution in secure mode and publishes using the requested archive profile. The default includes the serial stock ZIP headers and compressed bytes. The static archive dependency is used only for container encoding. The supervisor flushes the completed archive, atomically replaces the destination and syncs the output directory. A killed process can leave the previous or the complete new file, depending on whether publication occurred. Retry the same request to recover. The next job reclaims the previous staging files under the output lock. Linux binds the worker lifetime to its supervisor. On macOS a guardian observes supervisor exit and terminates its own native child before releasing the lock. The lock file is persistent. Removing it while jobs are running would bypass serialization.
 
 Every refusal has schema 1, status `rejected`, a stable `code` and a human-readable `detail`. Match on the code and process exit status. Diagnostic wording may change.
 

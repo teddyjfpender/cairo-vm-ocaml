@@ -10,7 +10,7 @@
 #ifdef OXC_HAVE_PINNED_ARCHIVE
 typedef struct ox_archive ox_archive;
 extern int ox_pie_create(const unsigned char *, size_t, ox_archive **);
-extern int ox_pie_start(ox_archive *, const unsigned char *, size_t);
+extern int ox_pie_start(ox_archive *, const unsigned char *, size_t, bool);
 extern int ox_pie_append(ox_archive *, const unsigned char *, size_t);
 extern int ox_pie_finish(ox_archive *);
 extern void ox_pie_drop(ox_archive *);
@@ -52,9 +52,9 @@ CAMLprim value cvm_pinned_zip_open(value path) {
 #endif
 }
 
-CAMLprim value cvm_pinned_zip_start(value handle, value name) {
+CAMLprim value cvm_pinned_zip_start(value handle, value name, value level_one) {
 #ifdef OXC_HAVE_PINNED_ARCHIVE
-  return archive_status(ox_pie_start(ARCHIVE(handle), Bytes_val(name), caml_string_length(name)), "zip.start_file");
+  return archive_status(ox_pie_start(ARCHIVE(handle), Bytes_val(name), caml_string_length(name), Bool_val(level_one)), "zip.start_file");
 #else
   return Val_false;
 #endif
@@ -80,4 +80,16 @@ CAMLprim value cvm_pinned_zip_close(value handle) {
   release(handle);
 #endif
   return Val_unit;
+}
+
+CAMLprim value cvm_pie_deflate_range(value input, value len, value last, value output) {
+#ifdef OXC_HAVE_PINNED_ARCHIVE
+  extern ptrdiff_t ox_pie_deflate_range(const unsigned char *, size_t, bool, unsigned char *, size_t);
+  intnat n = Long_val(len);
+  if (n < 0 || (uintnat)n > caml_string_length(input)) caml_invalid_argument("PIE range length");
+  return Val_long(ox_pie_deflate_range(Bytes_val(input), n, Bool_val(last),
+                                      Bytes_val(output), caml_string_length(output)));
+#else
+  return Val_long(-1);
+#endif
 }

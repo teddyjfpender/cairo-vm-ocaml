@@ -106,7 +106,7 @@ def request():
     if not required <= obj.keys() <= required | {"limits", "operation", "publication"}:
         raise ValueError("missing or unknown request field")
     publication = obj.setdefault("publication", "os-host-standard")
-    if publication not in ("os-host-standard", "rust-3.2", "stored"):
+    if publication not in ("os-host-standard", "os-host-production", "rust-3.2", "stored"):
         raise ValueError("unsupported publication profile")
     if type(obj["schema"]) is not int or obj["schema"] != 1:
         raise ValueError("expected schema 1")
@@ -229,9 +229,11 @@ def child(stage, parent):
             "--cairo_pie_output", str(stage / "out")]
     if job["publication"] == "stored":
         argv.extend(["--pie_profile", "fast", "--pie_compression_level", "0"])
+    elif job["publication"] == "os-host-production":
+        argv.extend(["--pie_profile", "os-host-production"])
     else:
         argv.extend(["--pie_profile", "rust-3.2"])
-    if job["publication"] == "os-host-standard":
+    if job["publication"] in ("os-host-standard", "os-host-production"):
         argv.append("--merge_extra_segments")
     if sys.platform != "darwin":
         os.execve(exe, argv, env)
