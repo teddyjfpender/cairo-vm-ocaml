@@ -43,7 +43,30 @@ let feed buffer oc crc bytes length =
     if buffer.used = Bytes.length buffer.input then flush_blocks buffer oc crc
   done
 
-let write ~level path members =
+type profile = Fast | Rust_3_2
+type archive
+
+external open_pinned : string -> archive = "cvm_pinned_zip_open"
+external start_member : archive -> string -> bool = "cvm_pinned_zip_start"
+external append : archive -> bytes -> int -> bool = "cvm_pinned_zip_append"
+external finish : archive -> bool = "cvm_pinned_zip_finish"
+external close : archive -> unit = "cvm_pinned_zip_close"
+
+let write_pinned path members =
+  let staged, channel =
+    Filename.open_temp_file ~temp_dir:(Filename.dirname path) ".oxcairo-pie-" ".zip" in
+  close_out channel;
+  Fun.protect ~finally:(fun () -> if Sys.file_exists staged then Sys.remove staged) (fun () ->
+    let handle = open_pinned staged in
+    Fun.protect ~finally:(fun () -> close handle) (fun () ->
+      List.iter (fun (name, emit) ->
+        if not (start_member handle name) then fail "Cannot open Cairo PIE member %s" name;
+        emit (fun bytes length ->
+          if not (append handle bytes length) then fail "Cannot write Cairo PIE member %s" name)) members;
+      if not (finish handle) then fail "Cannot finalize Cairo PIE");
+    Sys.rename staged path)
+
+let write_fast ~level path members =
   if level < 0 || level > 9 then fail "Cairo PIE compression level must be between 0 and 9";
   let method_id = if level = 0 then 0 else 8 in
   let compressed = lazy (compressor level) in
@@ -83,3 +106,6 @@ let write ~level path members =
     u32 0x06054b50; u16 0; u16 0; u16 (List.length members);
     u16 (List.length members); u32 size; u32 start; u16 0)
 
+
+let write ?(profile=Fast) ~level path members =
+  match profile with Fast -> write_fast ~level path members | Rust_3_2 -> write_pinned path members

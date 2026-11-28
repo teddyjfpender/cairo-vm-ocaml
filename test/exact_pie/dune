@@ -1,0 +1,3 @@
+(executable
+ (name replay_encrypted)
+ (libraries cairovm))

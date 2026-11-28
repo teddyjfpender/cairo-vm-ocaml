@@ -41,13 +41,17 @@ let compress data =
 
 (* The sequencer salts each compressed state diff with fresh OS entropy.
    Derive independent symmetric and private keys with its SHA-256 labels. *)
-let generate_keys c vm =
+let fresh_entropy () =
+  In_channel.with_open_bin "/dev/urandom" (fun ic -> really_input_string ic 32)
+
+let generate_keys entropy_source c vm =
   let first = get_ptr vm c "compressed_start" in
   let count = Felt.to_nat (Vm.value_sub (get_ptr vm c "compressed_end") first) in
   let n_keys = Felt.to_nat (get_felt vm c "n_keys") in
   if count < 0 then fail "Invalid compressed state diff range";
   if n_keys < 0 || n_keys > 256 then fail "Too many state diff encryption recipients";
-  let entropy = In_channel.with_open_bin "/dev/urandom" (fun ic -> really_input_string ic 32) in
+  let entropy = entropy_source () in
+  if String.length entropy <> 32 then fail "State diff encryption requires 32 bytes of entropy";
   let input = Buffer.create 128 in
   Buffer.add_string input entropy;
   for i = 0 to count-1 do
@@ -70,8 +74,8 @@ let has_tx_proof_facts c =
   | Some id -> List.mem_assoc "tx_proof_facts" id.P.i_members
   | None -> fail "Missing OS output structure %s" name
 
-let register ?(pages_enabled=ref false) ~set_pages reg =
-  reg "GenerateKeysUsingSha256Hash" generate_keys;
+let register ?(entropy_source=fresh_entropy) ?(pages_enabled=ref false) ~set_pages reg =
+  reg "GenerateKeysUsingSha256Hash" (generate_keys entropy_source);
   let segment vm temp = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
   let bool = function v when Felt.equal v Felt.zero -> false
     | v when Felt.equal v Felt.one -> true | _ -> fail "Expected OS Boolean" in
