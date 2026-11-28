@@ -1,0 +1,28 @@
+name: Watch upstream Cairo VM
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: watch-upstream-cairo-vm
+  cancel-in-progress: false
+
+jobs:
+  check-tags:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Report new upstream versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/upstream/watch-cairo-vm.sh
