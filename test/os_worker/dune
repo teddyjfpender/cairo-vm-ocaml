@@ -1,8 +1,8 @@
 (test
  (name os_worker_test)
  (libraries cairovm unix yojson)
- (deps ../fixtures/programs/apollo-0.20.0-rc.1/os.json.gz
+ (deps ../../host/oxcairo-os-host ../fixtures/programs/apollo-0.20.0-rc.1/os.json.gz
        ../fixtures/os/genesis.json)
  (action (run %{test} %{exe:../../bench/native_os_worker.exe}
               %{dep:../fixtures/programs/apollo-0.20.0-rc.1/os.json.gz}
-              %{dep:../fixtures/os/genesis.json})))
+              %{dep:../fixtures/os/genesis.json} %{dep:../../host/oxcairo-os-host})))

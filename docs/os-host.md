@@ -86,16 +86,18 @@ Regenerate the packed file and its profile from the verified JSON when upgrading
 
 ## Generate multiple PIEs in a resident worker
 
-The native `oxcairo-os-worker pie-v1` interface accepts a stream of generation
+The native `oxcairo-os-host worker-v1` interface accepts a stream of generation
 jobs. Start one worker per serial queue. At startup the worker verifies the
 SHA-256 of the exact program bytes it will parse, prepares the OS program image,
 and emits a JSON line with `status: "ready"` and `program_sha256`. Use a digest
 from the operator's qualified revision manifest. For a packed program, pin the
 digest produced by the trusted packing procedure above. The operator selects
 the program and digest on the command line. Requests cannot change either.
+The installed host directly executes its sibling `oxcairo-os-worker pie-v1`
+for this protocol. The warm path requires no Python interpreter.
 
 ```sh
-oxcairo-os-worker pie-v1 /srv/os/compiled-os.json \
+oxcairo-os-host worker-v1 /srv/os/compiled-os.json \
   --sha256 794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67
 ```
 

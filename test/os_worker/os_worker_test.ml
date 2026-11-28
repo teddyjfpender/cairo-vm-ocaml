@@ -23,12 +23,25 @@ let () =
   let _,status = Unix.waitpid [] (Unix.create_process "gzip" [|"gzip"; "-dc"; gz|] Unix.stdin fd Unix.stderr) in
   Unix.close fd; assert (status=Unix.WEXITED 0);
   let pin=sha program in
+  (* Stage the installed sibling layout, then exercise the public entry point
+     with Python and all other executables removed from PATH. *)
+  let bin=absolute "installed bin" in
+  (try Unix.mkdir bin 0o700 with Unix.Unix_error (EEXIST,_,_) -> ());
+  let install name source =
+    let path=Filename.concat bin name in
+    (try Unix.unlink path with Unix.Unix_error (ENOENT,_,_) -> ());
+    Unix.symlink source path; path in
+  ignore (install "oxcairo-os-worker" worker);
+  let host=install "oxcairo-os-host" (Unix.realpath Sys.argv.(4)) in
   let serve pin f =
-    let ic,oc= Unix.open_process_args worker [|worker;"pie-v1";program;"--sha256";pin|] in
+    let env = Unix.environment () |> Array.to_list |>
+      List.filter (fun s -> not (String.starts_with ~prefix:"PATH=" s)) in
+    let ic,oc,ec=Unix.open_process_args_full host [|host;"worker-v1";program;"--sha256";pin|]
+        (Array.of_list ("PATH=/unavailable"::env)) in
     let receive ()=J.from_string (input_line ic) in
     let send line=output_string oc line; output_char oc '\n'; flush oc; receive () in
     let result=f (receive ()) send in
-    close_out_noerr oc; let status=Unix.close_process (ic,oc) in result,status in
+    close_out_noerr oc; let status=Unix.close_process_full (ic,oc,ec) in result,status in
   let _,bad=serve (String.make 64 '0') (fun ready _ -> assert (field "code" ready="program_mismatch")) in
   assert (bad=Unix.WEXITED 4);
   let _,status=serve pin (fun ready send ->
