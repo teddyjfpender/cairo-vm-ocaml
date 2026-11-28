@@ -19,6 +19,7 @@ type vm = {
   (* decoded instruction cache for segment 0: 0 = not decoded *)
   mutable icache : int array;
   mutable selection : selection option;
+  mutable squash : squash option;
   mutable selection_remaining : int;
   (* trace *)
   runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
@@ -47,6 +48,11 @@ type vm = {
   mutable had_temp : bool;
 }
 
+and squash = {
+  begin_row : vm -> unit;
+  run_rows : vm -> (vm -> unit) -> int array -> int;
+}
+
 and selection = {
   action : vm -> unit;
   publish : int -> unit;
@@ -64,7 +70,7 @@ let create ~trace =
     ap = 0;
     fp = 0;
     steps = 0;
-    selection = None; selection_remaining = 0;
+    squash = None; selection = None; selection_remaining = 0;
     icache = [||];
     runtime_hints = Hashtbl.create 8; page_hints = [||];
     code_pages = Hashtbl.create 8;

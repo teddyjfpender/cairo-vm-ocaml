@@ -130,6 +130,7 @@ static void finish_poseidon(struct pending_poseidon *q, value pool, value cache)
 }
 
 #include "builtin_selection_block.h"
+#include "squash_rows.h"
 
 /* Returns the number of completed instructions. State contains pc, ap, fp,
    execution-segment high-water mark, trace length, and next felt-pool slot. */

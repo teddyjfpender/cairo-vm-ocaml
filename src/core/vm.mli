@@ -24,6 +24,7 @@ type vm = {
   mutable steps : int;
   mutable icache : int array;  (** decoded words of segment 0, 0 = not decoded *)
   mutable selection : selection option;
+  mutable squash : squash option;
   mutable selection_remaining : int;  (** count published by the last selection hint *)
   runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
   mutable page_hints : (vm -> unit) hint_page;
@@ -46,6 +47,11 @@ type vm = {
   mutable relocating : bool;
       (** reads translate temporary relocatables when a rule exists *)
   mutable had_temp : bool;
+}
+
+and squash = {
+  begin_row : vm -> unit;
+  run_rows : vm -> (vm -> unit) -> int array -> int;
 }
 
 and selection = {

@@ -66,6 +66,21 @@ let from_snapshot vm scopes (data, changes) = add_tracker vm scopes data (Some c
 
 let incr_ptr t = t.current_ptr <- value_add t.current_ptr (Felt.small 3)
 
+external squash_rows : int array -> int array -> Segment.seg array -> Builtin.flag array ->
+  int array -> Felt.pool -> int -> Bytes.t array -> int list -> int -> Felt.t array -> Segment.seg array -> int -> int =
+  "cvm_squash_rows_byte" "cvm_squash_rows" [@@noalloc]
+
+let squash_member c member offset correction =
+  match Hashtbl.find_opt c.refs "loop_temps" with
+  | Some r when r.Program.r_group = c.hint.h_group && c.hint.h_offset - r.r_offset = correction ->
+      (match r.r_expr with
+       | Program.Cast (Program.Reg_ap, t) ->
+           (match strip_star t with
+            | None -> false
+            | Some st -> (try member_offset c st member = offset with Errors.Vm_error _ -> false))
+       | _ -> false)
+  | _ -> false
+
 let register reg =
   (* squash_dict *)
   reg C.squash_dict (fun c vm ->
@@ -73,17 +88,42 @@ let register reg =
       let ptr_diff = get_z vm c "ptr_diff" in
       check (Z.equal (Z.erem ptr_diff (z 3)) Z.zero) "Accesses array size must be divisible by DictAccess.SIZE";
       let n = Z.to_int (get_z vm c "n_accesses") in
-      let idx = Felt_tbl.create 64 in
-      let order = ref [] in
+      (* Read the dictionary chronologically so a missing/invalid address
+         gives the same first error. A reverse index walk then constructs
+         each increasing index list just once. The mutable bucket avoids a
+         second hash lookup on every access. *)
+      let input = ref (Array.make (max 0 (min n 1024)) Felt.empty) in
       for i = 0 to n - 1 do
         let key = mem_at vm address (3 * i) in
-        (match Felt_tbl.find_opt idx key with
-        | Some l -> Felt_tbl.replace idx key (i :: l)
-        | None ->
-            order := key :: !order;
-            Felt_tbl.replace idx key [ i ])
+        if i = Array.length !input then begin
+          let grown = Array.make (min n (2 * i)) Felt.empty in
+          Array.blit !input 0 grown 0 i;
+          input := grown
+        end;
+        (!input).(i) <- key
       done;
-      Felt_tbl.filter_map_inplace (fun _ l -> Some (List.rev l)) idx;
+      let input = !input in
+      let buckets = Felt_tbl.create 64 and order = ref [] in
+      let previous_key = ref Felt.empty and previous_bucket = ref (ref []) in
+      for i = n - 1 downto 0 do
+        let key = input.(i) in
+        let bucket =
+          if Felt.equal key !previous_key then !previous_bucket
+          else
+            match Felt_tbl.find_opt buckets key with
+            | Some entry -> entry
+            | None ->
+                let entry = ref [] in
+                Felt_tbl.add buckets key entry;
+                order := key :: !order;
+                entry
+        in
+        bucket := i :: !bucket;
+        previous_bucket := bucket;
+        previous_key := key
+      done;
+      let idx = Felt_tbl.create (max 16 (Felt_tbl.length buckets)) in
+      Felt_tbl.iter (fun key entry -> Felt_tbl.add idx key !entry) buckets;
       let keys = List.sort (fun a b -> compare_values b a) !order in
       (match keys with
       | k :: _ -> set_val vm c "big_keys" (of_bool (Felt.is_felt k && Z.geq (Felt.to_z k) rc_bound))
@@ -123,12 +163,46 @@ let register reg =
       write_checked vm (Felt.rseg rc) (Felt.roff rc) (Felt.small cur));
   let nonempty scopes name = match var scopes name with Ints l -> l <> [] | Values l -> l <> [] | _ -> fail "not a list" in
   reg C.squash_dict_inner_skip_loop (fun c vm -> set_val vm c "should_skip_loop" (of_bool (not (nonempty c.scopes "current_access_indices"))));
-  reg C.squash_dict_inner_check_access_index (fun c vm ->
-      let nw = pop_index "current_access_indices" c.scopes in
-      let cur = Z.to_int (var_z c.scopes "current_access_index") in
-      set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (nw - cur - 1));
-      set c.scopes "current_access_index" (Int (z nw)));
-  reg C.squash_dict_inner_continue_loop (fun c vm -> set_member vm c "loop_temps" [ "should_continue" ] (of_bool (nonempty c.scopes "current_access_indices")));
+  reg C.squash_dict_inner_check_access_index (fun c ->
+      let run vm =
+        let next = pop_index "current_access_indices" c.scopes in
+        let current = Z.to_int (var_z c.scopes "current_access_index") in
+        set_member vm c "loop_temps" [ "index_delta_minus1" ] (Felt.of_int (next - current - 1));
+        set c.scopes "current_access_index" (Int (z next))
+      in
+      if not (squash_member c "index_delta_minus1" 0 0) then run
+      else
+        let run_rows vm continue registers =
+          if not (List.exists ((==) continue) c.scopes.squash_continuations) then 0
+          else
+            let indices = cell c.scopes "current_access_indices" in
+            let position = cell c.scopes "current_access_index" in
+            match !indices, !position with
+            | Ints rest, Int current when Z.fits_int current ->
+                let steps = squash_rows registers vm.icache vm.segs vm.seg_flag vm.hi Felt.pool
+                    vm.nsegs vm.watched rest (Z.to_int current) vm.rules vm.tsegs vm.ntsegs in
+                (* The initial hint already popped one index. Publish only
+                   the additional complete rows consumed by the primitive. *)
+                if steps > 9 then begin
+                  let rec drop n xs = if n = 0 then xs else drop (n - 1) (List.tl xs) in
+                  indices := Ints (drop (steps / 9 - 1) rest);
+                  position := Int (z registers.(15))
+                end;
+                steps
+            | _ -> 0
+        in
+        let rec descriptor = { begin_row; run_rows }
+        and armed = Some descriptor
+        and begin_row vm = run vm; vm.squash <- armed in
+        begin_row);
+  reg C.squash_dict_inner_continue_loop (fun c ->
+      let run vm =
+        set_member vm c "loop_temps" [ "should_continue" ]
+          (of_bool (nonempty c.scopes "current_access_indices"))
+      in
+      if squash_member c "should_continue" 3 6 then
+        c.scopes.squash_continuations <- run :: c.scopes.squash_continuations;
+      run);
   reg C.squash_dict_inner_len_assert (fun c _ -> check (not (nonempty c.scopes "current_access_indices")) "assert len(current_access_indices) == 0");
   reg C.squash_dict_inner_used_accesses_assert (fun c vm ->
       check (Z.equal (get_z vm c "n_used_accesses") (z (List.length (access_list c.scopes)))) "n_used_accesses mismatch");
