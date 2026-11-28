@@ -20,6 +20,7 @@ type projection =
   | Values of projection
   | Elements of projection
   | Cached of cache (** Reuse a previously parsed object on exact source-byte equality. *)
+  | Presence (* Validate the value, retaining only whether it is null. *)
   | Encoded
   | Offset
 

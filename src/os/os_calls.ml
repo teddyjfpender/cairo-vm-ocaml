@@ -13,7 +13,7 @@ let execution_projection =
   let rec call = Only ["call", entry; "execution", execution; "storage_access_tracker", reads;
                        "inner_calls", Elements call; "tracked_resource", Json] in
   Only ["validate_call_info", call; "execute_call_info", call; "fee_transfer_call_info", call;
-        "actual_fee", Json; "revert_error", Json]
+        "actual_fee", Json; "revert_error", Presence]
 
 (* The sequencer's virtual runner checks every root and nested call before
    executing its program. The general OS also supports Cairo-step tracking. *)

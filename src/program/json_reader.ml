@@ -25,6 +25,7 @@ type projection =
   | Values of projection
   | Elements of projection
   | Cached of cache
+  | Presence (* Validate the value, retaining only whether it is null. *)
   | Encoded
   | Offset (* Validate the entire value and retain its offset in the source. *)
 
@@ -106,6 +107,9 @@ let parse_value ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
           | _ -> lookup (i + 1)
         in lookup 0
     | Cached _, _ -> value Json
+    | Presence, _ ->
+        pos := skip !pos;
+        if token = 'n' then `Null else `Bool true
     | Offset, _ ->
         let start = !pos in pos := skip start; `Int start
     | Encoded, _ ->

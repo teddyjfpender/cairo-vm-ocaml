@@ -244,3 +244,15 @@ let () =
    | exception Yojson.Json_error _ -> ()
    | _ -> failwith "malformed parallel document accepted");
   assert (!visits = 4)
+
+let () =
+  let open Json_reader in
+  let proj = Only ["error", Presence] in
+  List.iter (fun (source, expected) ->
+      assert (from_string ~projection:proj source = expected))
+    ["{}", `Assoc [];
+     "{\"error\":null}", `Assoc ["error", `Null];
+     "{\"error\":\"line\\n2\"}", `Assoc ["error", `Bool true];
+     "{\"error\":[1,{\"code\":2}]}", `Assoc ["error", `Bool true]];
+  (match from_string ~projection:proj "{\"error\":[1,]}" with
+   | _ -> assert false | exception Yojson.Json_error _ -> ())
