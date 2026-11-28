@@ -113,12 +113,12 @@ let () =
           compile (Hintrt.make_ctx prog (Hintrt.new_scopes ()) hint) vm
         end);
     assert !matched in
-  let mk_vm () =
+  let mk_vm ?(count=2) ?(out=Felt.reloc 3 0) () =
     let vm=Vm.create ~trace:false in
     for _=0 to 3 do ignore (Vm.add_segment vm) done;
     vm.fp<-3;
-    Vm.write vm 1 3 (Felt.small 2); Vm.write vm 1 4 (Felt.reloc 2 0);
-    Vm.write vm 1 5 (Felt.reloc 3 0); Vm.write vm 2 0 (Felt.small 9);
+    Vm.write vm 1 3 (Felt.small count); Vm.write vm 1 4 (Felt.reloc 2 0);
+    Vm.write vm 1 5 out; Vm.write vm 2 0 (Felt.small 9);
     vm in
   let reject vm =
     match call vm with () -> assert false | exception Errors.Vm_error _ -> () in
@@ -132,4 +132,39 @@ let () =
   Vm.write conflict 2 1 Felt.one; Vm.write conflict 3 1 (Felt.small 5);
   reject conflict;
   assert (Vm.get conflict 3 0=Felt.zero && Vm.get conflict 3 1=Felt.small 5 &&
-          Vm.get conflict 3 2=Felt.empty)
+          Vm.get conflict 3 2=Felt.empty);
+  let inputs = [| Z.of_int 9; Z.pred (Z.shift_left Z.one 63); Z.shift_left Z.one 63;
+                  Z.pred Felt.p; Z.zero; Z.shift_left Z.one 61; Z.shift_left Z.one 190;
+                  Z.zero |] in
+  let count = Array.length inputs in
+  let populate vm = Array.iteri (fun i z -> Vm.write vm 2 i (Felt.of_z z)) inputs in
+  let expected = Array.to_list inputs |> List.concat_map (fun z ->
+      let n = if Z.numbits z <= 63 then 2 else 8 in
+      let marked = if n = 8 then Z.logor z (Z.shift_left Z.one 255) else z in
+      List.init n (fun i -> Felt.of_z (Z.extract marked (32 * (n - 1 - i)) 32))) in
+  let check_output vm seg offset =
+    List.iteri (fun i word -> assert (Felt.equal (Vm.get vm seg (offset + i)) word)) expected;
+    assert (vm.Vm.hi.(seg) = offset + List.length expected) in
+  (* Start beyond the segment capacity to exercise the exact grow/retry path. *)
+  let fresh = mk_vm ~count ~out:(Felt.reloc 3 70) () in
+  populate fresh; call fresh; check_output fresh 3 70;
+  assert (Vm.get fresh 3 69 = Felt.empty);
+  (* This alias overwrites the last source cell with the identical first
+     output word. The final two output words must reflect its original zero. *)
+  let aliased = mk_vm ~count ~out:(Felt.reloc 2 7) () in
+  populate aliased; call aliased; check_output aliased 2 7;
+  let alias_missing = mk_vm ~count ~out:(Felt.reloc 2 7) () in
+  for i = 1 to count - 2 do Vm.write alias_missing 2 i Felt.one done;
+  reject alias_missing; assert (Vm.get alias_missing 2 7 = Felt.empty);
+  let missing = mk_vm ~count () in
+  for i = 1 to count - 2 do Vm.write missing 2 i Felt.one done;
+  reject missing; assert (missing.hi.(3) = 0);
+  Vm.write missing 2 (count - 1) (Felt.reloc 3 0);
+  reject missing; assert (missing.hi.(3) = 0);
+  let conflict = mk_vm ~count () in
+  populate conflict; Vm.write conflict 3 2 Felt.one; reject conflict;
+  assert (Vm.get conflict 3 0 = Felt.zero && Vm.get conflict 3 1 = Felt.small 9 &&
+          Vm.get conflict 3 2 = Felt.one && conflict.hi.(3) = 3);
+  let checked = mk_vm ~count () in
+  checked.seg_flag.(3) <- Builtin.k_rc96; populate checked; call checked;
+  check_output checked 3 0

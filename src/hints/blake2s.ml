@@ -15,6 +15,30 @@ external compress_into : int array -> int array -> int -> int -> int -> int -> u
 external blake_u32_words : Felt.pool -> Felt.t -> int array -> int
   = "cvm_blake_u32_words" [@@noalloc]
 
+external unpack_fresh : Felt.pool -> Segment.seg -> Segment.seg -> int * int * int -> int
+  = "cvm_blake_unpack_fresh" [@@noalloc]
+
+(* Only plain, disjoint, previously untouched output can bypass write_checked.
+   Other writes retain its validation and partial-failure order. *)
+let unpack_fresh_segment vm src dst count =
+  let input = Felt.rseg src and output = Felt.rseg dst and offset = Felt.roff dst in
+  if count < 8 || not (seg_ok vm input && seg_ok vm output) || input = output ||
+     vm.seg_flag.(output) <> Builtin.k_plain || offset < vm.hi.(output) then false
+  else
+    let bounds = Felt.roff src, count, offset in
+    let unpack () = unpack_fresh Felt.pool vm.segs.(input) vm.segs.(output) bounds in
+    let written = match unpack () with
+      | required when required < 0 ->
+          let length = -required in
+          grow_seg vm output (offset + length - 1);
+          unpack ()
+      | result -> result in
+    if written = 0 then false else begin
+      assert (written > 0);
+      vm.hi.(output) <- offset + written;
+      true
+    end
+
 let compress h msg t0 t1 f0 f1 =
   if Array.length h <> 8 || Array.length msg < 16 then fail "Invalid BLAKE2s block";
   let state = Array.copy h in
@@ -103,15 +127,18 @@ let register reg =
       let pv = get_ptr vm c "packed_values" and out = get_ptr vm c "unpacked_u32s" in
       (* Snapshot every input before writing output: the two ranges can alias,
          and a missing input must fail before the first output assignment. *)
-      let vals = List.init (Z.to_int n) (int_at vm pv) in
-      let words = Array.make 8 0 and at = ref (Felt.roff out) in
-      let seg = Felt.rseg out in
-      List.iter (fun v ->
-          let count = blake_u32_words Felt.pool v words in
-          for i = 0 to count - 1 do
-            write_checked vm seg !at (Felt.small words.(i));
-            incr at
-          done) vals);
+      let count = Z.to_int n in
+      if not (unpack_fresh_segment vm pv out count) then begin
+        let vals = List.init count (int_at vm pv) in
+        let words = Array.make 8 0 and at = ref (Felt.roff out) in
+        let seg = Felt.rseg out in
+        List.iter (fun v ->
+            let count = blake_u32_words Felt.pool v words in
+            for i = 0 to count - 1 do
+              write_checked vm seg !at (Felt.small words.(i));
+              incr at
+            done) vals
+      end);
   reg C.example_blake2s_compress (fun c vm ->
       let start = get_ptr vm c "blake2s_start" and out = get_ptr vm c "output" in
       let n_bytes = u32 (get_z vm c "n_bytes") in
