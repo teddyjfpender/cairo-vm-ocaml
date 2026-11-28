@@ -12,7 +12,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 from fold_receipt import receipt as from_fold
 from qualify_os_host import digest, qualify
-from os_pie_header import output_header
+from os_pie_header import MAX_METADATA, output_header
 from whole_os_job import measure
 
 
@@ -58,6 +58,19 @@ class SampleContract(unittest.TestCase):
             self.pie(bad)
             with self.assertRaises(ValueError):
                 output_header(self.root/"reference.zip")
+
+    def test_rejects_oversized_or_ambiguous_members(self):
+        path = self.root / "reference.zip"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("metadata.json", b" " * (MAX_METADATA + 1))
+            archive.writestr("memory.bin", b"")
+        with self.assertRaisesRegex(ValueError, "member size"):
+            output_header(path)
+        self.pie([0] * 10)
+        with zipfile.ZipFile(path, "a") as archive, self.assertWarns(UserWarning):
+            archive.writestr("memory.bin", b"")
+        with self.assertRaisesRegex(ValueError, "duplicate PIE archive"):
+            output_header(path)
 
     def test_original_fold_evidence(self):
         rows = [

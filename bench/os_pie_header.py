@@ -3,6 +3,7 @@ import io
 import json
 import struct
 import zipfile
+import zlib
 
 PRIME = (1 << 251) + 17 * (1 << 192) + 1
 RECORD = struct.Struct("<Q32s")
@@ -40,7 +41,8 @@ def output_header(path):
             if len(entries) != len({entry.filename for entry in entries}):
                 raise ValueError("duplicate PIE archive member")
             meta, memory = (pie.getinfo(key) for key in ("metadata.json", "memory.bin"))
-            if any(e.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) for e in (meta, memory)):
+            if any(e.flag_bits & 1 or e.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                   for e in (meta, memory)):
                 raise ValueError("unsupported PIE member compression")
             if meta.file_size > MAX_METADATA or memory.file_size > MAX_MEMORY or memory.file_size % RECORD.size:
                 raise ValueError("invalid PIE member size")
@@ -76,5 +78,5 @@ def output_header(path):
                 raise ValueError("missing or invalid PIE output header")
             # OsOutput::try_from_output_iter at both supported sequencer revisions.
             return words[1], words[3], words[5]
-    except (KeyError, TypeError, EOFError, struct.error, zipfile.BadZipFile) as exc:
+    except (KeyError, TypeError, EOFError, RecursionError, struct.error, zlib.error, zipfile.BadZipFile) as exc:
         raise ValueError("invalid PIE output header or archive") from exc
