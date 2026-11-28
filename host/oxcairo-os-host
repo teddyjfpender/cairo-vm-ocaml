@@ -94,9 +94,19 @@ def request():
     supplied = obj.get("limits", {})
     if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
         raise ValueError("unknown limit")
-    limits = DEFAULTS | supplied
+    ceiling = DEFAULTS.copy()
+    configured = os.environ.get("OXCAIRO_HOST_LIMITS")
+    if configured is not None:
+        overrides = json.loads(configured, object_pairs_hook=unique)
+        if not isinstance(overrides, dict) or overrides.keys() - ceiling.keys():
+            raise ValueError("invalid operator limit configuration")
+        for key, value in overrides.items():
+            if type(value) is not int or not 1 <= value <= (1 << 62) - 1:
+                raise ValueError("invalid operator ceiling for " + key)
+        ceiling.update(overrides)
+    limits = {key: min(value, ceiling[key]) for key, value in DEFAULTS.items()} | supplied
     for k, value in limits.items():
-        if type(value) is not int or value < 1 or value > DEFAULTS[k]:
+        if type(value) is not int or value < 1 or value > ceiling[k]:
             raise ValueError("invalid " + k)
     if limits["open_files"] < 8:
         raise Refusal("file_limit", "job requires at least 8 descriptors")

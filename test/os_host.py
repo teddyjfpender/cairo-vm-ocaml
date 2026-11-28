@@ -87,6 +87,9 @@ def main():
         fifo = root / "input.pipe"
         os.mkfifo(fifo)
         run(job | {"witness": str(fifo)}, code=5, kind="invalid_input")
+        budget = os.environ | {"OXCAIRO_HOST_LIMITS": json.dumps({"steps": steps})}
+        run(job, environment=budget)
+        run(job | {"limits": {"steps": steps + 1}}, code=2, kind="invalid_request", environment=budget)
         with (root / ".output.zip.oxcairo.lock").open("rb") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             run(job, code=26, kind="busy")
