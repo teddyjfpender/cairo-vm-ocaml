@@ -27,6 +27,20 @@ let division ~arg ~put count =
     let q,r = Z.ediv_rem (dividend vm) divisor in
     quotient vm q; remainder vm r
 
+let square_root ~arg ~put =
+  let low = arg "value_low" and high = arg "value_high" in
+  let sqrt0 = put "sqrt0" and sqrt1 = put "sqrt1" in
+  let remainder = writer put ["remainder_low"; "remainder_high"] in
+  let flag = put "sqrt_mul_2_minus_remainder_ge_u128" in
+  let two128 = Z.shift_left Z.one 128 in
+  fun vm ->
+    let value = Z.add (Felt.to_z (low vm)) (Z.shift_left (Felt.to_z (high vm)) 128) in
+    let root, rem = Z.sqrt_rem value in
+    sqrt0 vm (Felt.of_z (Z.extract root 0 64));
+    sqrt1 vm (Felt.of_z (Z.shift_right root 64));
+    remainder vm rem;
+    flag vm (Hintrt.of_bool (Z.geq (Z.sub (Z.shift_left root 1) rem) two128))
+
 let inverse ~arg ~put =
   let b = reader arg "b" 2 and n = reader arg "n" 2 in
   let s = writer put ["s_or_r0"; "s_or_r1"] and t = writer put ["t_or_k0"; "t_or_k1"] in

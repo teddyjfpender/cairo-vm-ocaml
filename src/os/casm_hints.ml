@@ -40,6 +40,19 @@ let rec operand ?(address=false) j =
       (fun vm -> op (checked (Vm.get vm 1 (left vm))) (right vm))
   | name, _ -> fail "Unknown CASM operand %s" name
 
+(* The two shortest arcs of 0, a, b and p-1 are split into four
+   range-check words. The sequencer breaks equal lengths by arc index. *)
+let small_arcs =
+  let divisor n = Z.cdiv Felt.p (Z.shift_left (Z.of_int n) 128) in
+  let third = divisor 3 and half = divisor 2 in
+  fun scopes range_check a b vm ->
+    let a = a vm and b = b vm in
+    let arcs = [|Felt.to_z a, 0; Felt.to_z (Felt.sub b a), 1; Z.sub (Z.pred Felt.p) (Felt.to_z b), 2|] in
+    Array.sort (fun (a,i) (b,j) -> let order = Z.compare a b in if order = 0 then Int.compare i j else order) arcs;
+    Hintrt.set scopes "excluded_arc" (Hintrt.Int (Z.of_int (snd arcs.(2))));
+    let q0, r0 = Z.ediv_rem (fst arcs.(0)) third and q1, r1 = Z.ediv_rem (fst arcs.(1)) half in
+    Hintrt.write_arg vm (range_check vm) (List.map Felt.of_z [r0; q0; r1; q1])
+
 let compile ~rng ~syscall scopes j =
   let name, fields = variant j in
   let arg k = operand (U.member k fields) in
@@ -115,6 +128,13 @@ let compile ~rng ~syscall scopes j =
   | "Uint256DivMod" -> Casm_uint.division ~arg ~put 2
   | "Uint512DivModByUint256" -> Casm_uint.division ~arg ~put 4
   | "U256InvModN" -> Casm_uint.inverse ~arg ~put
+  | "Uint256SquareRoot" -> Casm_uint.square_root ~arg ~put
+  | "AssertLeFindSmallArcs" -> small_arcs scopes (ptr "range_check_ptr") (arg "a") (arg "b")
+  | "AssertLeIsFirstArcExcluded" | "AssertLeIsSecondArcExcluded" ->
+      let first = name = "AssertLeIsFirstArcExcluded" in
+      let dst = put (if first then "skip_exclude_a_flag" else "skip_exclude_b_minus_a") in
+      let index = if first then Z.zero else Z.one in
+      (fun vm -> dst vm (Hintrt.of_bool (not (Z.equal (Hintrt.var_z scopes "excluded_arc") index))))
   | "SquareRoot" ->
       let v = arg "value" and dst = put "dst" in
       (fun vm -> dst vm (Felt.of_z (Z.sqrt (Felt.to_z (v vm)))))

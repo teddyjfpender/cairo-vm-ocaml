@@ -1,0 +1,4 @@
+(test
+ (name casm_hints)
+ (deps vectors.json)
+ (libraries cairovm))
