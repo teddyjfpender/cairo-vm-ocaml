@@ -597,19 +597,49 @@ static void pedersen_point(jac *acc, const u64 a[4], const u64 b[4]) {
   canonicalize_point(acc);
 }
 
+struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
+struct pair_set { struct pair_entry ways[4]; unsigned next; };
+enum { SMALL_PAIR_SETS = 32, BATCH_PAIR_SETS = 4096 };
+
+static pthread_once_t pair_key_once = PTHREAD_ONCE_INIT;
+static pthread_key_t pair_key;
+static int pair_key_ready;
+static _Thread_local struct pair_set *batch_pairs;
+static void create_pair_key(void) { pair_key_ready = pthread_key_create(&pair_key, free) == 0; }
+
+/* An image-backed runner reuses compiled classes across independent VMs.
+   Store complete keys and canonical results outside each VM's felt pool. */
+value cvm_batch_pedersen_cache(value enable) {
+  int was_active = batch_pairs != NULL;
+  if (!Bool_val(enable)) batch_pairs = NULL;
+  else if (!was_active) {
+    pthread_once(&pair_key_once, create_pair_key);
+    if (pair_key_ready) {
+      struct pair_set *sets = pthread_getspecific(pair_key);
+      if (!sets) {
+        sets = calloc(BATCH_PAIR_SETS, sizeof *sets);
+        if (sets && pthread_setspecific(pair_key, sets)) { free(sets); sets = NULL; }
+      }
+      batch_pairs = sets;
+    }
+  }
+  return Val_bool(was_active);
+}
+
 static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
-  static _Thread_local struct { struct pair_entry ways[4]; unsigned next; } pairs[32];
+  static _Thread_local struct pair_set small_pairs[SMALL_PAIR_SETS];
   u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
-  unsigned index = (h ^ (h >> 32)) & 31;
+  unsigned hash = h ^ (h >> 32);
+  struct pair_set *set = batch_pairs ? &batch_pairs[hash & (BATCH_PAIR_SETS - 1)]
+                                     : &small_pairs[hash & (SMALL_PAIR_SETS - 1)];
   for (int way = 0; way < 4; ++way) {
-    struct pair_entry *e = &pairs[index].ways[way];
+    struct pair_entry *e = &set->ways[way];
     if (e->valid && eq4(e->a, a) && eq4(e->b, b)) {
       memcpy(out, e->hash, sizeof e->hash);
       return;
     }
   }
-  struct pair_entry *entry = &pairs[index].ways[pairs[index].next++ & 3];
+  struct pair_entry *entry = &set->ways[set->next++ & 3];
   jac acc;
   pedersen_point(&acc, a, b);
   u64 zi[4], x[4];

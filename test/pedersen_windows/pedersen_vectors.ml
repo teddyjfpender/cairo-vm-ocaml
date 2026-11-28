@@ -47,3 +47,19 @@ let () =
   done;
   assert (Z.equal (Felt.to_z !x)
     (Z.of_string "0x7459297c2898494cb4b0192e17f7f50662dcae04ee6de87dbc7d8270d62e50e"))
+
+external batch_pedersen_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
+
+(* Give every pair the same set index while varying both middle limbs. Restart
+   the VM's temporary slots before each replay, including after eviction. *)
+let () =
+  let pairs = Array.init 12 (fun i ->
+      Z.(add one (shift_left (of_int Stdlib.(i + 1)) 64)),
+      Z.(add (of_int 2) (shift_left (of_int Stdlib.(i + 2)) 128))) in
+  let hash (x, y) = Felt.with_temporary_slots (fun () ->
+      Felt.to_z (Felt.pedersen (Felt.of_z x) (Felt.of_z y))) in
+  let expected = Array.map hash pairs in
+  let previous = batch_pedersen_cache true in
+  Fun.protect ~finally:(fun () -> ignore (batch_pedersen_cache previous)) (fun () ->
+      List.iter (fun i -> assert (Z.equal (hash pairs.(i)) expected.(i)))
+        [0; 1; 2; 3; 2; 0; 4; 5; 6; 7; 2; 8; 9; 10; 11; 3; 0])

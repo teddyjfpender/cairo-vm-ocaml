@@ -174,12 +174,19 @@ let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof
   let input = match worker with Some d -> Domain.join d | None -> read_input ~virtual_os path in
   initialize_input ?on_da ?layout_def ?record_trace ~proof input cfg program
 
+external batch_pedersen_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
+
 let with_output ?virtual_os ?image ~path cfg prog consume =
-  Felt.with_temporary_slots (fun () ->
+  let execute () = Felt.with_temporary_slots (fun () ->
       let r = initialize ?virtual_os ?image ~proof:false ~record_trace:false ~path cfg prog in
       Runner.run_until_end r;
       Finalize.end_run r ~secure:cfg.Runner.secure_run ~allow_missing:cfg.allow_missing_builtins;
-      consume r)
+      consume r) in
+  match image with
+  | None -> execute ()
+  | Some _ ->
+      let previous = batch_pedersen_cache true in
+      Fun.protect execute ~finally:(fun () -> ignore (batch_pedersen_cache previous))
 
 let run_output_file ?virtual_os ?image ~path cfg prog =
   with_output ?virtual_os ?image ~path cfg prog Artifacts.output_lines
