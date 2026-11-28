@@ -9,7 +9,7 @@
  (target native_flags.sexp)
  (action
   (with-stdout-to %{target}
-   (run %{exe:../../scripts/native_flags.exe} compile %{ocaml-config:architecture} %{profile} %{env:OXC_PGO_PROFILE=} %{env:OXC_LIBDEFLATE=} %{env:OXC_OPENSSL=}))))
+   (run %{exe:../../scripts/native_flags.exe} compile %{ocaml-config:architecture} %{profile} %{env:OXC_PGO_PROFILE=} %{env:OXC_LIBDEFLATE=} %{env:OXC_OPENSSL=} %{env:OXC_TARGET_CPU=}))))
 
 (rule
  (target native_link_flags.sexp)

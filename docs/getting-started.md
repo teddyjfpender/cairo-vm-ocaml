@@ -21,6 +21,25 @@ cairo-vm-cli --version
 The version string identifies OxCairo alongside the Rust CLI version it targets.
 Use absolute executable paths when comparing two installations.
 
+### Reproduce the Ubuntu x86-64 archive
+
+The Linux packaging workflow starts two fresh containers on separate Ubuntu 24.04 runners. The amd64 image digest fixes the system packages, the two Git revisions fix the opam repositories, and the build compares the installed switch against the complete package lock. Native stubs target baseline x86-64. Each replica exercises its extracted CLI, prepared worker and C library against the genesis reference before the workflow compares the archives, checksums and JSON provenance byte for byte. Tagged publication requires that comparison to succeed.
+
+To build the same portable archive locally, use Docker with an x86-64 Linux host and check out the exact source revision in a standard Git clone. Run from its root:
+
+```sh
+source scripts/reproducible/sources.env
+out=$(mktemp -d)
+chmod 777 "$out"
+docker run --rm --platform linux/amd64 \
+  --mount "type=bind,src=$PWD,dst=/checkout,readonly" \
+  --mount "type=bind,src=$out,dst=/out" \
+  "$BUILD_IMAGE" bash /checkout/scripts/reproducible/linux-build.sh
+(cd "$out" && sha256sum -c *.sha256)
+```
+
+The archive contains the CLI, worker, C header and shared library. The provenance file records the source revision and tree, toolchain digest, opam metadata, binary package versions, compiled OS fixture digests, and the resolved dynamic libraries for each executable and the shared library. Runtime installations need the Ubuntu glibc runtime, GMP and zlib. The portable build omits the optional OpenSSL and libdeflate backends.
+
 ### Build from source
 
 PIE archives use zlib. On Linux install the zlib development headers (`zlib1g-dev` on Debian and Ubuntu). On macOS the SDK provides them.
