@@ -23,3 +23,7 @@ python3 compare.py BASE_CLI CANDIDATE_CLI RAW_PROGRAM WITNESS_DIRECTORY NEW_RECE
 Run `dune runtest --profile release -j1` and `python3 test/fixtures/os/check.py CANDIDATE_CLI RAW_PROGRAM` from the repository root. All 25 native fixtures matched every retained PIE member and applicable public output. The original compiler source also produced byte-identical packed images. A differential run on 608 generated complete or malformed inputs matched exits, diagnostics, stdout and packed bytes, with 145 accepted and 463 rejected. Another 42 cases covered real malformed compiler locations, fallback spellings and chunk boundaries.
 
 [Corpus pairs](scenarios.csv), [focused pairs](focused.csv), and [component comparisons](components.csv) retain elapsed and CPU seconds. The median reported for each case is the median of its individual paired speedups. The suite statistic is the median of those 70 case medians.
+
+The integrated release PGO build at `16aa093` also completed five shuffled traversals with independently warmed Rust and OCaml workers. All 350 requests matched the Rust public output. The median paired scenario speedup was 4.79× and the case medians summed to 5.10 s Rust and 0.93 s OCaml (5.48×). No scenario's median reached 10× in this warm run. The process startup, compiler decoding and initial worker warm-up precede the timing interval. The samples are in `shuffled-worker.csv`.
+
+A fresh proof-mode exporter built from the same runtime generated the exact input digests of all ten previously verified Stwo proofs, including both direct raw OS programs.
