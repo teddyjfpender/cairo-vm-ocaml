@@ -43,6 +43,12 @@ def main():
             steps = json.loads(pie.read("execution_resources.json"))["n_steps"]
             expected = json.loads(args.witness.with_suffix(".sha256.json").read_text())
             assert expected == {i.filename: hashlib.sha256(pie.read(i)).hexdigest() for i in pie.infolist()}
+        replay = dict(schema=1, operation="replay", pie=str(output), output=str(root / "replay.zip"))
+        run(replay)
+        run(replay | {"limits": {"steps": steps - 1}}, code=20, kind="step_limit")
+        truncated = root / "incomplete.zip"
+        truncated.write_bytes(before[:-32])
+        run(replay | {"pie": str(truncated)}, code=5, kind="invalid_input")
         run(job | {"limits": {"steps": steps}})
         for limit, value, code, kind in [
             ("steps", steps - 1, 20, "step_limit"), ("memory_bytes", 1, 21, "memory_limit"),

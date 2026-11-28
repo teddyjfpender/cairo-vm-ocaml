@@ -108,8 +108,8 @@ let () =
   if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
-  if Option.is_some !max_steps && (!proof || Option.is_none !os_hints) then
-    usage_error "--max_steps requires execution with a native OS witness";
+  if Option.is_some !max_steps && (!proof || (not !from_pie && Option.is_none !os_hints)) then
+    usage_error "--max_steps requires OS execution or PIE replay";
   if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
@@ -160,6 +160,7 @@ let () =
     let r, t1, t2 = try
       if !from_pie then begin
         let pie,source = Pie_file.read_deferred file in
+        Option.iter (fun limit -> if pie.n_steps > limit then raise Runner.Step_limit) !max_steps;
         let t1 = Unix.gettimeofday () in
         let res =
           Pie_run.run ~source ~allow_legacy_instructions:!legacy ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run

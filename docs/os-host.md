@@ -13,6 +13,8 @@ Run `oxcairo-os-host v1` from the release package, with Python 3.11 or newer on 
 }
 ```
 
+The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
+
 The program is the compiled main OS for the named revision. The witness is the JSON input of the sequencer OS hint processor. Preparing that witness from RPC, compiling contract classes and validating a block's state root require upstream components. Choose regular files owned by the service, keep input paths stable for the job, and give the service a private output directory on a local filesystem. These path fields are an interface for a trusted host application. A network service accepting untrusted requests must assign paths itself.
 
 OxCairo recognizes the full and compact compiler JSON digests for Apollo revision `1860b9850b5c51858c50c0f5038933e49f932eef` and revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. For an independently qualified build, set the **operator environment** variable `OXCAIRO_OS_PROFILE` to a trusted JSON file with `revision` (40 lowercase hex digits) and `program_sha256` (64 lowercase hex digits). Record the compiler, source, program hash and qualification receipts with that profile. The worker hashes its private compiler snapshot before execution. Adding a digest authorizes those bytes for execution and carries no parity certification.

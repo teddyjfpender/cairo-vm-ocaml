@@ -71,17 +71,26 @@ def request():
     if len(raw) > 65536:
         raise Refusal("invalid_request", "maximum request size is 65536 bytes")
     obj = json.loads(raw, object_pairs_hook=unique)
-    required = {"schema", "revision", "program", "witness", "output"}
-    if not isinstance(obj, dict) or not required <= obj.keys() <= required | {"limits"}:
+    if not isinstance(obj, dict) or obj.get("operation", "generate") not in ("generate", "replay"):
+        raise ValueError("expected a generate or replay request")
+    operation = obj.get("operation", "generate")
+    inputs = ("program", "witness") if operation == "generate" else ("pie",)
+    required = {"schema", "output", *inputs}
+    if operation == "generate":
+        required.add("revision")
+    if not required <= obj.keys() <= required | {"limits", "operation"}:
         raise ValueError("missing or unknown request field")
     if type(obj["schema"]) is not int or obj["schema"] != 1:
         raise ValueError("expected schema 1")
     for k in required - {"schema"}:
         if not isinstance(obj[k], str) or not obj[k] or "\0" in obj[k]:
             raise ValueError("expected nonempty string for " + k)
-    pins = trusted_pins()
-    if obj["revision"] not in pins:
-        raise Refusal("unknown_revision", "unsupported OS revision")
+    if operation == "generate":
+        pins = trusted_pins()
+        if obj["revision"] not in pins:
+            raise Refusal("unknown_revision", "unsupported OS revision")
+        obj["hashes"] = sorted(pins[obj["revision"]])
+    obj["inputs"] = inputs
     supplied = obj.get("limits", {})
     if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
         raise ValueError("unknown limit")
@@ -93,9 +102,8 @@ def request():
         raise Refusal("file_limit", "job requires at least 8 descriptors")
     if limits["memory_bytes"] < 32 << 20:
         raise Refusal("memory_limit", "job requires at least 32 MiB")
-    for k in ["program", "witness", "output"]:
+    for k in (*inputs, "output"):
         obj[k] = str(Path(obj[k]).absolute())
-    obj["hashes"] = sorted(pins[obj["revision"]])
     obj["limits"] = limits
     return obj
 
@@ -138,20 +146,26 @@ def child(stage, parent):
         set_limit(resource.RLIMIT_AS, lim["memory_bytes"])
     set_limit(resource.RLIMIT_NOFILE, lim["open_files"])
     set_limit(resource.RLIMIT_CPU, max(1, math.ceil(lim["wall_ms"] / 1000) + 1))
-    if not stat.S_ISREG(os.stat(job["witness"]).st_mode):
-        raise Refusal("invalid_input", "witness must be a regular file")
-    program = stage / "program"
-    # Bound the compiler copy before validation even for a mismatched file.
-    compiler_max = 128 << 20
-    if os.stat(job["program"]).st_size > compiler_max:
-        raise Refusal("program_mismatch", "compiler file exceeds supported size")
-    resource.setrlimit(resource.RLIMIT_FSIZE, (compiler_max, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))
-    copy_program(job["program"], program, job["hashes"])
+    for name in job["inputs"]:
+        if not stat.S_ISREG(os.stat(job[name]).st_mode):
+            raise Refusal("invalid_input", name + " must be a regular file")
+    if "pie" in job:
+        arguments = [job["pie"], "--run_from_cairo_pie"]
+    else:
+        program = stage / "program"
+        compiler_max = 128 << 20
+        if os.stat(job["program"]).st_size > compiler_max:
+            raise Refusal("program_mismatch", "compiler file exceeds supported size")
+        _, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+        soft = compiler_max if hard == resource.RLIM_INFINITY else min(compiler_max, hard)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        copy_program(job["program"], program, job["hashes"])
+        arguments = [str(program), "--os_hints", job["witness"]]
     set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
     signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
-    os.execve(exe, [str(exe), str(program), "--layout", "all_cairo", "--os_hints", job["witness"],
+    os.execve(exe, [str(exe), *arguments, "--layout", "all_cairo",
                     "--max_steps", str(lim["steps"]), "--cairo_pie_output", str(stage / "out")], env)
 
 def check_exit(rc, log):
@@ -224,7 +238,7 @@ def generate(job):
     output = Path(job["output"])
     if output.is_symlink():
         raise Refusal("invalid_request", "output must not be a symlink")
-    for name in ("program", "witness"):
+    for name in job["inputs"]:
         if output.exists() and os.path.samefile(output, job[name]):
             raise Refusal("invalid_request", "output aliases an input")
     lock_path = output.with_name("." + output.name + ".oxcairo.lock")
