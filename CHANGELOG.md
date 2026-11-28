@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0 (release candidate)
+
+- Execute Starknet OS, Virtual OS and block aggregation with the pinned sequencer's block witnesses. Coverage includes Cairo 0 and Cairo 1 calls, rollback, STRK transfers and blob commitments.
+- Replay large OS PIEs with bounded memory, stream output archives, and embed secure replay through the versioned C API. The binary distribution includes the CLI, shared library and C header.
+- Verify ten Stwo proofs, including direct OS genesis and multiblock proofs and four OS tasks inside the proof-mode bootloader. Independent Rust runs supply the reference execution artifacts.
+- Load large compiler programs faster, reuse prepared programs between requests, and track class memory accesses directly during traced OS execution. End-to-end comparisons cover cold processes, persistent workers, artifact generation and large PIEs. Performance on repeated storage and short native scenarios remains below the across-the-board 10× goal. [0.2 qualification](docs/release-0.2.md)
+
 ## 0.1.0 (2026-11-27)
 
 First release of OxCairo, a Cairo VM in OCaml (OxCaml) and a drop-in replacement for the

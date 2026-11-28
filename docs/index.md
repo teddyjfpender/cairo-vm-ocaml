@@ -1,13 +1,12 @@
 # OxCairo
 
-OxCairo is a Cairo virtual machine written in OCaml with [OxCaml](https://oxcaml.org/). It is a drop-in
-replacement for the `cairo-vm-cli` of [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm)
-v4.0.0: same flags, byte-identical outputs, more than five times faster.
+OxCairo is a Cairo virtual machine written in OCaml with OxCaml. Its CLI runs Cairo programs, produces execution traces and proof inputs, and replays Cairo PIEs. Version 0.2 also executes the Starknet OS from block witnesses and runs Virtual OS and the block aggregator. [Getting started](getting-started.md)
 
 ## What you'll find here
 
 | Section | Read it to |
 | --- | --- |
+| [0.2 qualification](release-0.2.md) | compare native block execution, secure replay, trace files and proof verification |
 | [Getting started](getting-started.md) | build the VM, run programs, use proof mode or the library |
 | [Learn](learn/index.md) | understand how a Cairo VM works and how this one is built, with exercises |
 | [Architecture](architecture.md) | see the module map, data flow and the reasons it's fast |
@@ -15,13 +14,8 @@ v4.0.0: same flags, byte-identical outputs, more than five times faster.
 | [Benchmarks](benchmarks.md) | see per-program timings and how they were measured |
 | [Contributing](contributing.md) | run the checks a change must pass |
 
-## At a glance
+## Coverage
 
-- **Speed:** 6.8× the Rust CLI on its 17 benchmarks (6.7× with trace and memory files);
-  up to 11× on single programs.
-- **Parity:** across the upstream test corpus, every output (stdout, trace, memory, AIR
-  inputs, PIE archives) is identical, in execution and proof mode.
-- **Coverage:** every builtin, every v4.0.0 layout including `dynamic`, and the Blake and
-  QM31 opcode extensions.
-- **Design:** values are tagged immediates typed as `Felt.t = private int`, memory lives
-  off the GC heap, and hot instruction sequences run in batches in a small C kernel.
+- The general VM supports every v4.0.0 layout, including dynamic layouts, plus Blake and QM31 opcode extensions.
+- The sequencer checks cover 25 native OS witnesses, four Virtual OS witnesses and 13 aggregator configurations. Independent checks also compare the relocated trace and memory files for seven OS-family workloads. [Parity](parity.md)
+- Upstream Stwo verified ten proofs, including direct proof-mode compilations of the OS for genesis and a multiblock witness. [Proof qualification](release-0.2.md)

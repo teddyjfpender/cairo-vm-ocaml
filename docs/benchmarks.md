@@ -1,5 +1,11 @@
 # Benchmarks
 
+## Version 0.2
+
+The release comparison measures cold native block execution, persistent workers, secure production PIE replay, and runs that write trace and memory files. It identifies which measurements use the stock Rust CLI, the stock sequencer or its memory-bounded diagnostic. Performance varies with block size, syscall mix and output mode. The 10× target remains open across native workloads. [0.2 measurements and raw pairs](release-0.2.md)
+
+## Earlier measurements
+
 The historical native Starknet OS cold timings below used identical Cairo bytecode, hints and identifiers. Rust loaded its embedded 52,471,230-byte compiler JSON. OxCairo loaded an 8,244,185-byte copy with `debug_info` set to null. This affects startup and is especially visible on short runs. The native timing harness now checks the complete compiler file against the Rust binary and records its SHA-256 before comparing. Direct PIE replay, bootloader task comparisons and equality of execution artifacts use independent checks.
 
 Direct secure replay now decompresses PIE memory in bounded chunks. Across the four large OS archives, the median ratios of the previous OCaml wall time to the streaming wall time were 1.18×, 1.23×, 1.18× and 1.23×, respectively, over nine alternating pairs. Output, trace, relocated memory and all five output PIE members matched the previously Rust-qualified runner on all four archives. [Per-pair timing and peak resident memory](../bench/results/os-pie-streaming-m4-max.csv).

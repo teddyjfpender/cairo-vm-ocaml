@@ -1,13 +1,12 @@
 # Parity
 
-The target is [starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm) **v4.0.0**.
+The general-purpose CLI uses Rust Cairo VM **v4.0.0** as its reference. Native Starknet OS, Virtual OS and aggregator checks use sequencer revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`, which uses Cairo VM **v3.2.0**. [Rust VM](https://github.com/starkware-libs/cairo-vm) · [Pinned sequencer](https://github.com/starkware-libs/sequencer/tree/ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45)
 
 ## How it's checked
 
 [`test/parity.py`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/test/parity.py)
 runs the Rust and OCaml CLIs with identical flags on every compiled program in a corpus. It
-compares stdout, trace, memory, AIR public/private inputs and PIE archives byte for byte. A
-program passes when the outputs are identical, or when both VMs reject it.
+compares stdout, trace, memory and the requested AIR public/private inputs. Archive checks compare the bytes of each decompressed member. ZIP container metadata and compression can differ. The harness reports cases where both VMs reject the input separately.
 
 ```sh
 python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [--from_pie] [-j N]
@@ -16,7 +15,20 @@ python3 test/parity.py RUST_CLI OCAML_CLI corpus/ [--proof] [--pie] [--from_pie]
 `--from_pie` has the Rust CLI write each program's Cairo PIE first, then runs both CLIs with
 `--run_from_cairo_pie` on it and also compares the PIEs they write.
 
-## Results
+## Version 0.2
+
+| Comparison | Observed result |
+| --- | --- |
+| General execution and proof mode against Rust v4.0.0 | 150 matching runs in each mode |
+| Re-execution from PIE | 146 matching runs and four inputs rejected by both runners |
+| Stwo-only opcode programs | Both matched Rust |
+| Sequencer fixtures | 25 native OS witnesses, four Virtual OS witnesses and 13 aggregator configurations matched their saved references |
+| Binary trace and memory | Every byte matched Rust for seven OS-family workloads, including a 13,101,755-step storage run |
+| Stwo proofs | Upstream verified four generic Cairo fixtures, four bootloader OS tasks and two direct OS executions |
+
+Two direct account and revert witnesses use a builtin that is absent from the `all_cairo_stwo` layout. OxCairo and the pinned Rust runner reject both. Their bootloader executions produced verified proofs. [0.2 qualification and proof scope](release-0.2.md)
+
+## Earlier corpus results
 
 Upstream `cairo_programs`, compiled with cairo-lang 0.13.5:
 
