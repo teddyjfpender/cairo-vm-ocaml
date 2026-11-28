@@ -1,0 +1,3 @@
+(test
+ (name u32_encoding)
+ (libraries cairovm))

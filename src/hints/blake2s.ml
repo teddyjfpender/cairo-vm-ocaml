@@ -12,6 +12,9 @@ let iv = Sha256.iv
 external compress_into : int array -> int array -> int -> int -> int -> int -> unit
   = "cvm_blake2s_byte" "cvm_blake2s" [@@noalloc]
 
+external blake_u32_words : Felt.pool -> Felt.t -> int array -> int
+  = "cvm_blake_u32_words" [@@noalloc]
+
 let compress h msg t0 t1 f0 f1 =
   if Array.length h <> 8 || Array.length msg < 16 then fail "Invalid BLAKE2s block";
   let state = Array.copy h in
@@ -93,19 +96,22 @@ let register reg =
   reg C.is_less_than_63_bits_and_not_end (fun c vm ->
       let e = get_ptr vm c "end" and pv = get_ptr vm c "packed_values" in
       if Felt.equal e pv then write_ap vm Felt.zero
-      else write_ap vm (of_bool (Z.lt (z_at vm pv 0) (two_pow 63))));
+      else write_ap vm (of_bool (Felt.bits (int_at vm pv 0) <= 63)));
   reg C.blake2s_unpack_felts (fun c vm ->
       let n = get_z vm c "packed_values_len" in
       if Z.numbits n > 62 then fail "Felt %s does not fit a usize" (Z.to_string n);
       let pv = get_ptr vm c "packed_values" and out = get_ptr vm c "unpacked_u32s" in
-      let vals = List.init (Z.to_int n) (fun i -> z_at vm pv i) in
-      let limbs v =
-        if Z.lt v (two_pow 63) then [ Z.shift_right v 32; Z.logand v (z m32) ]
-        else
-          let v = Z.add v (two_pow 255) in
-          List.init 8 (fun i -> Z.logand (Z.shift_right v (32 * (7 - i))) (z m32))
-      in
-      write_arg vm out (List.map Felt.of_z (List.concat_map limbs vals)));
+      (* Snapshot every input before writing output: the two ranges can alias,
+         and a missing input must fail before the first output assignment. *)
+      let vals = List.init (Z.to_int n) (int_at vm pv) in
+      let words = Array.make 8 0 and at = ref (Felt.roff out) in
+      let seg = Felt.rseg out in
+      List.iter (fun v ->
+          let count = blake_u32_words Felt.pool v words in
+          for i = 0 to count - 1 do
+            write_checked vm seg !at (Felt.small words.(i));
+            incr at
+          done) vals);
   reg C.example_blake2s_compress (fun c vm ->
       let start = get_ptr vm c "blake2s_start" and out = get_ptr vm c "output" in
       let n_bytes = u32 (get_z vm c "n_bytes") in

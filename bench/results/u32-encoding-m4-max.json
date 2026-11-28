@@ -1,0 +1,141 @@
+{
+  "baseline": "ca29f1056becd028d1efc769d5f767c4d0669a40",
+  "host": "Apple M4 Max, macOS arm64, shared laptop",
+  "build": "OxCaml 5.2.0+ox, Dune release profile, no PGO",
+  "boundary": "Runner.run_until_end, monotonic clock, all_cairo with trace disabled, first VM in a fresh process; initialization and finalization excluded",
+  "order": "All 6 permutations of baseline, hint-only, and candidate-final. Each arm starts from the same prepared inputs. Paired medians use same-round baseline divided by candidate.",
+  "cases": {
+    "16149540": {
+      "rows": [
+        {
+          "baseline": 89465000,
+          "hint-only": 68317000,
+          "candidate-final": 63032000
+        },
+        {
+          "baseline": 91627000,
+          "candidate-final": 64383000,
+          "hint-only": 68405000
+        },
+        {
+          "hint-only": 69648000,
+          "baseline": 89539000,
+          "candidate-final": 62147000
+        },
+        {
+          "hint-only": 66000000,
+          "candidate-final": 62544000,
+          "baseline": 90187000
+        },
+        {
+          "candidate-final": 61456000,
+          "baseline": 90464000,
+          "hint-only": 67474000
+        },
+        {
+          "candidate-final": 62963000,
+          "hint-only": 66940000,
+          "baseline": 90573000
+        }
+      ],
+      "medians_ms": {
+        "baseline": 90.3255,
+        "hint-only": 67.8955,
+        "candidate-final": 62.7535
+      },
+      "median_paired": {
+        "baseline": 1.0,
+        "hint-only": 1.3401009713456222,
+        "candidate-final": 1.4396364636304693
+      },
+      "increment": 1.0735051903918162,
+      "start": [
+        0,
+        17183,
+        13,
+        13,
+        0
+      ],
+      "stop": [
+        14,
+        0,
+        1169743,
+        0,
+        1492778
+      ],
+      "output_words": 122,
+      "matched_baseline_bytes": {
+        "zip": "a61b35662baf7868448e3f721ac90ead215f42edd2337e8bc69d6e65c9fdaca3",
+        "memory": "3b988b79f21ab090360ddabfb0d273670a90cc326a7cbaeea44f41a5fd09f281",
+        "trace": "285a3e1f99031c4046b5ee633bb843e716ce9d96172cd9113745ac390172cfcf"
+      },
+      "raw_time_unit": "nanoseconds"
+    },
+    "16000001": {
+      "rows": [
+        {
+          "baseline": 26171000,
+          "hint-only": 23251000,
+          "candidate-final": 22139000
+        },
+        {
+          "baseline": 25811000,
+          "candidate-final": 22585000,
+          "hint-only": 23031000
+        },
+        {
+          "hint-only": 23910000,
+          "baseline": 26123000,
+          "candidate-final": 23039000
+        },
+        {
+          "hint-only": 23124000,
+          "candidate-final": 22340000,
+          "baseline": 25756000
+        },
+        {
+          "candidate-final": 22445000,
+          "baseline": 25628000,
+          "hint-only": 22906000
+        },
+        {
+          "candidate-final": 22518000,
+          "hint-only": 23552000,
+          "baseline": 25969000
+        }
+      ],
+      "medians_ms": {
+        "baseline": 25.89,
+        "hint-only": 23.1875,
+        "candidate-final": 22.4815
+      },
+      "median_paired": {
+        "baseline": 1.0,
+        "hint-only": 1.1163273158096114,
+        "candidate-final": 1.1478738730775153
+      },
+      "increment": 1.0364497310484735,
+      "start": [
+        0,
+        17183,
+        13,
+        13,
+        0
+      ],
+      "stop": [
+        14,
+        0,
+        406326,
+        0,
+        507630
+      ],
+      "output_words": 161,
+      "matched_baseline_bytes": {
+        "zip": "5efea3728ae530388b4ff69726b378f9d7e2b31e200557291c40b53ce724e855",
+        "memory": "7cfb5c8049656dafca73be3171adb8e78c6ac1707b68d78b24b62db7c6f56a12",
+        "trace": "6a82892144edb0ee29b205bf6fbdf8d1171632bd65498e979bce63132cfba24c"
+      },
+      "raw_time_unit": "nanoseconds"
+    }
+  }
+}
