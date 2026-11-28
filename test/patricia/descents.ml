@@ -51,3 +51,40 @@ let () =
         assert (outcome dense n path = outcome compact n path)
       done) (keys @ List.init 8 (fun _ -> bits h))
   done
+
+(* The 0.14.2 OS stores descent length through ids.siblings and writes the
+   word to a separate reference. Exercise the original compiled hint spelling. *)
+let () =
+  let open Cairovm in
+  let open Program in
+  let code = "memory[ids.siblings], ids.word = descend" in
+  let handlers = Hashtbl.create 32 in
+  Os_patricia.register ~block:(fun () -> assert false) ~felt:(fun _ -> assert false)
+    (Hashtbl.add handlers);
+  let run pointer existing =
+    let vm = Vm.create ~trace:false in
+    for _ = 0 to 2 do ignore (Vm.add_segment vm) done;
+    Vm.write vm 1 0 pointer;
+    Option.iter (Vm.write vm 2 3) existing;
+    let reference offset typ =
+      {r_group=0; r_offset=0; r_expr=Deref (Cast (Add (Reg_fp, Int (z offset)), typ))} in
+    let program = {data=[||]; builtins=[]; main=None; start=None; end_=None; hints=[];
+                   references=[|reference 0 "felt**"; reference 1 "felt*"|];
+                   identifiers=Hashtbl.create 0} in
+    let hint = {code; scopes=["historical"]; h_group=0; h_offset=0;
+                ref_ids=["historical.siblings",0; "historical.word",1]} in
+    let scopes = Hintrt.new_scopes () in
+    Hintrt.enter scopes ["descend_length", Hintrt.Int (z 4); "descend_word", Hintrt.Int (z 11)];
+    (Hashtbl.find handlers code) (Hintrt.make_ctx program scopes hint) vm;
+    assert (Felt.equal (Vm.get vm 1 0) pointer);
+    assert (Felt.equal (Vm.get vm 2 3) (Felt.of_int 4));
+    assert (Felt.equal (Vm.get vm 1 1) (Felt.of_int 11)) in
+  let pointer = Felt.reloc 2 3 in
+  run pointer None;
+  run pointer (Some (Felt.of_int 4));
+  let rejects pointer existing =
+    match run pointer existing with
+    | exception Errors.Vm_error _ -> ()
+    | () -> failwith "accepted invalid sibling write" in
+  rejects (Felt.of_int 3) None;
+  rejects pointer (Some (Felt.of_int 5))
