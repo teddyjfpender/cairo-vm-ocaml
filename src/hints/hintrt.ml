@@ -343,14 +343,16 @@ let resolve_constant ctx name =
   | Some _ as value -> value
   | None -> (
       let suffix = "." ^ name in
-      let found = ref None in
-      Hashtbl.iter
-        (fun k (id : P.ident) ->
-          if !found = None && id.i_type = "const" && String.length k > String.length suffix
-             && String.sub k (String.length k - String.length suffix) (String.length suffix) = suffix
-          then found := id.i_value)
-        ctx.prog.P.identifiers;
-      !found)
+      (* Preserve identifier iteration order when several scopes define the same suffix. *)
+      let exception Found of Z.t in
+      try
+        Hashtbl.iter (fun k (id : P.ident) ->
+            if id.i_type = "const" && String.length k > String.length suffix
+               && String.ends_with ~suffix k then
+              Option.iter (fun v -> raise_notrace (Found v)) id.i_value)
+          ctx.prog.P.identifiers;
+        None
+      with Found v -> Some v)
 
 (* The identifier table and accessible scopes are fixed for a compiled hint.
    Cache misses too: optional constants can otherwise scan every identifier
