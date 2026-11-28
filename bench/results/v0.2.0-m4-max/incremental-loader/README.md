@@ -23,3 +23,36 @@ Filesystem caches were allowed to remain warm and other local projects continued
 The Cairo0 and Cairo1 cases are the two middle scenarios from the preceding 70-scenario cold comparison. They use the upstream trivial-diff workload with KZG disabled and full output enabled. The transfer case has 1,024 transfers across 16 recipients. The storage case has 8,192 operations.
 
 [All scenario pairs](scenarios.csv) and [focused pairs](focused.csv) record process wall seconds. [Witness identities](witnesses.csv) identifies each exact input. The native OS fixture suite separately compared all 25 saved upstream PIE member sets and available public outputs using the same full program.
+
+## Second loader candidate against the integrated runner
+
+The integrated regular-release baseline was `43598c9a4d9ee63a8844b34b12d54a0b3f634e49`. The candidate was `d884acca5e5386899490bd7ba320e034201c5906`. Both include the prior loader improvement and execution changes. Executable SHA-256 values were `0b2bfa612ed55b442233b0966140eb09bbff07b5b2381c44e0ac11ab636f36c3` and `4d496b68eea0f971505c1b85faec8ae8a603c29007f5ea54eb8782c293f50f96`. The program, witness identities and CLI were the same as above.
+
+| Integrated corpus series | Pairs | Median case wall speedup | Total wall speedup | Cases faster | Median case child CPU speedup |
+|---|---:|---:|---:|---:|---:|
+| First run | 350 | 1.011× | 0.995× | 40/70 | Unmeasured |
+| Independently shuffled recheck | 630 | 1.014× | 1.011× | 41/70 | 1.009× |
+
+Both executables produced byte-identical public output in every pair, and each corpus output matched the retained Rust field-element digest. Each digest uses 32-byte big-endian field elements reduced modulo the Cairo prime. Case order was shuffled every round, and first engine alternated by case index plus round. The recheck also measured the child's cumulative user and system CPU time. One-minute host load sampled at the start of each recheck round ranged from 17.1 to 18.6 on 14 logical CPUs. The first and second series had per-case median paired wall ranges of 0.756–1.380× and 0.811–1.283×.
+
+| Focused case | Pairs | Baseline median ms | Candidate median ms | Median paired speedup |
+|---|---:|---:|---:|---:|
+| Genesis | 25 | 47.56 | 41.51 | 1.181× |
+| Cairo0 | 25 | 67.35 | 67.43 | 0.955× |
+| Cairo1 | 25 | 67.23 | 65.04 | 0.999× |
+| Transfer 1024 | 25 | 235.29 | 229.97 | 1.004× |
+| Storage 8192 | 13 | 1,348.06 | 1,347.50 | 1.041× |
+
+[First 70-scenario run](integrated-scenarios.csv), [independent recheck](integrated-recheck-scenarios.csv), and [focused pairs](integrated-focused.csv) contain the raw seconds, order and output digest. All 25 native OS fixtures matched saved sequencer PIE members and available public outputs. Six malformed copies of the full source produced identical exit statuses and error text on both binaries. The loader test suite exercised false boundaries, reentrant conversion and consumer exceptions.
+
+### Component comparisons
+
+Four ordinary-release variants shared the integrated execution code. `none` uses the preceding loader, `life` defers debug-worker termination until conversion, `reuse` applies exact repeated-span validation and reuses parsed bytecode words, and `both` combines these changes. The latter two include the reference-expression table sizing adjustment. Every variant retained the original identifier table size.
+
+| Variant vs preceding loader | Program load only, wall / child CPU | 70-scenario E2E, wall / child CPU |
+|---|---:|---:|
+| Worker lifetime | 0.940× / 1.041× | 0.996× / 1.000× |
+| Span and word reuse | 1.026× / 1.019× | 1.037× / 1.031× |
+| Both | 1.022× / 1.028× | 1.040× / 1.033× |
+
+The load-only CLI applied the runner's standard OS GC configuration, loaded the same complete JSON through `Program.load_file`, and emitted the program's data, reference and identifier counts. Each of 31 blocks ran all four variants in shuffled order. The E2E comparison ran three four-variant blocks per scenario, with a fresh shuffled engine order per block. Each process emitted the expected Rust output. This diagnostic series uses independent randomized runs, so its estimates differ from the longer two-engine comparisons. [Load-only samples](factorial-program.csv) and [E2E samples](factorial-e2e.csv).
