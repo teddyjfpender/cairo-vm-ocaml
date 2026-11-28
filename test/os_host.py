@@ -54,6 +54,16 @@ def main():
             assert expected == {i.filename: hashlib.sha256(pie.read(i)).hexdigest() for i in pie.infolist()}
         replay = dict(schema=1, operation="replay", pie=str(output), output=str(root / "replay.zip"))
         run(replay)
+        stored = root / "stored.zip"
+        transfer = job | {"publication": "stored", "output": str(stored)}
+        stored_ok = run(transfer)
+        with zipfile.ZipFile(output) as reference, zipfile.ZipFile(stored) as candidate:
+            assert candidate.namelist() == reference.namelist()
+            for entry in candidate.infolist():
+                assert entry.compress_type == zipfile.ZIP_STORED
+                assert candidate.read(entry) == reference.read(entry.filename)
+        assert run(transfer)["sha256"] == stored_ok["sha256"]
+        run(replay | {"pie": str(stored)})
         run(replay | {"limits": {"steps": steps - 1}}, code=20, kind="step_limit")
         truncated = root / "incomplete.zip"
         truncated.write_bytes(before[:-32])
