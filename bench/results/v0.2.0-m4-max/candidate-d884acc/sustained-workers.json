@@ -1,0 +1,42 @@
+{
+  "protocol": "A single prepared process reads a fresh witness and executes a fresh VM per request. Each public output is normalized to field elements and compared with an independently computed stock Rust digest. Cases are reshuffled per traversal. RSS is sampled at 0.5 s. Each worker is capped at 2200000 KiB. Different runtime revisions are listed separately.",
+  "oracle_sha256": "93e96c202542c661d6ce1770a41cd3d747731c4e29460f6d1d2f88d568a4939e",
+  "runs": [
+    {
+      "runtime": "ce19284",
+      "worker_sha256": "d6a28e3557a67b85e4e466d75bf90e42ae3a2eaacede22804f1d2811de5a9b35",
+      "successful_fresh_vms": 14891,
+      "distinct_witnesses": 74,
+      "peak_rss_kib": 630336,
+      "last_elapsed_s": 4421.476464750012,
+      "completed": true
+    },
+    {
+      "runtime": "e559436",
+      "worker_sha256": "f957bdafa65b2460ee6c081961544d128c23fb238b78491e45f1b61370fb2f66",
+      "successful_fresh_vms": 11855,
+      "distinct_witnesses": 74,
+      "peak_rss_kib": 637648,
+      "last_elapsed_s": 3516.317513584014,
+      "completed": true
+    },
+    {
+      "runtime": "43598c9",
+      "worker_sha256": "f1f59c41d86cf6d7ee17af422ccba3d86b05e279e6443045ae7b279cd3080918",
+      "successful_fresh_vms": 6479,
+      "distinct_witnesses": 74,
+      "peak_rss_kib": 650352,
+      "last_elapsed_s": 1903.2585441669798,
+      "completed": true
+    },
+    {
+      "runtime": "d884acc",
+      "worker_sha256": "12516a4290c6f9fda4e458c20aac69101ce9e933c48d4ae461aa4152e1ad3e99",
+      "successful_fresh_vms": 4049,
+      "distinct_witnesses": 74,
+      "peak_rss_kib": 656304,
+      "last_elapsed_s": 1195.6375903750013,
+      "completed": true
+    }
+  ]
+}

@@ -64,3 +64,13 @@ All four historical production archives reproduced the checkpoint’s complete t
 Full native trace and memory receipts cover seven OS, Virtual OS and aggregator workloads. All 42 engine executions agreed byte for byte with their paired engine. `prover-inputs.txt` records the ten exact upstream-verified Stwo inputs. The release fixture and generic parity logs record the remaining acceptance results.
 
 Use `bench/compare_native_os.py` for cold comparisons and `bench/compare_native_os_workers.py --shuffle-seed 6640` to reproduce the mixed-worker mode. The parent directory describes the native diagnostic, corpus and upstream revisions.
+
+## Sustained execution and delivery
+
+The final prepared worker completed 4,049 new VMs over 74 shuffled witnesses. Each request matched a stock Rust output digest. Peak sampled RSS was 641 MiB. `sustained-workers.json` lists separate completed soaks for this build and three prior checkpoints.
+
+`workers.csv` contains 35 paired runs on seven scaled native OS workloads, 27 Virtual OS pairs, 27 aggregator pairs and three additional pairs on each of two large STRK workloads. The 8,192-transfer worker reached a median 9.53× and the 4,096-recipient worker reached 17.71×. These workers retained the compiler between requests.
+
+`bootloader.csv` covers two pairs in each of four padding and artifact modes on all four production archives. `cold-vs-checkpoint.csv` and `shuffled-vs-checkpoint.csv` compare the preceding `43598c9` PGO build with this candidate. The lighter-load seven-pair repeat appears in `cold-lighter.csv`. `cold-e559436.csv` and `worker-e559436.csv` compare the earlier checkpoint. The two `vs-main` tables retain the direct same-host comparison with starting OCaml main.
+
+`package.json` gives the local macOS package and proof archive checksums. The macOS package includes the CLI, prepared worker, C replay library, header and optional backend licenses. The binary uses the Homebrew GMP runtime. `stwo-archive-verification.txt` records the SHA-256 of each of the ten extracted proofs that passed the independent verifier.
