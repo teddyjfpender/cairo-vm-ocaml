@@ -16,6 +16,8 @@ Both encoders produced identical frames on complete mainnet witnesses from the A
 | 16,000,001 | 4,368,481 | 2,317,562 | `846ff8a20c1214e835afdbb92932b27f8de6573de088a338766191de2eb875d0` | `5efea3728ae530388b4ff69726b378f9d7e2b31e200557291c40b53ce724e855` |
 | 16,149,540 | 10,143,851 | 5,585,132 | `9ad4c5a7186da93d21f96270200f512e60a4391ac4d2e656f7314f4d9c20e80f` | `a61b35662baf7868448e3f721ac90ead215f42edd2337e8bc69d6e65c9fdaca3` |
 
+The Rust-encoded mainnet frames also matched the pinned Rust proof-mode execution for both heights. Checks compared the trace, relocated memory and public output byte for byte, and both AIR JSON documents structurally after excluding the two private filesystem paths. Two Virtual OS fixtures (execution info and 16 multicalls) matched Rust trace and relocated memory byte for byte. These checks qualify proof artifacts; they do not time a prover.
+
 ## First and second jobs
 
 Six paired rounds on a macOS arm64 M4 Max rotated format order and first block. Each process prepared the program once. Each job read its own supplied input, initialized a fresh secure VM, ran the OS, finalized and wrote an uncompressed PIE. After stopping the clock it compared that archive against the independent stored reference. Program preparation, witness assembly, conversion, supervision, fsync and proof generation are outside the measured interval. JSON can defer selected subtrees until execution. The read column measures initial reading. Total time includes deferred work.
