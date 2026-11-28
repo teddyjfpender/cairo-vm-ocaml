@@ -67,39 +67,23 @@ The current native parser rejects the malformed field. The gate checks Rust's
 sequence-in-map parser error and OxCairo's `Invalid program metadata at instruction_locations`
 diagnostic. This fixture previously executed on OxCairo v0.1.0.
 
-### Using the Lean executable semantics
+### Independent Lean execution in CI
 
-Pass `--lean /path/to/adapter` to require a third result on **every selected fixture**. The
-adapter is the integration point for a separately built, revision-pinned Lean VM. Build it
-against the model's own loader, initial state, step function and finalization. Give it the
-compiled program and CLI options directly. Produce observations from Lean state without
-consuming the other CLIs' outputs, invoking them, or sharing their execution or relocation code.
+The native parity job builds the pinned executable Lean runner and its deduction step. Its adapter reads the original compiler JSON and CLI flags, creates a runner plan, steps the machine, validates the final state and relocates the trace and memory from that state. The adapter uses the upstream model's loader-facing program representation and converts the compiler JSON into that representation itself. It receives no observations from Rust or OxCairo. [Pinned independent model](https://github.com/starknet-innovation/cairo-vm-lean/tree/6cae3dd895e89ddde776b589ad2612b0f71d96b1) · [Pinned formal semantics](https://github.com/starkware-libs/formal-proofs/tree/d0dd8279612a248cbc6bf6d286030bf0bb2a37ff)
+
+The standing corpus has four successful programs and two reviewed rejections. It covers a bare return, nested call and return, immediate and indirect memory operands, field addition and multiplication, unconditional and both outcomes of conditional jumps, and positive and negative public output. Successful cases compare all stdout bytes, each relocated pre-step register triple and the complete initialized relocated memory. An invalid field prime and a missing entrypoint must produce the reviewed rejection in each engine. A fault-injection control changes a byte in the real Lean trace and requires the gate to identify disagreements with both other VMs.
+
+The checked profile is hint-free ordinary execution with no builtin or the output builtin, a maximum of 2,048 steps and the small layout. The adapter also accepts the plain layout for programs without builtins. Proof mode, padded or AIR traces, PIEs, other builtins, extension instructions, unusual compiler metadata and native Starknet execution remain outside this third-oracle corpus. The Lean pin models the v3.2.0-era runner. The common corpus compares that subset against Rust v4 and OxCairo directly.
 
 ```sh
-python3 test/parity.py "$RUST" "$OCAML" test/parity_fixtures/core \
-  --lean "$LEAN_ADAPTER" --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+git clone https://github.com/starknet-innovation/cairo-vm-lean.git lean-model
+git -C lean-model checkout 6cae3dd895e89ddde776b589ad2612b0f71d96b1
+export LEAN_CAIRO_MODEL="$PWD/lean-model"
+test/lean/prepare.sh
+python3 test/lean/check.py "$RUST" "$OCAML"
 ```
 
-1. Start with hint-free execution. The adapter receives
-   `PROGRAM --layout L --print_output --trace_file T --memory_file M`.
-   On success, print the exact program-output bytes and write each pre-step relocated
-   `(ap, fp, pc)` as three little-endian u64s. Write initialized memory in ascending
-   relocated-address order as little-endian u64 address and 32-byte field element pairs.
-   The one-instruction return fixture provides a hand-checkable first vector. Its trace is
-   `(4, 4, 1)`, its memory is `{1: 0x208b7fff7fff7ffe, 2: 4, 3: 4}`, and stdout is
-   `Program Output:\n`.
-2. Map typed Lean semantic errors to one stderr line, `reject wrong-field-prime` or
-   `reject missing-main` for the core negatives, and exit 1. Rejecting an unsupported feature
-   or exhausting model fuel is an oracle limitation. Return a distinct exit code such as 2.
-   A missing, unsupported or timed-out Lean run fails a requested three-way gate.
-3. Pin the model revision, adapter revision and fixture set in CI. Expand the three-way
-   corpus as model support grows, starting with arithmetic, jumps, calls, returns and memory
-   deduction before hints, builtins, proof mode and PIE. Keep the broader native suite running.
-   The summary names the oracles exercised. A two-to-one split always fails and the report
-   identifies the disagreeing pairs and artifacts.
-
-The included test double exercises this protocol. A real three-way result requires the external
-Lean executable and its adapter.
+Install elan before preparing the model. Its pinned toolchain is Lean 4.23.0-rc2. The project manifest pins Mathlib and the formal-proofs submodule. The adapter and selected fixtures travel with the OxCairo source revision. A missing oracle, unsupported mode, timeout or unexpected disagreement fails the CI job.
 
 ### PIE replay
 
