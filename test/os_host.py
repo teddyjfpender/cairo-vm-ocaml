@@ -24,7 +24,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         output = root / "output.zip"
-        job = dict(schema=1, revision="ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45",
+        job = dict(schema=1, publication="rust-3.2", revision="ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45",
                    program=str(args.program.absolute()), witness=str(args.witness.absolute()), output=str(output))
 
         def run(request, *, code=0, kind=None, environment=None):

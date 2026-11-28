@@ -78,8 +78,11 @@ def request():
     required = {"schema", "output", *inputs}
     if operation == "generate":
         required.add("revision")
-    if not required <= obj.keys() <= required | {"limits", "operation"}:
+    if not required <= obj.keys() <= required | {"limits", "operation", "publication"}:
         raise ValueError("missing or unknown request field")
+    publication = obj.setdefault("publication", "os-host-standard")
+    if publication not in ("os-host-standard", "rust-3.2"):
+        raise ValueError("unsupported publication profile")
     if type(obj["schema"]) is not int or obj["schema"] != 1:
         raise ValueError("expected schema 1")
     for k in required - {"schema"}:
@@ -177,6 +180,8 @@ def child(stage, parent):
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
             "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
+    if job["publication"] == "os-host-standard":
+        argv.append("--merge_extra_segments")
     if sys.platform != "darwin":
         os.execve(exe, argv, env)
     # macOS lacks Linux's parent-death signal. Keep a parent for the native
