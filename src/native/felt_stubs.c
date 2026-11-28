@@ -613,6 +613,11 @@ static void create_pair_key(void) { pair_key_ready = pthread_key_create(&pair_ke
 
 /* An image-backed runner reuses compiled classes across independent VMs.
    Store complete keys and canonical results outside each VM's felt pool. */
+value cvm_batch_pedersen_cache_active(value unit) {
+  (void)unit;
+  return Val_bool(pair_cache.batch != NULL);
+}
+
 value cvm_batch_pedersen_cache(value enable) {
   int was_active = pair_cache.batch != NULL;
   if (!Bool_val(enable)) pair_cache.batch = NULL;

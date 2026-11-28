@@ -86,3 +86,15 @@ let () =
         assert (Z.equal (Felt.to_z final)
           (Z.of_string "0x7459297c2898494cb4b0192e17f7f50662dcae04ee6de87dbc7d8270d62e50e")))
   end
+
+external batch_pedersen_cache_active : unit -> bool = "cvm_batch_pedersen_cache_active" [@@noalloc]
+
+let () =
+  List.iter (fun initial ->
+      let previous = batch_pedersen_cache initial in
+      Fun.protect ~finally:(fun () -> ignore (batch_pedersen_cache previous)) (fun () ->
+          let fail_in_hint _ = ignore (batch_pedersen_cache (not initial)); raise Exit in
+          (match Cpu.run ~steps:1 (Vm.create ~trace:false) [|[|fail_in_hint|]|] with
+           | () -> assert false
+           | exception Exit -> ());
+          assert (batch_pedersen_cache_active () = initial))) [false; true]

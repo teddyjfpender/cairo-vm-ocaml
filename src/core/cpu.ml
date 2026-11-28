@@ -382,7 +382,7 @@ let register_runtime_hints vm ~segment ~pc handlers =
 
 let batch_max = 8192 (* cvm_cpu_batch's steps per call *)
 
-let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array array) =
+let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
   let stop_seg, stop_pc = stop in
   let cached = if stop_seg = 0 && 0 <= stop_pc && stop_pc < Array.length vm.icache then vm.icache.(stop_pc) else 0 in
   if cached <> 0 then vm.icache.(stop_pc) <- cached lor hint_bit;
@@ -444,3 +444,13 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
     end
   done;
   if cached <> 0 then vm.icache.(stop_pc) <- cached
+
+external batch_pedersen_cache_active : unit -> bool = "cvm_batch_pedersen_cache_active" [@@noalloc]
+external batch_pedersen_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
+
+let run ?(stop = (0, -1)) ?(steps = max_int) vm hints =
+  (* A hint can install a class hash chain and later fail or stop before its
+     matching end hint. Restore the caller's cache mode on every return. *)
+  let previous = batch_pedersen_cache_active () in
+  Fun.protect (fun () -> run_inner ~stop ~steps vm hints)
+    ~finally:(fun () -> ignore (batch_pedersen_cache previous))

@@ -69,6 +69,7 @@ let hinted_hash cls =
 module Prepared : sig
   type t
   val start : Yojson.Safe.t -> t option
+  val finish : t -> unit
   val install : t -> string -> bool option
 end = struct
   type t = string * bytes option Lazy.t
@@ -90,7 +91,7 @@ end = struct
       Option.map (fun (hash, words) ->
           let packed = Bytes.make (64 * len) '\000' in
           List.iteri (fun i -> function
-              | `String w ->
+              | `String w when String.length w <= 80 ->
                   let z = Z.of_string w in
                   if Z.sign z < 0 || Z.geq z Felt.p then raise Exit;
                   let bits = Z.to_bits z in
@@ -99,6 +100,8 @@ end = struct
           let task = Domain.spawn (fun () -> if compute packed then Some packed else None) in
           hash, lazy (Domain.join task)) selected
     with Exit | Invalid_argument _ | Failure _ | Yojson.Safe.Util.Type_error _ -> None
+
+  let finish (_, chain) = ignore (Lazy.force chain)
 
   let install (key, chain) hash =
     if String.equal key hash then Option.map install_computed (Lazy.force chain) else None

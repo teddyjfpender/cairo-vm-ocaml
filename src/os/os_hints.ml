@@ -188,10 +188,16 @@ let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof
     | p -> p
     | exception exn ->
         let backtrace = Printexc.get_raw_backtrace () in
-        Option.iter (fun d -> try ignore (Domain.join d) with _ -> ()) worker;
+        Option.iter (fun d -> try
+            let input = Domain.join d in
+            Option.iter Legacy_class.Prepared.finish input.prepared
+          with _ -> ()) worker;
         Printexc.raise_with_backtrace exn backtrace in
   let input = match worker with Some d -> Domain.join d | None -> read_input ~virtual_os path in
-  initialize_input ?on_da ?layout_def ?record_trace ~proof input cfg program
+  (* Hashing may overlap runner setup. A caller can discard even a successfully
+     initialized runner without leaving any speculative work in flight. *)
+  Fun.protect (fun () -> initialize_input ?on_da ?layout_def ?record_trace ~proof input cfg program)
+    ~finally:(fun () -> Option.iter Legacy_class.Prepared.finish input.prepared)
 
 external batch_pedersen_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
 
