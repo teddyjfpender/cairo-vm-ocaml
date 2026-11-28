@@ -94,8 +94,9 @@ execution through the serial merged Rust-compatible ZIP writer, final archive va
 and durable local delivery. The receipt labels this profile `echonet-installed-host-v1` and records both candidate
 executable hashes. Omitting `--host` selects `echonet-direct-cli` for measuring direct
 native CLI execution. Only the installed-host profile exercises the v1 supervision and
-publication contract. Both profiles use the Echonet revision above. Apollo revision
-`1860b9850b5c51858c50c0f5038933e49f932eef` needs its own end-to-end qualification.
+publication contract. The receipt identifies the OS execution revision separately from
+the Echonet builder revision. Both revisions have passed synthetic genesis checks.
+Dedicated mainnet whole-job performance requires a measured, authenticated corpus.
 VM execution, VM finalization and ZIP encoding share one subprocess interval. Stage times
 exclude interpreter startup and reporting, which are included in whole-job wall time.
 The parent independently checks the complete delivered archive.

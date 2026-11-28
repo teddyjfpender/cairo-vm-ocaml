@@ -127,7 +127,9 @@ def measure(plan_file, rounds, seed, timeout, out):
         for arm in arms:
             totals[arm] += times[arm]
         cases_summary.append(dict(number=number, median_wall_ns=times, speedup=times["rust"]/times["oxcairo"]))
-    return dict(schema=1, execution_profile=profile, hardware=plan["hardware"], kernel=platform.release(), cache_policy=plan["cache_policy"],
+    return dict(schema=1, execution_profile=profile, os_revision=qualification.get("revision"),
+                echonet_builder_revision=echonet_job.REVISION if staged else None,
+                hardware=plan["hardware"], kernel=platform.release(), cache_policy=plan["cache_policy"],
                 plan_sha256=digest(plan_file), qualified_manifest_sha256=source_hash, executable_sha256=identities,
                 rounds=rounds, seed=seed, cases=cases_summary, rows=rows,
                 median_speedup=statistics.median(v["speedup"] for v in cases_summary),
