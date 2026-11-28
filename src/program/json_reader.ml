@@ -195,7 +195,7 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
                                       let used = struct_block src pos rows in
                                       if used > 0 then add src rows used else ordinary ()));
                        `Null
-                     end else (pos := skip !pos; `Null)
+                     end else Program_metadata.fail "identifiers"
                  | Program, "attributes" ->
                      if !seen_attributes then Program_metadata.fail k;
                      seen_attributes := true;
