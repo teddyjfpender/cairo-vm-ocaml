@@ -138,9 +138,16 @@ let z_of_json = function
   | _ -> raise (Parse_error "expected number")
 
 let add_identifier identifiers name v =
-  let ty = match U.member "type" v with `String s -> s | _ -> "" in
+  let ty = match U.member "type" v with
+    | `String s -> s | `Null -> ""
+    | _ -> raise (Parse_error ("Invalid type for identifier " ^ name)) in
   let value = match U.member "value" v with `Null -> None | x -> (try Some (z_of_json x) with _ -> None) in
-  let pc = to_int_opt (U.member "pc" v) in
+  let nonnegative pc =
+    if pc < 0 then raise (Parse_error ("Negative pc for identifier " ^ name));
+    Some pc in
+  let pc = match U.member "pc" v with
+    | `Null -> None | `Int n -> nonnegative n | `Intlit s -> nonnegative (int_of_string s)
+    | _ -> raise (Parse_error ("Invalid pc for identifier " ^ name)) in
   let dest = match U.member "destination" v with `String s -> Some s | _ -> None in
   let members =
     match U.member "members" v with
@@ -251,8 +258,10 @@ let load_with_identifiers ?word_offsets ?reference_offsets identifiers (j : J.t)
               if length >= 0 then String.sub source start length
               else U.to_string (J.from_string (String.sub source (start - 1) (2 - length))) in
             {r_group = spans.(p); r_offset = spans.(p + 1); r_expr = parse expr})
-    | None, (`Assoc _ as rm) ->
-        U.member "references" rm |> U.to_list
+    | None, ((`Assoc _ | `List [_]) as rm) ->
+        (* Serde accepts the one-field reference manager as an object or
+           as a positional struct containing the references list. *)
+        (match rm with `List [rows] -> U.to_list rows | _ -> U.to_list (U.member "references" rm))
         |> List.map (fun r ->
                let apt = U.member "ap_tracking_data" r in
                let e = parse (U.to_string (U.member "value" r)) in
@@ -313,7 +322,25 @@ let load_json j =
 
 external read_program : Unix.file_descr -> int -> string option = "cvm_pread_program"
 
+(* The JSON projection retains every root key, even when a complete field
+   was validated and replaced by typed offsets. Only the compiler's named
+   fields have duplicate semantics; unknown metadata remains ignorable. *)
+let validate_file_root ~projected_references root =
+  let fields = U.to_assoc root in
+  let required = ["prime"; "builtins"; "data"; "identifiers"; "hints"; "reference_manager"] in
+  List.iter (fun key ->
+      match List.fold_left (fun count (name, _) -> if name = key then count + 1 else count) 0 fields with
+      | 1 -> ()
+      | 0 -> raise (Parse_error ("Missing compiler field " ^ key))
+      | _ -> raise (Parse_error ("Duplicate compiler field " ^ key))) required;
+  (match U.member "hints" root with `Assoc _ -> () | _ -> raise (Parse_error "Expected hints map"));
+  if not projected_references then
+    match U.member "reference_manager" root with
+    | `Assoc _ | `List [`List _] -> ()
+    | _ -> raise (Parse_error "Expected reference manager")
+
 let load_projection source word_offsets reference_offsets ids root =
+  validate_file_root ~projected_references:(Option.is_some reference_offsets) root;
   let spans offsets = Option.map (fun rows -> source, rows) offsets in
   load_with_identifiers ?word_offsets:(spans word_offsets)
     ?reference_offsets:(spans reference_offsets) ids root

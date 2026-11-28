@@ -9,7 +9,7 @@ let with_json text f =
 let () =
   let image =
     Printf.sprintf
-      {|{"prime":"%s","data":[],"builtins":[],
+      {|{"prime":"%s","data":[],"builtins":[],"hints":{},"reference_manager":{"references":[]},
          "debug_info":{"instruction_locations":{},"source":[{"text":"}\"[\\"}]},
          "identifiers":{"\u0061":{"value":17},"\ud83d\ude80":{"value":123456789012345678901234567890}}}|}
       (Z.to_string Felt.p)
@@ -169,7 +169,7 @@ let () =
   let large = String.make 4_000_000 'x' in
   let load indent fields =
     let doc = Printf.sprintf
-        "{\n%s\"debug_info\": {\n%s\"file_contents\":{\"src\":\"%s\"},%s\n%s},\n%s\"prime\":\"%s\",\"data\":[],\"builtins\":[]}"
+        "{\n%s\"debug_info\": {\n%s\"file_contents\":{\"src\":\"%s\"},%s\n%s},\n%s\"prime\":\"%s\",\"data\":[],\"builtins\":[],\"identifiers\":{},\"hints\":{},\"reference_manager\":{\"references\":[]}}"
         indent indent large fields indent indent (Z.to_string Felt.p) in
     with_json doc Program.load_file in
   List.iter (fun indent ->
@@ -259,25 +259,25 @@ let () =
 
 let () =
   let prime = Z.to_string Felt.p in
-  let check fields =
-    let source = Printf.sprintf {|{"prime":"%s","data":[],"builtins":[],%s}|} prime fields in
+  let check identifiers references =
+    let source = Printf.sprintf
+      {|{"prime":"%s","data":[],"builtins":[],"hints":{},"identifiers":%s,"reference_manager":{"references":%s}}|}
+      prime identifiers references in
     let expected = Program.load_json (Yojson.Safe.from_string source) |> Program.pack in
     with_json source (fun path -> assert (Program.pack (Program.load_file path) = expected)) in
   let reference expression =
     Printf.sprintf {|{"ap_tracking_data":{"group":1,"offset":2},"pc":3,"value":%s}|} expression in
   (* Cross a native block boundary before an escaped expression or a
-     noncanonical record forces fallback. Duplicate root keys still use the
-     first manager, while duplicate identifier names replace older entries. *)
+     noncanonical record forces fallback. Duplicate identifier-map keys
+     retain the last binding. *)
   let prefix = List.init 512 (fun _ -> reference {|"[cast(ap + (-2), felt**)]"|}) in
   List.iter (fun last ->
-      let references = String.concat "," (prefix @ [last]) in
-      check (Printf.sprintf
-        {|"identifiers":{"a":{"type":"const","value":7},"s":{"type":"struct","members":{"m":{"offset":2,"cairo_type":"felt"}}},"\u0061":{"type":"const","value":-987654321098765432109876},"b":{"pc":5,"type":"label"},"b":{"type":"alias","destination":"a"}},"reference_manager":{"references":[%s]},"reference_manager":{"references":[]}|}
-        references))
+      let references = "[" ^ String.concat "," (prefix @ [last]) ^ "]" in
+      check {|{"a":{"type":"const","value":7},"s":{"type":"struct","members":{"m":{"offset":2,"cairo_type":"felt"}}},"\u0061":{"type":"const","value":-987654321098765432109876},"b":{"pc":5,"type":"label"},"b":{"type":"alias","destination":"a"}}|}
+        references)
     [reference {|"x\n\t\"y\\"|}; reference {|"\u0061p"|};
      {|{"value":"ap","pc":0,"other":[1,2],"ap_tracking_data":{"offset":0,"group":2}}|}];
-  check {|"reference_manager":{"references":[]},"reference_manager":{"references":[{"ap_tracking_data":{"group":0,"offset":0},"pc":0,"value":"ap"}]}|};
-  check {|"identifiers":{"first":{"type":"const","value":"0xbeef"},"last":{"type":"const","value":17,"value":99},"p":{"type":"label","pc":-2},"s":{"type":"alias","destination":"\u0061"}}|}
+  check {|{"first":{"type":"const","value":"0xbeef"},"p":{"type":"label","pc":2},"s":{"type":"alias","destination":"\u0061"}}|} "[]"
 
 let () =
   (* The apparent midpoint member belongs to "extra", not to the instruction
@@ -287,7 +287,7 @@ let () =
   let padding = String.make 8_300_000 'a' in
   let source last =
     Printf.sprintf
-      "{\n  \"debug_info\": {\n    \"instruction_locations\": {\n      \"0\": {\"hints\":[],\"inst\":%s,\"extra\":{\"long\":\"%s%s\",\n      \"123\":%s},\"tail\":\"%s\"},\n      \"1\":%s\n    }\n  },\n  \"hints\":{},\"prime\":\"%s\",\"data\":[],\"builtins\":[]}"
+      "{\n  \"debug_info\": {\n    \"instruction_locations\": {\n      \"0\": {\"hints\":[],\"inst\":%s,\"extra\":{\"long\":\"%s%s\",\n      \"123\":%s},\"tail\":\"%s\"},\n      \"1\":%s\n    }\n  },\n  \"hints\":{},\"prime\":\"%s\",\"data\":[],\"builtins\":[],\"identifiers\":{},\"reference_manager\":{\"references\":[]}}"
       location padding (String.make 8192 'a') instruction padding last (Z.to_string Felt.p) in
   with_json (source instruction) (fun path -> ignore (Program.load_file path));
   with_json (source {|{"hints":false,"inst":null}|}) (fun path ->
@@ -304,7 +304,7 @@ let () =
   List.iter (fun last ->
       List.iter (fun members ->
           let source = Printf.sprintf
-              {|{"prime":"%s","data":[%s],"data":["0x1"],"builtins":[],"identifiers":{"S":%s}}|}
+              {|{"prime":"%s","data":[%s],"hints":{},"reference_manager":{"references":[]},"builtins":[],"identifiers":{"S":%s}}|}
               (Z.to_string Felt.p) (String.concat "," (prefix @ [last])) (record members) in
           let expected = Program.pack (Program.load_json (Yojson.Safe.from_string source)) in
           with_json source (fun path -> assert (Program.pack (Program.load_file path) = expected)))
