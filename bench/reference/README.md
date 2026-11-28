@@ -43,8 +43,14 @@ python3 bench/compare_native_os_workers.py --kind virtual-os --pairs 7 \
 
 The mixed-revert generator runs successful writes between deliberately reverted transactions against predeployed Cairo 0 and Cairo 1 contracts. Append `reverted_witness.rs` to the pinned flow tests and run `test_oxcairo_mixed_reverts` with `OXCAIRO_ROUNDS=3072`. The complete test fixture contains 9,216 transactions in four blocks. Its five member digests come from the independent streaming Rust reference.
 
-The four encrypted witnesses use the publicly specified test private keys from the sequencer's flow suite. Copy `encrypted_os.rs` to the sequencer's `starknet_os/examples` directory and build with its test utilities enabled. The checker runs the stock API and compares decoded common output and plaintext state updates twice per fixture. For committed outputs it also uses the sequencer's KZG segment validator.
+The four encrypted witnesses use the publicly specified test private keys from the sequencer's flow suite. Copy `encrypted_os.rs` to the sequencer's `starknet_os/examples` directory and build the example with `cargo build -p starknet_os --example encrypted_os --features deserialize,testing`. The checker runs the stock API and compares decoded common output and plaintext state updates twice per fixture. For committed outputs it also uses the sequencer's KZG segment validator.
 
 ```sh
 python3 test/fixtures/os/encrypted/check.py /path/to/cairo-vm-cli /path/to/encrypted_os /path/to/starknet_os_bytes
 ```
+
+## STRK transfers
+
+Append `erc20_witness.rs` to the pinned flow tests and run `test_oxcairo_erc20_transfers` with `OXCAIRO_TRANSFERS` and `OXCAIRO_RECIPIENTS` set to the transfer and recipient counts. The funded account makes an ordinary call to the STRK token contract for every transfer. The upstream test builder checks the expected token event and splits the transactions into four consecutive blocks. Capture and normalize the witness as described above for deployments.
+
+Two committed witnesses cover 8,192 transfers to 16 recipients and 4,096 transfers to 4,096 recipients. The complete OS executions took 64,202,029 and 42,013,031 Cairo steps. Each fixture includes the sequencer's transaction execution records and state witnesses. The offline checker compares its five decompressed PIE members and digest of every public output word against the streaming Rust reference.
