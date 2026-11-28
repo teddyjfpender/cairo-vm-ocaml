@@ -181,24 +181,48 @@ let add_identifier_batch table source rows used =
     Hashtbl.replace table name identifier
   done
 
-let load_with_identifiers ?reference_offsets identifiers (j : J.t) : t =
+let add_struct table source rows used =
+  let members = ref [] and types = ref [] in
+  for i = (used - 2) / 5 - 1 downto 0 do
+    let p = 2 + 5 * i in
+    let name = String.sub source rows.(p) rows.(p + 1) in
+    let typ = String.sub source rows.(p + 2) rows.(p + 3) in
+    members := (name, rows.(p + 4)) :: !members;
+    types := (name, typ) :: !types
+  done;
+  let name = String.sub source rows.(0) rows.(1) in
+  Hashtbl.replace table name
+    {i_type = "struct"; i_pc = None; i_value = None; i_destination = None;
+     i_members = !members; i_member_types = !types}
+
+let load_with_identifiers ?word_offsets ?reference_offsets identifiers (j : J.t) : t =
   let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
-  let data =
-    let words = U.member "data" j |> U.to_list in
-    let parse x = z_of_string (U.to_string x) in
-    if List.compare_length_with words 128 < 0 then Array.of_list (List.map parse words)
-    else
-      let parsed = Hashtbl.create 512 in
-      let word x =
-        let text = U.to_string x in
-        match Hashtbl.find_opt parsed text with
-        | Some z -> z
-        | None ->
-            let z = z_of_string text in
-            if Hashtbl.length parsed < 8192 then Hashtbl.add parsed text z;
-            z in
-      Array.of_list (List.map word words)
+  let data = match word_offsets with
+    | Some (src, rows) ->
+        let words = Array.make (Array.length rows / 2) Z.zero in
+        for i = 0 to Array.length words - 1 do
+          let pos = rows.(2 * i) and len = rows.(2 * i + 1) in
+          words.(i) <- if pos < 0 then words.(-pos - 1) else
+            try Z.of_substring src ~pos ~len
+            with Invalid_argument _ -> raise (Parse_error ("Invalid number " ^ String.sub src pos len))
+        done;
+        words
+    | None ->
+        let words = U.member "data" j |> U.to_list in
+        let parse x = z_of_string (U.to_string x) in
+        if List.compare_length_with words 128 < 0 then Array.of_list (List.map parse words)
+        else
+          let parsed = Hashtbl.create 512 in
+          let word x =
+            let text = U.to_string x in
+            match Hashtbl.find_opt parsed text with
+            | Some z -> z
+            | None ->
+                let z = z_of_string text in
+                if Hashtbl.length parsed < 8192 then Hashtbl.add parsed text z;
+                z in
+          Array.of_list (List.map word words)
   in
   let builtins = U.member "builtins" j |> U.to_list |> List.map U.to_string in
   let rec resolve name depth =
@@ -303,11 +327,12 @@ let load_file path =
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
-    let reference_offsets = ref None in
+    let word_offsets = ref None and reference_offsets = ref None in
     let consume ids root =
       let offsets = Option.map (fun spans -> contents, spans) !reference_offsets in
-      load_with_identifiers ?reference_offsets:offsets ids root in
-    Json_reader.with_program_document ~add_batch:add_identifier_batch ~reference_offsets ~add_identifier ~consume contents
+      let words = Option.map (fun spans -> contents, spans) !word_offsets in
+      load_with_identifiers ?word_offsets:words ?reference_offsets:offsets ids root in
+    Json_reader.with_program_document ~word_offsets ~add_struct ~add_batch:add_identifier_batch ~reference_offsets ~add_identifier ~consume contents
 
 let pack program =
   try Packed_program.encode program

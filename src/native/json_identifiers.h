@@ -137,3 +137,110 @@ CAMLprim value cvm_json_identifier_block(value input, value position,
   }
   return Val_long(count);
 }
+
+/* Canonical bytecode strings. Each slot holds the index+1 and extent of an
+   earlier validated word in this source. Compare the full bytes on reuse. */
+CAMLprim value cvm_json_word_block(value input, value position, value first,
+                                   value table, value rows) {
+  size_t start = Long_val(Field(position, 0)), size = caml_string_length(input);
+  size_t slots = Wosize_val(table) / 3, capacity = Wosize_val(rows);
+  if (start > size || slots == 0 || (slots & (slots - 1)) ||
+      Wosize_val(table) != 1 + 3 * slots || capacity < 2 || capacity % 2)
+    return Val_int(-1);
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  const unsigned char *end = base + size, *p = base + start;
+  if (Bool_val(first)) {
+    if (!json_take_token(&p, end, "[", 1))
+      return Val_int(-1);
+    if (json_take_token(&p, end, "]", 1)) {
+      Field(position, 0) = Val_long(p - base);
+      return Val_int(0);
+    }
+  }
+  intnat count = 0;
+  intnat index = Long_val(Field(table, 0));
+  while (count + 2 <= (intnat)capacity) {
+    size_t length;
+    const unsigned char *text = id_string(&p, end, &length);
+    if (!text)
+      return Val_int(-1);
+    uint32_t hash = (uint32_t)length;
+    for (size_t j = 0; j < length; ++j)
+      hash = hash * 31 + text[j];
+    const intnat slot = 1 + (hash & (slots - 1)) * 3;
+    const intnat previous = Long_val(Field(table, slot));
+    if (previous && (size_t)Long_val(Field(table, slot + 2)) == length &&
+        !memcmp(base + Long_val(Field(table, slot + 1)), text, length)) {
+      Field(rows, count++) = Val_long(-previous);
+      Field(rows, count++) = Val_long(0);
+    } else {
+      Field(table, slot) = Val_long(index + 1);
+      Field(table, slot + 1) = Val_long(text - base);
+      Field(table, slot + 2) = Val_long(length);
+      Field(rows, count++) = Val_long(text - base);
+      Field(rows, count++) = Val_long(length);
+    }
+    ++index;
+    if (json_take_token(&p, end, "]", 1)) {
+      Field(position, 0) = Val_long(p - base);
+      return Val_long(count);
+    }
+    if (!json_take_token(&p, end, ",", 1))
+      return Val_int(-1);
+  }
+  Field(table, 0) = Val_long(index);
+  Field(position, 0) = Val_long(p - base);
+  return Val_int(-2);
+}
+
+/* Read the compiler's ordered struct layout, including all member keys.
+   Publish the cursor only after closing the entire record. */
+CAMLprim value cvm_json_struct_block(value input, value position, value rows) {
+  size_t start = Long_val(Field(position, 0)), size = caml_string_length(input);
+  size_t capacity = Wosize_val(rows), length;
+  if (start >= size || capacity < 2)
+    return Val_int(0);
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  const unsigned char *end = base + size, *p = base + start;
+#define TAKE(s) json_take_token(&p, end, s, sizeof(s) - 1)
+  const unsigned char *name = id_string(&p, end, &length);
+  if (!name || !TAKE(":") || !TAKE("{") || !TAKE("\"full_name\"") || !TAKE(":"))
+    return Val_int(0);
+  Field(rows, 0) = Val_long(name - base);
+  Field(rows, 1) = Val_long(length);
+  if (!id_string(&p, end, &length) || !TAKE(",") || !TAKE("\"members\"") ||
+      !TAKE(":") || !TAKE("{"))
+    return Val_int(0);
+  size_t used = 2;
+  if (!TAKE("}"))
+    do {
+      if (used + 5 > capacity)
+        return Val_int(0);
+      const unsigned char *member = id_string(&p, end, &length);
+      if (!member || !TAKE(":") || !TAKE("{") || !TAKE("\"cairo_type\"") ||
+          !TAKE(":"))
+        return Val_int(0);
+      Field(rows, used++) = Val_long(member - base);
+      Field(rows, used++) = Val_long(length);
+      const unsigned char *type = id_string(&p, end, &length);
+      uintnat offset;
+      if (!type || !TAKE(",") || !TAKE("\"offset\"") || !TAKE(":") ||
+          !json_take_unsigned(&p, end, &offset) || !TAKE("}"))
+        return Val_int(0);
+      Field(rows, used++) = Val_long(type - base);
+      Field(rows, used++) = Val_long(length);
+      Field(rows, used++) = Val_long(offset);
+      if (TAKE("}"))
+        break;
+      if (!TAKE(","))
+        return Val_int(0);
+    } while (1);
+  uintnat struct_size;
+  if (!TAKE(",") || !TAKE("\"size\"") || !TAKE(":") ||
+      !json_take_unsigned(&p, end, &struct_size) || !TAKE(",") ||
+      !TAKE("\"type\"") || !TAKE(":") || !TAKE("\"struct\"") || !TAKE("}"))
+    return Val_int(0);
+#undef TAKE
+  Field(position, 0) = Val_long(p - base);
+  return Val_long(used);
+}

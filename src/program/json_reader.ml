@@ -68,9 +68,31 @@ let reference_spans src position =
 external identifier_block : string -> int ref -> int array -> int
   = "cvm_json_identifier_block" [@@noalloc]
 
-let parse_value ?identifier_batch ?reference_offsets ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
+external word_block : string -> int ref -> bool -> int array -> int array -> int
+  = "cvm_json_word_block" [@@noalloc]
+
+let word_spans src position =
+  let cursor = ref !position in
+  (* The first cell stores the next word index. Each direct-mapped slot holds
+     an earlier word index, string offset and length. *)
+  let slots = if String.length src >= 1_048_576 then 4096 else 64 in
+  let table = Array.make (1 + 3 * slots) 0 in
+  let rec fill first previous =
+    let block = Array.make 2048 0 in
+    match word_block src cursor first table block with
+    | -1 -> None
+    | -2 -> fill false (block :: previous)
+    | used ->
+        position := !cursor;
+        Some (Array.concat (List.rev (Array.sub block 0 used :: previous))) in
+  fill true []
+
+external struct_block : string -> int ref -> int array -> int
+  = "cvm_json_struct_block" [@@noalloc]
+
+let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?identifiers ?debug_span ~projection ~start ~whole src : J.t =
   let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
-  let seen_references = ref false in
+  let seen_words = ref false and seen_references = ref false in
   let n = String.length src and pos = ref start in
   let peek () =
     while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
@@ -166,7 +188,12 @@ let parse_value ?identifier_batch ?reference_offsets ?identifiers ?debug_span ~p
                             let rows = Array.make 512 0 in
                             fold_items '}' () (fun () ->
                                 let used = identifier_block src pos rows in
-                                if used = 0 then ordinary () else batch src rows used));
+                                if used > 0 then batch src rows used
+                                else match add_struct with
+                                  | None -> ordinary ()
+                                  | Some add ->
+                                      let used = struct_block src pos rows in
+                                      if used > 0 then add src rows used else ordinary ()));
                        `Null
                      end else (pos := skip !pos; `Null)
                  | Program, "attributes" ->
@@ -200,6 +227,14 @@ let parse_value ?identifier_batch ?reference_offsets ?identifiers ?debug_span ~p
                            | None -> value reference_manager
                            | Some spans -> saved := Some spans; `Null)
                       | _ -> value reference_manager)
+                 | Program, "data" when not !seen_words ->
+                     seen_words := true;
+                     (match word_offsets with
+                      | None -> value Json
+                      | Some saved ->
+                          (match word_spans src pos with
+                           | None -> value Json
+                           | Some spans -> saved := Some spans; `Null))
                  | Program, "hints" -> value hint_table
                  | Values v, _ -> value v
                  | Debug_info, _ | Program, "identifiers" ->
@@ -256,13 +291,15 @@ external validate_debug_range :
   string -> int array -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_debug_range" [@@noalloc]
 
-let with_program_document ?add_batch ?reference_offsets ~add_identifier ~consume src =
+let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offsets ~add_identifier ~consume src =
   let read ?debug_span () =
     Option.iter (fun saved -> saved := None) reference_offsets;
+    Option.iter (fun saved -> saved := None) word_offsets;
     (* Ambiguous suffix lookup follows the original identifier table order. *)
     let identifiers = Hashtbl.create 1024 in
     let identifier_batch = Option.map (fun add -> add identifiers) add_batch in
-    let root = parse_value ?identifier_batch ?reference_offsets ~identifiers:(add_identifier identifiers) ?debug_span
+    let add_struct = Option.map (fun add -> add identifiers) add_struct in
+    let root = parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ~identifiers:(add_identifier identifiers) ?debug_span
         ~projection:Program ~start:0 ~whole:true src in
     identifiers, root in
   let full () = let ids, root = read () in consume ids root in

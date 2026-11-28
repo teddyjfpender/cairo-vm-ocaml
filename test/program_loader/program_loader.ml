@@ -294,3 +294,19 @@ let () =
       match Program.load_file path with
       | exception Yojson.Json_error _ -> ()
       | _ -> failwith "invalid instruction after a nested partition candidate")
+
+let () =
+  let prefix = List.init 1024 (fun i -> if i mod 2 = 0 then {|"0x123"|} else {|"0xab"|}) in
+  let members =
+    String.concat "," (List.init 103 (fun _ -> {|"x":{"cairo_type":"felt","offset":1}|})) in
+  let record members =
+    Printf.sprintf {|{"full_name":"S","members":{%s},"size":1,"type":"struct"}|} members in
+  List.iter (fun last ->
+      List.iter (fun members ->
+          let source = Printf.sprintf
+              {|{"prime":"%s","data":[%s],"data":["0x1"],"builtins":[],"identifiers":{"S":%s}}|}
+              (Z.to_string Felt.p) (String.concat "," (prefix @ [last])) (record members) in
+          let expected = Program.pack (Program.load_json (Yojson.Safe.from_string source)) in
+          with_json source (fun path -> assert (Program.pack (Program.load_file path) = expected)))
+        [""; {|"x":{"cairo_type":"felt","offset":1},"x":{"cairo_type":"S*","offset":3}|}; members])
+    [{|"0x123"|}; {|"0x123"|}]
