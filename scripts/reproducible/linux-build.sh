@@ -55,7 +55,7 @@ opam install dune.3.25.0 zarith.1.14+ox yojson.2.2.2+ox
 opam list --installed --columns=name,version --short | awk '{print $1 "." $2}' | sort > /tmp/resolved.lock
 diff -u scripts/reproducible/opam-packages.lock /tmp/resolved.lock
 eval "$(opam env)"
-dune build --profile release -j 3 bin/main.exe bench/native_os_worker.exe bindings/c/oxcairo.so test/exact_pie/replay_encrypted.exe
+dune build --profile release -j 3 bin/main.exe bench/native_os_worker.exe bindings/c/oxcairo.so test/exact_pie/replay_encrypted.exe test/exact_pie/errno_check.exe
 python3 test/exact_pie/check.py _build/default/bin/main.exe _build/default/test/exact_pie/replay_encrypted.exe
 tag="v$(sed -n 's/^version: "\(.*\)"/\1/p' cairo-vm-ocaml.opam)"
 python3 scripts/package_release.py "$tag" linux-x86_64 _build/default/bin/main.exe --worker _build/default/bench/native_os_worker.exe --library _build/default/bindings/c/oxcairo.so --output-dir /out
