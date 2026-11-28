@@ -2,6 +2,7 @@
    setup. Each coordinate has six little-endian GMP limbs. Intermediate group
    operations stay in Montgomery form until the single final inversion. */
 #include <stdint.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <gmp.h>
@@ -202,6 +203,39 @@ static void encode(unsigned char dst[48], const point *p) {
   dst[47] |= mpn_cmp(y, half_prime, 6) > 0 ? 0xa0 : 0x80;
 }
 
+struct window_task {
+  const unsigned char *scalars;
+  const affine *bases;
+  size_t n;
+  unsigned width, first, last;
+  point *buckets, *windows;
+};
+
+static void *sum_windows(void *argument) {
+  struct window_task *task = argument;
+  const unsigned char *scalars = task->scalars;
+  const affine *bases = task->bases;
+  const size_t n = task->n;
+  unsigned width = task->width, count = 1u << width;
+  point *buckets = task->buckets;
+  for (unsigned window = task->first; window < task->last; ++window) {
+    memset(buckets, 0, count * sizeof *buckets);
+    unsigned bit = window * width, byte = bit / 8, shift = bit % 8;
+    for (size_t i = 0; i < n; ++i) {
+      const unsigned char *v = scalars + 32 * i;
+      unsigned digit = ((v[byte] | ((byte < 31 ? v[byte + 1] : 0) << 8)) >> shift) & (count - 1);
+      if (digit)
+        add_mixed(&buckets[digit], &bases[i]);
+    }
+    point sum = {0};
+    for (unsigned j = count - 1; j > 0; --j) {
+      add_point(&sum, &buckets[j]);
+      add_point(&task->windows[window], &sum);
+    }
+  }
+  return NULL;
+}
+
 CAMLprim value cvm_bls_msm(value table, value coefficients, value output) {
   size_t bytes = caml_string_length(coefficients), n = bytes / 32;
   if (bytes % 32 || n > 4096 || caml_string_length(table) < n * 96 || caml_string_length(output) != 48)
@@ -209,7 +243,10 @@ CAMLprim value cvm_bls_msm(value table, value coefficients, value output) {
   const unsigned char *scalars = (const unsigned char *)String_val(coefficients);
   unsigned width = n < 32 ? 3 : n < 192 ? 5 : n < 640 ? 7 : 9, count = 1u << width;
   affine *bases = malloc((n ? n : 1) * sizeof *bases);
-  point *buckets = calloc(count, sizeof *buckets);
+  /* Each window has independent affine buckets. Use at most three helper
+     threads and keep small commitments on the caller. */
+  unsigned workers = n >= 512 ? 4 : n >= 128 ? 2 : 1;
+  point *buckets = calloc(count * workers, sizeof *buckets);
   if (!bases || !buckets) {
     free(bases);
     free(buckets);
@@ -230,23 +267,36 @@ CAMLprim value cvm_bls_msm(value table, value coefficients, value output) {
     read_coordinate(bases[i].x, coords);
     read_coordinate(bases[i].y, coords + 48);
   }
+  unsigned windows = (bits + width - 1) / width;
+  /* A 256-bit integer needs at most 86 three-bit windows. */
+  point totals[86] = {0};
+  struct window_task tasks[4];
+  pthread_t threads[3];
+  int launched[3] = {0};
+  for (unsigned i = 0; i < workers; ++i) {
+    tasks[i] = (struct window_task){scalars,
+                                    bases,
+                                    n,
+                                    width,
+                                    windows * i / workers,
+                                    windows * (i + 1) / workers,
+                                    buckets + count * i,
+                                    totals};
+    if (i + 1 < workers)
+      launched[i] = pthread_create(&threads[i], NULL, sum_windows, &tasks[i]) == 0;
+  }
+  sum_windows(&tasks[workers - 1]);
+  for (unsigned i = 0; i + 1 < workers; ++i) {
+    if (launched[i])
+      pthread_join(threads[i], NULL);
+    else
+      sum_windows(&tasks[i]);
+  }
   point acc = {0};
-  for (int window = (bits + width - 1) / width; window-- > 0;) {
+  for (unsigned window = windows; window-- > 0;) {
     for (unsigned j = 0; j < width; ++j)
       twice(&acc);
-    memset(buckets, 0, count * sizeof *buckets);
-    unsigned bit = window * width, byte = bit / 8, shift = bit % 8;
-    for (size_t i = 0; i < n; ++i) {
-      const unsigned char *v = scalars + 32 * i;
-      unsigned digit = ((v[byte] | ((byte < 31 ? v[byte + 1] : 0) << 8)) >> shift) & (count - 1);
-      if (digit)
-        add_mixed(&buckets[digit], &bases[i]);
-    }
-    point sum = {0};
-    for (unsigned j = count - 1; j > 0; --j) {
-      add_point(&sum, &buckets[j]);
-      add_point(&acc, &sum);
-    }
+    add_point(&acc, &totals[window]);
   }
   encode((unsigned char *)Bytes_val(output), &acc);
   free(bases);

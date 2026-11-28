@@ -48,5 +48,5 @@ if __name__ == "__main__":
     parser.add_argument("binary", type=Path)
     parser.add_argument("program", type=Path)
     args = parser.parse_args()
-    for name in ("storage4", "syscalls5", "storage-2048-blocks"):
+    for name in ("storage4", "syscalls5", "storage-2048-blocks", "sequential-4096-updates", "scattered-4096-updates"):
         compare(args.binary.resolve(), args.program.resolve(), Path(__file__).with_name(name + ".json"))

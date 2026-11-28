@@ -1,0 +1,22 @@
+{
+  "blob": {
+    "da": "f61a240b0094a7cd4aae34c38fa467738470c5e5eb24d8813c687f64c8c3df5f",
+    "pie": {
+      "additional_data.json": "23830da186a6850b286b477c0f41e43a1927b77db8d17332f1de8b895240cbdd",
+      "execution_resources.json": "97eaa78cfc0dd12c239e05f1145a8e1de93cb5f6b245e944b09422ec90f62477",
+      "memory.bin": "4f11eed072b2de1c9ff8a92d67ec7dd1234e4e1f745dca9b1f8e16140ec4be96",
+      "metadata.json": "784bbbe87cb847c2d23fb2072c186d8d329691e5ec27d3adf4dafb6221db0701",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  },
+  "calldata": {
+    "da": null,
+    "pie": {
+      "additional_data.json": "38448fb6c631e289407d8a9737716a510531662267eae74c69b4aa19bed89ad9",
+      "execution_resources.json": "1edffa83770062b5c2d3e61c585d89560550655dc7d9c43b141d67cfa9000f8c",
+      "memory.bin": "72274d93285a5cc3160258d739b4bd80b9dcc045cbf9808b0e53a139cf1f1545",
+      "metadata.json": "3a3016e99efe7775b86ec40d8797687b0f5ef8e91eca58cda07b8d090fbdf03a",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  }
+}

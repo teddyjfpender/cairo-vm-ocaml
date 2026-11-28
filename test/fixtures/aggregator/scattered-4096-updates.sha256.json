@@ -1,0 +1,22 @@
+{
+  "blob": {
+    "da": "ce78a10551da689c6a22c942532258c73543076ad1c363168edab1deb3b57ea7",
+    "pie": {
+      "additional_data.json": "23830da186a6850b286b477c0f41e43a1927b77db8d17332f1de8b895240cbdd",
+      "execution_resources.json": "618f7c7501f60b2295a1ba2d159d9d7cdee1a0ff1880f88d6a16a0465587b407",
+      "memory.bin": "de35adb692f4ba1ef516d282227ae365389a4aace0acd97d69281e223b89d907",
+      "metadata.json": "57b6bf8fc3cf205925e6b443a3cd15b14a4830e56a74db10027f871c8efa3cc6",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  },
+  "calldata": {
+    "da": null,
+    "pie": {
+      "additional_data.json": "f73dd7d1106f41557f68f00c3f26ff668b92c486e0e30dd9204a139337af1e2a",
+      "execution_resources.json": "a6fddad31215b4430e09e33cdbdeb45be9cbda164cc270d9e6e285046712c912",
+      "memory.bin": "56d61824195fd104c39b18016a19e64025718dd94b1a601bae5e486152347fbb",
+      "metadata.json": "300c19383819854f7e303d315f449e78fe48155067c53ff7821afc7fc7ff2f10",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  }
+}
