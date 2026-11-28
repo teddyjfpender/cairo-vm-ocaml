@@ -35,7 +35,12 @@ The default is five paired, seeded, randomized rounds over all blocks. The summa
 ### Run the supplied offline Echonet pipeline
 
 The `pipeline` plan option drives both engines through the same local-file job. It supports
-sequencer `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45` and its bincode commitment decoder.
+OS revisions `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45` and
+`1860b9850b5c51858c50c0f5038933e49f932eef` (Apollo 0.20.0-rc.1).
+Both use the Echonet input builder and bincode commitment decoder from `ffdf1f9`.
+The Rust commitment wire types have the same Git blob at both pins. The adapter
+checks the full OS compiler digest for the selected execution revision and verifies
+the exact bytes are embedded in its Rust executable.
 Use Python 3.10+, zstandard, the pinned Echonet cairo-lang dependencies for declares, and
 GNU time on PATH. Keep the Python environment, compiler builds and flags in the runner's
 build inventory. Store the installed engine binaries, Sierra compiler binaries and full
@@ -49,7 +54,9 @@ Record any operator environment overrides with the runner configuration. The sam
 then verifies and delivers the staged PIE in both arms.
 
 Each authenticated `source` is one gzip JSON recording. See
-`bench/examples/echonet-genesis.json` for a complete synthetic example before compression.
+`bench/examples/echonet-genesis.json` and `bench/examples/echonet-apollo-genesis.json` for synthetic examples
+before compression. The optional boolean `full_output` selects the witnessed OS
+output format. Its default is the builder's compact output (`false`).
 Record N's cende blob, N+1's numbered commitment vector, block document, header commitment
 payload, chain name, and STRK address using the field names in that example. This measures
 a recorded-input service starting at local file acquisition. Live RPC, upstream consensus,

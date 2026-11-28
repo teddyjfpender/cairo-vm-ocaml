@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "bench"))
@@ -43,7 +44,34 @@ def smoke(sequencer, temp):
                     " shutil.copy(ref, sys.argv[sys.argv.index('--cairo_pie_output')+1])\n")
     plan = dict(pipeline=dict(rust=rust, oxcairo=ox, program=dict(path="program", sha256=digest(program)),
                               compilers={}, sequencer=str(sequencer)))
-    commands = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), temp)
+    with patch.object(echonet_job, "full_program_pins", return_value={echonet_job.REVISION: digest(program)}):
+        commands = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), temp)
+
+    for revision in echonet_job.full_program_pins():
+        try:
+            echonet_job.commands(temp, plan, dict(revision=revision), temp)
+        except ValueError as exc:
+            assert "full OS compiler digest" in str(exc)
+        else:
+            raise AssertionError("accepted wrong compiler for " + revision)
+
+    # Verify the historical fixture against the witness used by the two real VMs.
+    apollo = json.loads((ROOT / "bench/examples/echonet-apollo-genesis.json").read_bytes())
+    for bad_flag in (False, True):
+        work = temp / ("apollo-bad-flag" if bad_flag else "apollo")
+        work.mkdir()
+        if bad_flag:
+            apollo["full_output"] = "true"
+        recording = work / "source.gz"
+        recording.write_bytes(gzip.compress(json.dumps(apollo).encode(), mtime=0))
+        try:
+            echonet_job.run(temp / "tools.json", "rust", recording, work / "published.zip", work,
+                            digest(recording), "0cb15512be4ed61ebd186e4a031eae34f45437a8ed2de7d974e929110ba38057",
+                            digest(archive))
+        except ValueError as exc:
+            assert bad_flag and "full_output must be a boolean" in str(exc)
+        else:
+            assert not bad_flag and (work / "published.zip").exists()
 
     # Echonet emits fixed-width gas prices and omits absent version overrides.
     witness = json.loads((ROOT / "test/fixtures/os/genesis.json").read_bytes())
@@ -69,10 +97,10 @@ def smoke(sequencer, temp):
     plan["pipeline"]["host"] = dict(path=host.name, sha256=digest(host))
     tools = temp / "supervised"
     tools.mkdir()
-    installed = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), tools)
+    with patch.object(echonet_job, "full_program_pins", return_value={echonet_job.REVISION: digest(program)}):
+        installed = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), tools)
     profile = temp / "profile.json"
     profile.write_text(json.dumps(dict(revision=echonet_job.REVISION, program_sha256=digest(program))))
-    from unittest.mock import patch
     with patch.dict("os.environ", OXCAIRO_OS_PROFILE=str(profile)):
         run_arm(installed["oxcairo"] + hashes, source, tools / "published.zip", tools / "work", hashes[-1], 30)
     # The adapter validates the host receipt independently of the bytes it stages.
