@@ -306,7 +306,10 @@ def generate(job):
             supervise(job, stage, fd, deadline)
             archive = stage / "out"
             with archive.open("rb") as file:
-                digest = hashlib.file_digest(file, "sha256").hexdigest()
+                checksum = hashlib.sha256()
+                for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                    checksum.update(chunk)
+                digest = checksum.hexdigest()
                 os.fsync(file.fileno())
             size = archive.stat().st_size
             if time.monotonic() >= deadline:

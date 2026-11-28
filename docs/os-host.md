@@ -1,6 +1,6 @@
 # Generate a PIE from an OS witness
 
-Run `oxcairo-os-host v1` from the release package, with Python 3.11 or newer on PATH. Write one UTF-8 JSON document to standard input, close it and read one JSON document from standard output. The host starts a fresh native VM for each request. Use separate processes and output paths for parallel blocks. Worker count is controlled by the caller.
+Run `oxcairo-os-host v1` from the release package, with Python 3.9 or newer on PATH. Write one UTF-8 JSON document to standard input, close it and read one JSON document from standard output. The host starts a fresh native VM for each request. Use separate processes and output paths for parallel blocks. Worker count is controlled by the caller.
 
 ```json
 {
