@@ -286,17 +286,20 @@ general:;
         next_ap = ap + (ap_update == 2);
         if (pc_update == 3) {
           next_pc = dst == small_code(0) ? pc + 2 : pc + (imm >> 2);
-          if (!tracing && !queue && code_seg == 0 && code_base == 0 && d == VALIDATE_FIRST &&
+          if (!queue && code_seg == 0 && code_base == 0 && d == VALIDATE_FIRST &&
               dst > small_code(0) && imm == small_code(4) &&
               validation_entry(cache, pc, cache_size)) {
+            struct row_trace row = {entries, used, trace_length};
             int steps = validate_builtins_block(cache, pc, cache_size, program, program_length,
                 segs, flags, highs, nsegs, stack, length, ap, fp, pool, watched, temps,
-                BATCH_STEPS - completed, &next_pc, &next_ap, &next_fp);
+                BATCH_STEPS - completed, &next_pc, &next_ap, &next_fp, tracing ? &row : NULL);
             if (steps) {
               /* The loop increment counts the last instruction. */
               completed += steps - 1;
               if (next_ap > high) high = next_ap;
-              goto complete;
+              if (tracing) { used = row.used; last_trace = used-1; }
+              pc = next_pc; ap = next_ap; fp = next_fp;
+              continue;
             }
           }
         } else if (pc_update == 2 && !result) next_pc = pc+(imm>>2);
