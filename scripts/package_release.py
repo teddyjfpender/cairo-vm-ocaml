@@ -28,7 +28,7 @@ def main():
         parser.error(f"{args.cli} reported {version.strip()}")
     root = Path(__file__).resolve().parents[1]
     files = {name: root / name for name in ("README.md", "CHANGELOG.md", "LICENSE")}
-    files.update({"cairo-vm-cli": args.cli, "lib/oxcairo.so": args.library,
+    files.update({"oxcairo-os-host": root / "host/oxcairo-os-host", "cairo-vm-cli": args.cli, "lib/oxcairo.so": args.library,
                   "include/oxcairo.h": root / "bindings/c/oxcairo.h"})
     if args.worker is not None:
         files["oxcairo-os-worker"] = args.worker
@@ -47,7 +47,7 @@ def main():
             with tarfile.open(fileobj=gz, mode="w|") as tar:
                 for member, path in sorted(files.items()):
                     info = tarfile.TarInfo(f"{name}/{member}")
-                    info.mode = 0o755 if member in ("cairo-vm-cli", "oxcairo-os-worker", "lib/oxcairo.so") else 0o644
+                    info.mode = 0o755 if member in ("cairo-vm-cli", "oxcairo-os-host", "oxcairo-os-worker", "lib/oxcairo.so") else 0o644
                     info.size = path.stat().st_size
                     with path.open("rb") as data:
                         tar.addfile(info, data)

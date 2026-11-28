@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Supervise one native OS job. The command's JSON protocol is defined in docs/os-host.md."""
+
+from contextlib import contextmanager, suppress
+import ctypes
+import errno
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import resource
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+REVISION = "ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45"
+PINS = {REVISION: {
+    "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+    "e830720f26ce863ba027e8c73a6ab29a9a1e58edd5127fca80e0eed732067b28",
+}, "1860b9850b5c51858c50c0f5038933e49f932eef": {
+    "794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67",
+    "7cd38280aea304b1fc8a55f9f4666828818cfe8a9f7181539472512e011cee10",
+}}
+CODES = {"invalid_request": 2, "unknown_revision": 3, "program_mismatch": 4,
+         "invalid_input": 5, "step_limit": 20, "memory_limit": 21, "wall_limit": 22,
+         "output_limit": 23, "file_limit": 24, "storage_limit": 25, "busy": 26,
+         "io_error": 27, "interrupted": 28, "internal_fault": 70}
+DEFAULTS = {"steps": 100_000_000, "memory_bytes": 4 << 30, "wall_ms": 120_000,
+            "output_bytes": 1 << 30, "open_files": 128}
+class Refusal(Exception):
+    def __init__(self, kind, detail):
+        super().__init__(detail)
+        self.kind = kind
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate request field")
+        result[key] = value
+    return result
+
+def request():
+    raw = sys.stdin.buffer.read(65537)
+    if len(raw) > 65536:
+        raise Refusal("invalid_request", "maximum request size is 65536 bytes")
+    obj = json.loads(raw, object_pairs_hook=unique)
+    required = {"schema", "revision", "program", "witness", "output"}
+    if not isinstance(obj, dict) or not required <= obj.keys() <= required | {"limits"}:
+        raise ValueError("missing or unknown request field")
+    if type(obj["schema"]) is not int or obj["schema"] != 1:
+        raise ValueError("expected schema 1")
+    for k in required - {"schema"}:
+        if not isinstance(obj[k], str) or not obj[k] or "\0" in obj[k]:
+            raise ValueError("expected nonempty string for " + k)
+    if obj["revision"] not in PINS:
+        raise Refusal("unknown_revision", "unsupported OS revision")
+    supplied = obj.get("limits", {})
+    if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
+        raise ValueError("unknown limit")
+    limits = DEFAULTS | supplied
+    for k, value in limits.items():
+        if type(value) is not int or value < 1 or value > DEFAULTS[k]:
+            raise ValueError("invalid " + k)
+    if limits["open_files"] < 8:
+        raise Refusal("file_limit", "job requires at least 8 descriptors")
+    if limits["memory_bytes"] < 32 << 20:
+        raise Refusal("memory_limit", "job requires at least 32 MiB")
+    for k in ["program", "witness", "output"]:
+        obj[k] = str(Path(obj[k]).absolute())
+    obj["limits"] = limits
+    return obj
+
+def os_error_kind(exc):
+    if exc.errno in (errno.ENOMEM,):
+        return "memory_limit"
+    if exc.errno in (errno.EMFILE, errno.ENFILE):
+        return "file_limit"
+    if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+        return "storage_limit"
+    if exc.errno == errno.EFBIG:
+        return "output_limit"
+    return "io_error"
+
+def set_limit(kind, value):
+    _, hard = resource.getrlimit(kind)
+    if hard != resource.RLIM_INFINITY:
+        value = min(value, hard)
+    resource.setrlimit(kind, (value, value))
+
+def copy_program(source, dest, hashes):
+    digest = hashlib.sha256()
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    with os.fdopen(os.open(source, flags), "rb") as src, dest.open("xb") as out:
+        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+            raise Refusal("invalid_input", "program must be a regular file")
+        while chunk := src.read(1024 * 1024):
+            digest.update(chunk)
+            out.write(chunk)
+    if digest.hexdigest() not in hashes:
+        raise Refusal("program_mismatch", "compiler SHA-256 does not match the requested revision")
+
+def child(stage, parent):
+    job = json.load(sys.stdin)
+    lim = job["limits"]
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent:
+            raise Refusal("interrupted", "unable to bind job to supervisor")
+        set_limit(resource.RLIMIT_AS, lim["memory_bytes"])
+    set_limit(resource.RLIMIT_NOFILE, lim["open_files"])
+    set_limit(resource.RLIMIT_CPU, max(1, math.ceil(lim["wall_ms"] / 1000) + 1))
+    if not stat.S_ISREG(os.stat(job["witness"]).st_mode):
+        raise Refusal("invalid_input", "witness must be a regular file")
+    program = stage / "program"
+    # Bound the compiler copy before validation even for a mismatched file.
+    compiler_max = 128 << 20
+    if os.stat(job["program"]).st_size > compiler_max:
+        raise Refusal("program_mismatch", "compiler file exceeds supported size")
+    resource.setrlimit(resource.RLIMIT_FSIZE, (compiler_max, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))
+    copy_program(job["program"], program, PINS[job["revision"]])
+    set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
+    env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
+    exe = Path(__file__).absolute().with_name("cairo-vm-cli")
+    os.execve(exe, [str(exe), str(program), "--layout", "all_cairo", "--os_hints", job["witness"],
+                    "--max_steps", str(lim["steps"]), "--cairo_pie_output", str(stage / "out")], env)
+
+def check_exit(rc, log):
+    if rc == 0:
+        return
+    detail = log[:2000].strip()
+    if rc < 0:
+        kind = {-signal.SIGXFSZ: "output_limit", -signal.SIGXCPU: "wall_limit"}.get(rc, "internal_fault")
+    elif rc in CODES.values():
+        kind = next(k for k,v in CODES.items() if v == rc)
+    elif rc == 1:
+        kind = "invalid_input"
+    else:
+        kind = "internal_fault"
+    raise Refusal(kind, detail or f"worker exit {rc}")
+
+def supervise(job, stage, lock, deadline):
+    lim = job["limits"]
+    command = [sys.executable, str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
+    with (stage / "error").open("w+b") as log, subprocess.Popen(command, stdin=subprocess.PIPE,
+           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc:
+        try:
+            proc.stdin.write(json.dumps(job).encode())
+            proc.stdin.close()
+            while proc.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Refusal("wall_limit", "job exceeded wall-clock limit")
+                if sys.platform == "darwin":
+                    usage = subprocess.run(["/bin/ps","-o","rss=","-p",str(proc.pid)],
+                                           capture_output=True, text=True).stdout.strip()
+                    if usage and int(usage) * 1024 > lim["memory_bytes"]:
+                        raise Refusal("memory_limit", "job exceeded resident memory limit")
+                try:
+                    proc.wait(timeout=min(remaining, 0.05))
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if proc.poll() is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+        log.seek(0)
+        check_exit(proc.returncode, log.read(4096).decode(errors="replace"))
+
+@contextmanager
+def staging(output):
+    # The caller owns the output directory. Only known private staging files may be reclaimed.
+    stage = output.with_name("." + output.name + ".oxcairo-stage")
+    stage.mkdir(mode=0o700, exist_ok=True)
+    info = stage.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise Refusal("io_error", "unexpected staging directory ownership or permissions")
+    names = {"program", "out", "error"}
+    def clean():
+        entries = list(stage.iterdir())
+        if any(item.name not in names or not stat.S_ISREG(item.lstat().st_mode) for item in entries):
+            raise Refusal("io_error", "unexpected staging contents")
+        for item in entries:
+            item.unlink()
+    clean()
+    try:
+        yield stage
+    finally:
+        clean()
+        stage.rmdir()
+
+def generate(job):
+    deadline = time.monotonic() + job["limits"]["wall_ms"] / 1000
+    output = Path(job["output"])
+    if output.is_symlink():
+        raise Refusal("invalid_request", "output must not be a symlink")
+    for name in ("program", "witness"):
+        if output.exists() and os.path.samefile(output, job[name]):
+            raise Refusal("invalid_request", "output aliases an input")
+    lock_path = output.with_name("." + output.name + ".oxcairo.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refusal("busy", "another job owns this output")
+        with staging(output) as stage:
+            supervise(job, stage, fd, deadline)
+            archive = stage / "out"
+            with archive.open("rb") as file:
+                digest = hashlib.file_digest(file, "sha256").hexdigest()
+                os.fsync(file.fileno())
+            size = archive.stat().st_size
+            if time.monotonic() >= deadline:
+                raise Refusal("wall_limit", "publication exceeded wall-clock limit")
+            os.replace(archive, output)
+            directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            return {"schema":1, "status":"ok", "output":str(output), "bytes":size, "sha256":digest}
+    finally:
+        os.close(fd)
+
+def main():
+    worker = len(sys.argv) == 4 and sys.argv[1] == "--worker"
+    try:
+        if worker:
+            child(Path(sys.argv[2]), int(sys.argv[3]))
+        if sys.argv[1:] != ["v1"]:
+            raise Refusal("invalid_request", "expected protocol v1")
+        result = generate(request())
+    except (Refusal, OSError, ValueError, RecursionError, MemoryError) as exc:
+        kind = (exc.kind if isinstance(exc, Refusal) else os_error_kind(exc) if isinstance(exc,OSError)
+                else "memory_limit" if isinstance(exc,MemoryError) else "invalid_request")
+        if worker:
+            print(str(exc), file=sys.stderr)
+        else:
+            print(json.dumps({"schema":1,"status":"rejected","code":kind,"detail":str(exc)[:2000]}))
+        return CODES[kind]
+    print(json.dumps(result))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

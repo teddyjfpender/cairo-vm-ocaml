@@ -196,10 +196,14 @@ let initialize ?image ?(compile_hint = Hints.compile) ?layout_def ?(proof = fals
 
 let run_for_steps r n = run ~steps:n r.vm r.hints
 
-let run_until_end r =
+exception Step_limit
+
+let run_until_end ?(max_steps=max_int) r =
+  if max_steps < 0 then invalid_arg "negative step limit";
+  let stop = if r.proof then 0, r.end_pc else r.end_seg, 0 in
+  run ~stop ~steps:max_steps r.vm r.hints;
+  if (r.vm.pc_seg, r.vm.pc) <> stop then raise Step_limit;
   if r.proof then begin
-    run ~stop:(0, r.end_pc) r.vm r.hints;
-    (* one more step so that __end__ is the last executed instruction *)
+    if r.vm.steps >= max_steps then raise Step_limit;
     run_for_steps r 1
   end
-  else run ~stop:(r.end_seg, 0) r.vm r.hints

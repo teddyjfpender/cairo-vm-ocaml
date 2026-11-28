@@ -23,6 +23,7 @@ let delegate message =
           | Unix.Unix_error (e, _, _) -> prerr_endline (path ^ ": " ^ Unix.error_message e); exit 2)
 
 let () =
+  let max_steps = ref None in
   let legacy = ref false in
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
@@ -72,6 +73,7 @@ let () =
       ("--", Arg.Rest positional, " end of options");
       ("-V", Arg.Unit version, " print version");
       ("--version", Arg.Unit version, " print version");
+      ("--max_steps", Arg.Int (fun n -> if n < 0 then raise (Arg.Bad "negative step limit"); max_steps := Some n), "N  cap native OS execution steps");
       ("--stats", Arg.Set stats, " print step count and timing to stderr");
     ]
   in
@@ -106,6 +108,8 @@ let () =
   if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
   if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
+  if Option.is_some !max_steps && (!proof || Option.is_none !os_hints) then
+    usage_error "--max_steps requires execution with a native OS witness";
   if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
@@ -177,7 +181,7 @@ let () =
           | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
         r.vm.allow_legacy_instructions <- !legacy;
-        Runner.run_until_end r;
+        Runner.run_until_end ?max_steps:!max_steps r;
         r, t1, Unix.gettimeofday () in
       let r, t1, t2 = if Option.is_some !bootloader_input then Resources.with_pedersen_verifier execute
         else execute ignore in
@@ -224,6 +228,8 @@ let () =
   | Errors.Vm_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
+  | Runner.Step_limit -> prerr_endline "Cairo step limit exceeded"; exit 20
+  | Out_of_memory -> prerr_endline "VM memory budget exhausted"; exit 21
   | Program.Parse_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
