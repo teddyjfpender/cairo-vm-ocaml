@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 
-fn run(kind: &str, path: &str, archive: Option<&str>) {
+fn run(kind: &str, path: &str, archive: Option<(&str, bool)>) {
     let source = BufReader::new(File::open(path).unwrap());
     let (words, pie) = match kind {
         "--virtual-os" => {
@@ -22,8 +22,9 @@ fn run(kind: &str, path: &str, archive: Option<&str>) {
         }
         _ => panic!("expected --virtual-os or --aggregator"),
     };
-    if let Some(path) = archive {
-        pie.write_zip_file(Path::new(path), false).unwrap();
+    if let Some((path, merge_extra_segments)) = archive {
+        pie.write_zip_file(Path::new(path), merge_extra_segments)
+            .unwrap();
     }
     for word in words {
         println!("{word:#x}");
@@ -44,7 +45,12 @@ fn main() {
             }
         }
         [kind, input] => run(kind, input, None),
-        [kind, input, archive] => run(kind, input, Some(archive)),
-        _ => panic!("expected KIND [--worker] INPUT or KIND INPUT ARCHIVE"),
+        [kind, input, archive] => run(kind, input, Some((archive, false))),
+        [kind, input, archive, flag] if flag == "--merge-extra-segments" => {
+            run(kind, input, Some((archive, true)))
+        }
+        _ => {
+            panic!("expected KIND [--worker] INPUT or KIND INPUT ARCHIVE [--merge-extra-segments]")
+        }
     }
 }
