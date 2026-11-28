@@ -36,7 +36,7 @@ let stwo_supported ~ext o0 o1 o2 dst op0 op1 res pc ap opc =
   | 1 | 2 -> opc = 0 && reg && res = 0 && pc = 0 && ap01
   | _ -> opc = 3 && op1 <> 0 && (res = 1 || res = 2) && pc = 0 && ap01
 
-let decode_word (w : Z.t) =
+let decode ~classify (w : Z.t) =
   if Z.geq w two_128 then fail "Invalid instruction encoding (does not fit in 128 bits)";
   let ext =
     let e = Z.shift_right w 63 in
@@ -72,7 +72,12 @@ let decode_word (w : Z.t) =
   if ext = 3
      && not ((res = 1 || res = 2) && op1 <> 0 && pcu = 0 && opc = 4 && (apu = 0 || apu = 2)) then
     fail "Invalid QM31 add/mul flags: %d" flags;
-  if not (stwo_supported ~ext (off0 - 0x8000) (off1 - 0x8000) (off2 - 0x8000) dst op0 op1c resc pcc apc opcc) then
+  if not classify && op1 = 1 && off2 <> 0x8001 then
+    fail "Immediate operand offset must be 1";
+  if classify && not (stwo_supported ~ext (off0 - 0x8000) (off1 - 0x8000) (off2 - 0x8000) dst op0 op1c resc pcc apc opcc) then
     raise Generic_instruction;
   (ext lsl ext_shift) lor off0 lor (off1 lsl 16) lor (off2 lsl 32) lor (dst lsl 48) lor (op0 lsl 49) lor (op1c lsl 50) lor (resc lsl 52)
   lor (pcc lsl 54) lor (apc lsl 56) lor (opcc lsl 58) lor (1 lsl 60)
+
+let decode_word = decode ~classify:true
+let decode_legacy_word = decode ~classify:false

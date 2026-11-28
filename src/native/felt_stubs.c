@@ -3,10 +3,15 @@
 
    All entry points are [@@noalloc] with untagged arguments. */
 #include <stdlib.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <caml/fail.h>
+#include <caml/alloc.h>
+#include <caml/memory.h>
 #include <caml/hash.h>
+#include <caml/threads.h>
 #include "field.h"
+#include "trace_encoding.h"
 #include "constants.h"
 
 /* ---------- Montgomery arithmetic, R = 2^256. -p^{-1} mod 2^64 = -1 ---------- */
@@ -113,8 +118,24 @@ static void from_mont(u64 r[4], const u64 a[4]) {
 #include <gmp.h>
 /* r = a^-1 mod m for 256-bit a and m > 1; 0 when a is not invertible. */
 static int invert_mod(u64 r[4], const u64 a[4], const u64 m[4]) {
-  static mpz_t R_z;
-  static int init = 0;
+  /* Public elliptic-curve ladders frequently revisit a fixed base. Cache the
+     inverse by divisor and modulus. Equality checks cover every limb and
+     entries own all their data independently of the VM pool lifetime. */
+  typedef struct { u64 divisor[4], modulus[4], inverse[4]; } inverse_entry;
+  enum { WAYS = 4 };
+  typedef struct { inverse_entry ways[WAYS]; unsigned next; } inverse_bucket;
+  static _Thread_local inverse_bucket buckets[1024];
+  uint64_t hash = (a[0] ^ a[2] ^ m[0]) * UINT64_C(0x9e3779b97f4a7c15);
+  inverse_bucket *bucket = &buckets[hash >> 54];
+  for (unsigned i = 0; i < WAYS; ++i) {
+    const inverse_entry *candidate = &bucket->ways[i];
+    if (eq4(candidate->divisor, a) && eq4(candidate->modulus, m)) {
+      memcpy(r, candidate->inverse, sizeof(candidate->inverse));
+      return 1;
+    }
+  }
+  static _Thread_local mpz_t R_z;
+  static _Thread_local int init = 0;
   if (!init) { mpz_init2(R_z, 320); init = 1; }
   mpz_t A, M;
   mpz_roinit_n(A, (const mp_limb_t *)a, 4);
@@ -122,6 +143,10 @@ static int invert_mod(u64 r[4], const u64 a[4], const u64 m[4]) {
   if (!mpz_invert(R_z, A, M)) return 0;
   size_t n = mpz_size(R_z);
   for (int i = 0; i < 4; i++) r[i] = (size_t)i < n ? mpz_getlimbn(R_z, i) : 0;
+  inverse_entry *entry = &bucket->ways[bucket->next++ % WAYS];
+  memcpy(entry->divisor, a, 32);
+  memcpy(entry->modulus, m, 32);
+  memcpy(entry->inverse, r, 32);
   return 1;
 }
 static void canon_inv(u64 r[4], const u64 a[4]) {
@@ -193,7 +218,6 @@ value cvm_binop_byte(value pool, value op, value a, value b, value dst) {
   return Val_long(cvm_binop(pool, Long_val(op), Long_val(a), Long_val(b), Long_val(dst)));
 }
 
-/* Materialize code into slot [dst] (canonical limbs). */
 void cvm_load_slot(value pool, intnat code, intnat dst) {
   u64 x[4];
   load(pool, code, x);
@@ -333,7 +357,7 @@ static void divrem(u64 q[8], u64 r[4], const u64 *x, mp_size_t n, const u64 m[4]
   n = used(x, n);
   memset(q, 0, 64);
   memset(r, 0, 32);
-  if (n < mn) memcpy(r, x, n * 8);
+  if (n < mn || (n == mn && mpn_cmp(L(x), L(m), n) < 0)) memcpy(r, x, n * 8);
   else mpn_tdiv_qr(L(q), L(r), 0, L(x), n, L(m), mn);
 }
 
@@ -344,10 +368,30 @@ static void floor_mod(u64 r[4], const u64 *x, mp_size_t n, int neg, const u64 m[
   if (neg && !is_zero(r)) mpn_sub_n(L(r), L(m), L(r), 4);
 }
 
+/* For m = 2^256 - c, with 0 < c < 2^64, replace the upper half of
+   the product by its multiple of c. The first fold carries at most c.
+   Its second fold adds at most two limbs. If that overflows, the
+   truncated result is below 2^128 and one more addition of c fits. */
+static void reduce_pseudo_mersenne(u64 r[4], u64 product[8], const u64 m[4]) {
+  u64 c = -m[0];
+  u64 carry = mpn_addmul_1(L(product), L(product + 4), 4, c);
+  u128 extra = (u128)c * carry;
+  u64 low[4] = {(u64)extra, (u64)(extra >> 64), 0, 0};
+  if (add4(r, product, low)) mpn_add_1(L(r), L(r), 4, c);
+  if (mpn_cmp(L(r), L(m), 4) >= 0) sub4(r, r, m);
+}
+
 /* op: 0 a+b, 1 a-b, 2 a*b, 3 a/b (returns 0 when b is not invertible) */
 intnat cvm_sf_op(value vm, intnat op, value va, value vb, value vr) {
   const u64 *m = BUF(vm), *a = BUF(va), *b = BUF(vb);
   u64 t[8] = {0}, inv[4];
+  if (op < 2 && mpn_cmp(L(a), L(m), 4) < 0 && mpn_cmp(L(b), L(m), 4) < 0) {
+    u64 *out = BUF(vr);
+    if (op == 0) {
+      if (add4(out, a, b) || mpn_cmp(L(out), L(m), 4) >= 0) sub4(out, out, m);
+    } else if (sub4(out, a, b)) add4(out, out, m);
+    return 1;
+  }
   int neg = 0;
   switch (op) {
   case 0: t[4] = mpn_add_n(L(t), L(a), L(b), 4); break;
@@ -360,7 +404,9 @@ intnat cvm_sf_op(value vm, intnat op, value va, value vb, value vr) {
     if (!invert_mod(inv, b, m)) return 0;
     mpn_mul_n(L(t), L(a), L(inv), 4);
   }
-  floor_mod(BUF(vr), t, 8, neg, m);
+  if (op >= 2 && (m[1] & m[2] & m[3]) == UINT64_MAX && m[0])
+    reduce_pseudo_mersenne(BUF(vr), t, m);
+  else floor_mod(BUF(vr), t, 8, neg, m);
   return 1;
 }
 value cvm_sf_op_byte(value m, value op, value a, value b, value r) {
@@ -449,32 +495,66 @@ static void jac_double(jac *r, const jac *p) {
   memcpy(r->x, x3, 32); memcpy(r->y, y3, 32); memcpy(r->z, z3, 32);
 }
 
-/* r = p + q (q affine) */
+/* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
+   (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
+ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
+  /* add s*p = (s, e, e, e + s*P3) mod 2^256, e the sign extension of s */
+  u64 s = 1 - (x[3] >> 59), e = (u64)((i64)s >> 63);
+  unsigned long long c;
+  ADC(x[0], x[0], s, 0, c); ADC(x[1], x[1], e, c, c); ADC(x[2], x[2], e, c, c);
+  x[3] += e + s * P[3] + c;
+}
+
+/* The mixed-add accumulator stores each coordinate below 2p. Normalize
+   once before inversion, or before using the canonical doubling formula. */
+static inline void canonicalize_point(jac *point) {
+  if (geq_p(point->x)) sub4(point->x, point->x, P);
+  if (geq_p(point->y)) sub4(point->y, point->y, P);
+  if (geq_p(point->z)) sub4(point->z, point->z, P);
+}
+
+/* A difference biased by 2p lies in [0,4p). Since p = P[3]*2^192+1,
+   its multiples in this interval have two zero middle limbs. */
+static inline int zero_mod_4p(const u64 x[4]) {
+  return (x[1] | x[2]) == 0 && x[0] < 4 && x[3] == x[0] * P[3];
+}
+
 static void jac_add_aff(jac *r, const jac *p, const aff *q) {
   if (is_zero(p->z)) {
     memcpy(r->x, q->x, 32); memcpy(r->y, q->y, 32); memcpy(r->z, ONE_M, 32);
     return;
   }
-  u64 z1z1[4], u2[4], s2[4], h[4], hh[4], i[4], j[4], rr[4], v[4], t[4], x3[4], y3[4], z3[4];
-  mont_sqr(z1z1, p->z);
-  mont_mul(u2, q->x, z1z1);
-  mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
-  msub(h, u2, p->x);
-  msub(rr, s2, p->y);
-  if (is_zero(h)) {
-    if (is_zero(rr)) { jac_double(r, p); return; }
-    memset(r, 0, sizeof *r); return; /* infinity */
+  static const u64 two_p[4] = {2, 0, 0, UINT64_C(0x1000000000000022)};
+  static const u64 six_p[4] = {6, 0, 0, UINT64_C(0x3000000000000066)};
+  u64 zz[4], u[4], v[4], h[4], dy[4], hh[4], hhh[4], xhh[4], t[4];
+  jac out;
+  lazy_sqr(zz, p->z);
+  lazy_mul(u, q->x, zz);
+  lazy_mul(v, p->z, zz); lazy_mul(v, v, q->y);
+  add4(h, u, two_p); sub4(h, h, p->x);
+  add4(dy, v, two_p); sub4(dy, dy, p->y);
+  if (zero_mod_4p(h)) {
+    if (zero_mod_4p(dy)) {
+      jac canonical = *p;
+      canonicalize_point(&canonical);
+      jac_double(r, &canonical);
+    } else memset(r, 0, sizeof *r);
+    return;
   }
-  madd(rr, rr, rr);
-  mont_sqr(hh, h);
-  madd(i, hh, hh); madd(i, i, i);
-  mont_mul(j, h, i);
-  mont_mul(v, p->x, i);
-  mont_sqr(x3, rr); msub(x3, x3, j); msub(x3, x3, v); msub(x3, x3, v);
-  msub(t, v, x3); mont_mul(y3, rr, t);
-  mont_mul(t, p->y, j); madd(t, t, t); msub(y3, y3, t);
-  madd(z3, p->z, h); mont_sqr(z3, z3); msub(z3, z3, z1z1); msub(z3, z3, hh);
-  memcpy(r->x, x3, 32); memcpy(r->y, y3, 32); memcpy(r->z, z3, 32);
+  /* h and dy are below 4p. Every Montgomery product below therefore
+     has inputs whose product is at most 16p², giving an output < 2p.
+     Bias subtractions before folding X and Y back into [0,2p). */
+  lazy_sqr(hh, h); lazy_mul(hhh, h, hh); lazy_mul(xhh, p->x, hh);
+  lazy_sqr(out.x, dy);
+  add4(out.x, out.x, six_p); sub4(out.x, out.x, hhh);
+  sub4(out.x, out.x, xhh); sub4(out.x, out.x, xhh);
+  reduce_lazy(out.x);
+  add4(t, xhh, two_p); sub4(t, t, out.x);
+  lazy_mul(out.y, dy, t); lazy_mul(t, p->y, hhh);
+  add4(out.y, out.y, two_p); sub4(out.y, out.y, t);
+  reduce_lazy(out.y);
+  lazy_mul(out.z, p->z, h);
+  *r = out;
 }
 
 static void jac_to_aff(aff *r, const jac *p) {
@@ -502,67 +582,259 @@ static void ped_accum(jac *acc, const aff low[31][255], const aff high[15], cons
   if (top) jac_add_aff(acc, acc, &high[top - 1]);
 }
 
-static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
-  /* Fixed namespaces frequently hash different keys under the same prefix.
-     Keep only canonical coordinates, independent of any VM's felt pool. */
+static void pedersen_point(jac *acc, const u64 a[4], const u64 b[4]) {
+  /* Adjacent hashes often share the first input. */
   static _Thread_local struct { u64 key[4]; jac point; int valid; } previous;
-  struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
-  static _Thread_local struct { struct pair_entry ways[4]; unsigned next; } pairs[32];
-  u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
-  unsigned index = (h ^ (h >> 32)) & 31;
-  for (int way = 0; way < 4; ++way) {
-    struct pair_entry *e = &pairs[index].ways[way];
-    if (e->valid && eq4(e->a, a) && eq4(e->b, b)) {
-      memcpy(out, e->hash, sizeof e->hash);
-      return;
-    }
-  }
-  struct pair_entry *entry = &pairs[index].ways[pairs[index].next++ & 3];
-  jac acc;
   if (previous.valid && eq4(previous.key, a)) {
-    acc = previous.point;
+    *acc = previous.point;
   } else {
-    memcpy(acc.x, ped_shift.x, 32); memcpy(acc.y, ped_shift.y, 32); memcpy(acc.z, ONE_M, 32);
-    ped_accum(&acc, ped_a, ped_a_high[0], a);
+    memcpy(acc->x, ped_shift.x, 32); memcpy(acc->y, ped_shift.y, 32); memcpy(acc->z, ONE_M, 32);
+    ped_accum(acc, ped_a, ped_a_high[0], a);
     memcpy(previous.key, a, 32);
-    previous.point = acc;
+    previous.point = *acc;
     previous.valid = 1;
   }
-  ped_accum(&acc, ped_b, ped_b_high[0], b);
-  u64 zi[4], x[4];
-  mont_inv(zi, acc.z);
-  mont_sqr(zi, zi);
-  mont_mul(x, acc.x, zi);
-  from_mont(out, x);
+  ped_accum(acc, ped_b, ped_b_high[0], b);
+  canonicalize_point(acc);
+}
+
+struct pair_entry { u64 a[4], b[4], hash[4]; int valid; };
+struct pair_set { struct pair_entry ways[4]; unsigned next; };
+enum { SMALL_PAIR_SETS = 32, BATCH_PAIR_SETS = 4096 };
+
+static pthread_once_t pair_key_once = PTHREAD_ONCE_INIT;
+static pthread_key_t pair_key;
+static int pair_key_ready;
+static _Thread_local struct {
+  struct pair_set *batch;
+  struct pair_set small[SMALL_PAIR_SETS];
+} pair_cache;
+static void create_pair_key(void) { pair_key_ready = pthread_key_create(&pair_key, free) == 0; }
+
+/* An image-backed runner reuses compiled classes across independent VMs.
+   Store complete keys and canonical results outside each VM's felt pool. */
+value cvm_batch_pedersen_cache_active(value unit) {
+  (void)unit;
+  return Val_bool(pair_cache.batch != NULL);
+}
+
+value cvm_batch_pedersen_cache(value enable) {
+  int was_active = pair_cache.batch != NULL;
+  if (!Bool_val(enable)) pair_cache.batch = NULL;
+  else if (!was_active) {
+    pthread_once(&pair_key_once, create_pair_key);
+    if (pair_key_ready) {
+      struct pair_set *sets = pthread_getspecific(pair_key);
+      if (!sets) {
+        sets = calloc(BATCH_PAIR_SETS, sizeof *sets);
+        if (sets && pthread_setspecific(pair_key, sets)) { free(sets); sets = NULL; }
+      }
+      pair_cache.batch = sets;
+    }
+  }
+  return Val_bool(was_active);
+}
+
+static inline struct pair_set *pedersen_set(const u64 a[4], const u64 b[4]) {
+  u64 h = a[0] ^ (b[0] * UINT64_C(0xbf58476d1ce4e5b9)) ^ a[3] ^ b[3];
+  unsigned hash = h ^ (h >> 32);
+  return pair_cache.batch ? &pair_cache.batch[hash & (BATCH_PAIR_SETS - 1)]
+                          : &pair_cache.small[hash & (SMALL_PAIR_SETS - 1)];
+}
+
+static inline void save_pedersen_pair(struct pair_set *set, const u64 a[4], const u64 b[4], const u64 out[4]) {
+  struct pair_entry *entry = &set->ways[set->next++ & 3];
   memcpy(entry->a, a, sizeof entry->a);
   memcpy(entry->b, b, sizeof entry->b);
   memcpy(entry->hash, out, sizeof entry->hash);
   entry->valid = 1;
 }
 
+static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
+  struct pair_set *set = pedersen_set(a, b);
+  for (int way = 0; way < 4; ++way) {
+    struct pair_entry *e = &set->ways[way];
+    if (e->valid && eq4(e->a, a) && eq4(e->b, b)) {
+      memcpy(out, e->hash, sizeof e->hash);
+      return;
+    }
+  }
+  jac acc;
+  pedersen_point(&acc, a, b);
+  u64 zi[4], x[4];
+  mont_inv(zi, acc.z);
+  mont_sqr(zi, zi);
+  mont_mul(x, acc.x, zi);
+  from_mont(out, x);
+  save_pedersen_pair(set, a, b, out);
+}
+
+/* A legacy class commits to the hash chain H(0, word[0]), H(h, word[1]), ...
+   Own the packed limbs while outside the runtime so other domains can collect.
+   Only native-computed results are installed, using the ordinary full-key cache. */
+struct pedersen_step { u64 word[4], result[4]; };
+value cvm_compute_pedersen_chain(value bytes) {
+  CAMLparam1(bytes);
+  size_t len = caml_string_length(bytes);
+  if (!len || len % sizeof(struct pedersen_step) || len / sizeof(struct pedersen_step) > 8192)
+    CAMLreturn(Val_false);
+  struct pedersen_step *steps = malloc(len);
+  if (!steps) CAMLreturn(Val_false);
+  memcpy(steps, Bytes_val(bytes), len);
+  caml_release_runtime_system();
+  const u64 zero[4] = {0};
+  const u64 *previous = zero;
+  for (size_t i = 0; i < len / sizeof *steps; ++i) {
+    pedersen(steps[i].result, previous, steps[i].word);
+    previous = steps[i].result;
+  }
+  caml_acquire_runtime_system();
+  memcpy(Bytes_val(bytes), steps, len);
+  free(steps);
+  CAMLreturn(Val_true);
+}
+
+value cvm_install_pedersen_chain(value bytes) {
+  value previous_mode = cvm_batch_pedersen_cache(Val_true);
+  if (!pair_cache.batch) return previous_mode;
+  size_t len = caml_string_length(bytes);
+  const unsigned char *data = Bytes_val(bytes);
+  u64 previous[4] = {0};
+  for (size_t i = 0; i < len / sizeof(struct pedersen_step); ++i) {
+    struct pedersen_step step;
+    memcpy(&step, data + i * sizeof step, sizeof step);
+    save_pedersen_pair(pedersen_set(previous, step.word), previous, step.word, step.result);
+    memcpy(previous, step.result, sizeof previous);
+  }
+  return previous_mode;
+}
+
+static int verify_pedersen_range(const u64 *pool, const intnat *cells, intnat first,
+                                 intnat end, const value *cache, size_t cache_size) {
+  for (intnat i=first; i+2<end; i+=3) {
+    intnat a = cells[i], b = cells[i+1], out = cells[i+2];
+    if ((a && !(a&1)) || (b && !(b&1))) return 0;
+    if (!a || !b || !out) continue;
+    if (!(out&1)) return 0;
+    if ((uintnat)(i+2) < cache_size) {
+      intnat verified = Long_val(cache[i+2]);
+      if (verified) {
+        if (verified != out && !((verified & out & 3) == 3 && eq4(pool + 4*(verified >> 2), pool + 4*(out >> 2))))
+          return 0;
+        continue;
+      }
+    }
+    /* Compare X = out * Z^2 in Jacobian coordinates, saving one
+       inversion per preloaded output. Preserve the scalar path's x=0
+       convention for the point at infinity. */
+    u64 x[4], y[4], actual[4], z2[4], scaled[4];
+    load_limbs(pool, a, x); load_limbs(pool, b, y); load_limbs(pool, out, actual);
+    jac point;
+    pedersen_point(&point, x, y);
+    if (is_zero(point.z)) {
+      if (!is_zero(actual)) return 0;
+    } else {
+      to_mont(scaled, actual);
+      mont_sqr(z2, point.z);
+      mont_mul(scaled, scaled, z2);
+      if (!eq4(point.x, scaled)) return 0;
+    }
+  }
+  return 1;
+}
+
+/* Preloaded PIE outputs have no deduction cache. Verify disjoint ranges
+   against immutable limbs; workers never touch the OCaml heap. */
+struct pedersen_job {
+  const u64 *pool;
+  const intnat *cells;
+  intnat first, end;
+  int ok;
+};
+
+static void *verify_pedersen_job(void *arg) {
+  struct pedersen_job *j = arg;
+  j->ok = verify_pedersen_range(j->pool, j->cells, j->first, j->end, NULL, 0);
+  return NULL;
+}
+
+static int verify_preloaded(const u64 *limbs, const intnat *cells, intnat n) {
+  enum { workers = 4 };
+  struct pedersen_job jobs[workers];
+  pthread_t threads[workers - 1];
+  int started[workers - 1];
+  const intnat group = 3 * (n / 3 / workers);
+  for (int i = 0; i < workers; ++i) {
+    jobs[i] = (struct pedersen_job){limbs, cells, i * group, i+1 == workers ? n : (i+1)*group, 0};
+    if (i + 1 == workers) verify_pedersen_job(&jobs[i]);
+    else {
+      started[i] = pthread_create(&threads[i], NULL, verify_pedersen_job, &jobs[i]) == 0;
+      if (!started[i]) verify_pedersen_job(&jobs[i]);
+    }
+  }
+  int ok = 1;
+  for (int i = 0; i < workers; ++i) {
+    if (i + 1 < workers && started[i]) pthread_join(threads[i], NULL);
+    ok &= jobs[i].ok;
+  }
+  return ok;}
+
+/* The OCaml caller keeps the non-moving snapshot and pool alive until join. */
+struct pending_pedersen {
+  pthread_t thread;
+  struct pedersen_job job;
+};
+
+static void *verify_snapshot(void *arg) {
+  struct pedersen_job *j = arg;
+  j->ok = verify_preloaded(j->pool, j->cells, j->end);
+  return NULL;
+}
+
+value cvm_start_pedersen(value pool, value snapshot) {
+  CAMLparam2(pool, snapshot);
+  CAMLlocal1(handle);
+  handle = caml_copy_nativeint(0);
+  struct pending_pedersen *p = malloc(sizeof *p);
+  if (!p) CAMLreturn(handle);
+  p->job = (struct pedersen_job){Caml_ba_data_val(pool), Caml_ba_data_val(snapshot),
+                                 0, Caml_ba_array_val(snapshot)->dim[0], 0};
+  if (pthread_create(&p->thread, NULL, verify_snapshot, &p->job)) free(p);
+  else Nativeint_val(handle) = (intnat)p;
+  CAMLreturn(handle);
+}
+
+value cvm_join_pedersen(value handle, value snapshot) {
+  (void)snapshot; /* keep the backing bigarray rooted across execution */
+  struct pending_pedersen *p = (void *)Nativeint_val(handle);
+  if (!p) return Val_false;
+  pthread_join(p->thread, NULL);
+  int ok = p->job.ok;
+  free(p);
+  Nativeint_val(handle) = 0;
+  return Val_bool(ok);
+}
+
+value cvm_segment_full(value segment, value size) {
+  intnat n = Long_val(size);
+  if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
+  const intnat *cells = Caml_ba_data_val(segment);
+  for (intnat i = 0; i < n; i++) if (!cells[i]) return Val_false;
+  return Val_true;
+}
+
 value cvm_verify_pedersen(value pool, value segment, value size, value cache) {
   intnat n = Long_val(size);
   if (n < 0 || n > Caml_ba_array_val(segment)->dim[0]) return Val_false;
   const intnat *cells = Caml_ba_data_val(segment);
-  for (intnat i=0; i+2<n; i+=3) {
-    intnat a = cells[i], b = cells[i+1], out = cells[i+2];
-    if ((a && !(a&1)) || (b && !(b&1))) return Val_false;
-    if (!a || !b || !out) continue;
-    if (!(out&1)) return Val_false;
-    if ((uintnat)(i+2) < Wosize_val(cache)) {
-      intnat verified = Long_val(Field(cache, i+2));
-      if (verified) {
-        if (verified != out && !((verified & out & 3) == 3 && cvm_big_eq(pool, verified, out)))
-          return Val_false;
-        continue;
-      }
-    }
-    u64 x[4], y[4], expected[4], actual[4];
-    load(pool, a, x); load(pool, b, y); load(pool, out, actual);
-    pedersen(expected, x, y);
-    if (!eq4(expected, actual)) return Val_false;
-  }
-  return Val_true;
+  const u64 *limbs = Caml_ba_data_val(pool);
+  /* A nested PIE may follow a handful of hashes produced by the bootloader.
+     A small verified prefix should not serialize the remaining block. */
+  size_t cached = Wosize_val(cache);
+  if (n >= 3*2048 && cached < (size_t)n/2)
+    return Val_bool(verify_preloaded(limbs, cells, n));
+  return Val_bool(verify_pedersen_range(limbs, cells, 0, n, Op_val(cache), cached));
+
 }
 
 intnat cvm_pedersen(value pool, intnat a, intnat b, intnat dst) {
@@ -592,16 +864,6 @@ static void poseidon_init(void) {
   /* Partial-round constants carry the 4p offset of the next c below. */
   for (int i = 12; i < 95; i++) add4(PRC[i], PRC[i], P4);
   prc_init = 1;
-}
-
-/* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
-   (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
-ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
-  /* add s*p = (s, e, e, e + s*P3) mod 2^256, e the sign extension of s */
-  u64 s = 1 - (x[3] >> 59), e = (u64)((i64)s >> 63);
-  unsigned long long c;
-  ADC(x[0], x[0], s, 0, c); ADC(x[1], x[1], e, c, c); ADC(x[2], x[2], e, c, c);
-  x[3] += e + s * P[3] + c;
 }
 
 /* Below 9p (R > 31.99p), the cube is below 2p. */
@@ -646,19 +908,18 @@ static void hades(u64 s[3][4]) {
 }
 
 /* inputs/outputs: pool slots in canonical form */
-void cvm_poseidon(value pool, intnat i0, intnat o0) {
+static void poseidon_limbs(const u64 *input, u64 *output) {
   /* Independent calls can revisit the same node of a Merkle tree. Keys
      and values own their limbs, so pool growth and VM lifetimes are irrelevant. */
   struct entry { u64 input[3][4], output[3][4]; int valid; };
   static _Thread_local struct { struct entry ways[4]; unsigned next; } recent[64];
-  const u64 *input = SLOT(pool, i0);
   u64 h = input[0] ^ (input[4] * UINT64_C(0x9e3779b97f4a7c15)) ^
           (input[8] * UINT64_C(0xbf58476d1ce4e5b9)) ^ input[3] ^ input[7] ^ input[11];
   unsigned index = (h ^ (h >> 32)) & 63;
   for (int way = 0; way < 4; ++way) {
     struct entry *e = &recent[index].ways[way];
     if (e->valid && memcmp(e->input, input, sizeof e->input) == 0) {
-      memcpy(SLOT(pool, o0), e->output, sizeof e->output);
+      memcpy(output, e->output, sizeof e->output);
       return;
     }
   }
@@ -666,11 +927,58 @@ void cvm_poseidon(value pool, intnat i0, intnat o0) {
   memcpy(e->input, input, sizeof e->input);
   u64 s[3][4];
   poseidon_init();
-  for (int k = 0; k < 3; k++) to_mont(s[k], SLOT(pool, i0 + k));
+  for (int k = 0; k < 3; k++) to_mont(s[k], input + 4*k);
   hades(s);
   for (int k = 0; k < 3; k++) from_mont(e->output[k], s[k]);
   e->valid = 1;
-  memcpy(SLOT(pool, o0), e->output, sizeof e->output);
+  memcpy(output, e->output, sizeof e->output);
+}
+
+#include <pthread.h>
+#include "poseidon_batch.h"
+
+struct poseidon_range { struct poseidon_job *jobs; unsigned count; };
+
+static void *compute_poseidon_range(void *argument) {
+  struct poseidon_range *range = argument;
+  for (unsigned i = 0; i < range->count; i++)
+    poseidon_limbs(range->jobs[i].input, range->jobs[i].output);
+  return NULL;
+}
+
+void cvm_poseidon_jobs(struct poseidon_job *jobs, unsigned n) {
+  /* Never create workers for short dependency chains. */
+  struct poseidon_range ranges[3];
+  unsigned workers = n >= 48 ? 3 : 1;
+  pthread_t threads[2];
+  int launched[2] = {0};
+  poseidon_init();
+  for (unsigned i = 0; i < workers; i++) {
+    unsigned first = n*i/workers;
+    ranges[i] = (struct poseidon_range){jobs+first,n*(i+1)/workers-first};
+    if (i+1 < workers)
+      launched[i] = pthread_create(&threads[i], NULL, compute_poseidon_range, &ranges[i]) == 0;
+  }
+  compute_poseidon_range(&ranges[workers-1]);
+  for (unsigned i = 0; i+1 < workers; i++) {
+    if (launched[i]) pthread_join(threads[i], NULL);
+    else compute_poseidon_range(&ranges[i]);
+  }
+}
+
+void cvm_poseidon(value pool, intnat i0, intnat o0) {
+  poseidon_limbs(SLOT(pool,i0),SLOT(pool,o0));
+}
+
+void cvm_poseidon_codes(value pool, const intnat *inputs, value cache, intnat base, intnat *slot) {
+  u64 input[12], output[12];
+  for (int i = 0; i < 3; i++) load(pool, inputs[i], input+4*i);
+  poseidon_limbs(input,output);
+  for (int i = 0; i < 3; i++) {
+    intnat code = store(pool, output+4*i, *slot);
+    if ((code & 3) == 3) ++*slot;
+    Field(cache,base+i) = Val_long(code);
+  }
 }
 value cvm_poseidon_byte(value pool, value i, value o) {
   cvm_poseidon(pool, Long_val(i), Long_val(o));
@@ -931,7 +1239,6 @@ value cvm_zalloc(value vn) {
    unmodified until the join. */
 #include <errno.h>
 #include <fcntl.h>
-#include <pthread.h>
 #include <unistd.h>
 #include <caml/signals.h>
 #define OFF_MASK ((1LL << 40) - 1)
@@ -990,6 +1297,13 @@ static void art_trace(art_job *j) {
       e[0] = base1 + ((packed >> 24) & offset_mask);
       e[1] = base1 + ((packed >> 1) & offset_mask);
       e[2] = base0 + ((packed >> 47) & 0xffff);
+    } else if (!(word & 2)) {
+      intnat seg, pc, ap, fp;
+      trace_unpack_dynamic(word, &seg, &pc, &ap, &fp);
+      if (seg >= j->ntable) { j->err = "cannot relocate value"; return; }
+      e[0] = base1 + ap;
+      e[1] = base1 + fp;
+      e[2] = table[seg] + pc;
     } else {
       intnat pc = word, s = rel_seg(pc);
       e[0] = (u64)(base1 + t[i++]);
@@ -1108,3 +1422,25 @@ value cvm_write_trace(value path, value trace, value vlen, value table) {
   return cvm_finish_artifact(cvm_start_trace(path, trace, vlen, table));
 }
 
+
+/* Canonical lowercase 0x-prefixed hex into a caller-owned 66-byte array. */
+intnat cvm_hex_felt(value pool, intnat code, value buffer) {
+  static const char digits[] = "0123456789abcdef";
+  u64 limbs[4];
+  load(pool, code, limbs);
+  char *out = (char *)Bytes_val(buffer);
+  out[0] = '0';
+  out[1] = 'x';
+  int end = 2;
+  for (int i = 3; i >= 0; --i) {
+    for (int bit = 60; bit >= 0; bit -= 4) {
+      unsigned nibble = (limbs[i] >> bit) & 15;
+      if (nibble || end > 2) out[end++] = digits[nibble];
+    }
+  }
+  if (end == 2) out[end++] = '0';
+  return end;
+}
+value cvm_hex_felt_byte(value pool, value code, value buffer) {
+  return Val_long(cvm_hex_felt(pool, Long_val(code), buffer));
+}

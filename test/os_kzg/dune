@@ -1,0 +1,3 @@
+(test
+ (name os_kzg_vectors)
+ (libraries cairovm))

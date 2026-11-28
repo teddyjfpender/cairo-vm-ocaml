@@ -1,0 +1,42 @@
+{
+  "partial": {
+    "pie": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "c4ada1ed6a5c2e4bff78a8971b57cd2a79039d2b82e50d19a7b1f26e696e292e",
+      "memory.bin": "cd1eea5f8a3dac582a525385f812b94d141264703508a34c0e8324317bf5eedd",
+      "additional_data.json": "91b4b125dd3370d6683c5d82acd9e8cd742d61a3c1b08d041072cd2c92609295",
+      "execution_resources.json": "5a5552c8cd88dbbf74a26b0def876242df31be1cf8dd87a24e1e8685639e0c41"
+    },
+    "da": null
+  },
+  "-full": {
+    "pie": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "10bbf13d0e91d368fe255732d4bc798af1c2b0dd2bfcd9d9241c7bf28b83498c",
+      "memory.bin": "9f30c86bf630f9f793bd71583b186bb1f4ada38675f814be50c5196d1a440e90",
+      "additional_data.json": "bb5f8a6b4a0a5819dcf18eef152d363627495072f002a8d43e9c849e745ae872",
+      "execution_resources.json": "c23331ec434ca3dbbc32b61286dc2d23ec143dc8bf2f2b3a38e8dea3ebd268b8"
+    },
+    "da": null
+  },
+  "-blob": {
+    "pie": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "65075464cea0dce3b152911cb03b92d11a65f992649ce2c3467ae10df9e0db4f",
+      "memory.bin": "16a93965d5506a6225e031ff8bef47c75729602a947bea040eee1c0da9938219",
+      "additional_data.json": "23830da186a6850b286b477c0f41e43a1927b77db8d17332f1de8b895240cbdd",
+      "execution_resources.json": "820bf47df27b4c9226ce5a1532ab34ece83989acfce78d9b84e17b6332f7f70b"
+    },
+    "da": "e5cafb080f5381fd71b635c4d9ca71036fd0e4fabe4d790e13f1565fb6954435"
+  },
+  "-full-blob": {
+    "pie": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "eada2047aca50f924a9774a5a57296bc8ba55e6169dc6580849511424de77e35",
+      "memory.bin": "d38d7663f5f79c76865182acf7d95ac6dd1fdad0aa282172d750f5ad182b2a00",
+      "additional_data.json": "23830da186a6850b286b477c0f41e43a1927b77db8d17332f1de8b895240cbdd",
+      "execution_resources.json": "8d80e97ed05a4c1a8d833dbc00ae205c86526b71a05586ccb7ddf11ceeaf1fc3"
+    },
+    "da": "7c366037aa718f881055a405008c9d88408910228190a4c751e42d24ea6615ef"
+  }
+}

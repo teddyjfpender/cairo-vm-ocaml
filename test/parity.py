@@ -29,9 +29,14 @@ REJECTIONS = {
     },
     # Rust reports the type, line and column. The fixture pins the affected field.
     "sequence-in-map-field": {
+        "ocaml": r"Error: Invalid program metadata at instruction_locations",
         "rust": r'invalid type: sequence, expected a map at line ([0-9]+) column ([0-9]+)\n'
                 r'Error: Runner\(Program\(Parse\(Error\("invalid type: sequence, expected a map", '
                 r'line: \1, column: \2\)\)\)\)',
+    },
+    "pie-memory-address-out-of-bounds": {
+        "rust": r"Invalid address\nError: Runner\(CairoPieValidation\(InvalidAddress\)\)",
+        "ocaml": r"Error: Invalid address",
     },
     "missing-main": {
         "rust": r'Entrypoint main not found\nError: Runner\(Program\(EntrypointNotFound\("main"\)\)\)',
@@ -129,25 +134,46 @@ def artifact(path, kind):
         pos = text.index(",", end) + 1
 
 
+def independent_env():
+    env = os.environ.copy()
+    for key in ("CAIRO_VM_RUST_CLI", "CAIRO_VM_DELEGATED"):
+        env.pop(key, None)
+    return env
+
+
+def prepare_replay(binary, program, path, args):
+    cmd = [binary, program, "--layout", args.layout, "--cairo_pie_output", path]
+    if args.layout_params:
+        cmd += ["--cairo_layout_params_file", args.layout_params]
+    try:
+        result = subprocess.run(cmd, capture_output=True, env=independent_env(), timeout=args.timeout)
+        if result.returncode:
+            return f"Rust PIE generation exited {result.returncode}: {result.stderr[:240]!r}"
+        artifact(path, "pie")
+    except (subprocess.TimeoutExpired, OSError, ValueError, EOFError, RuntimeError,
+            zipfile.BadZipFile, zlib.error) as exc:
+        return f"Rust PIE generation failed: {exc}"
+    return None
+
+
 def observe(oracle, binary, program, directory, args):
     directory.mkdir()
     flags = {"trace": "--trace_file", "memory": "--memory_file"}
     cmd = [binary, program, "--layout", args.layout, "--print_output"]
+    if args.from_pie:
+        cmd.append("--run_from_cairo_pie")
     if args.layout_params:
         cmd += ["--cairo_layout_params_file", args.layout_params]
     if args.proof:
         cmd += ["--proof_mode", "--fill-holes", "false"]
         flags.update(public="--air_public_input", private="--air_private_input")
-    if args.pie:
+    if args.pie or args.from_pie:
         flags["pie"] = "--cairo_pie_output"
     for name, flag in flags.items():
         cmd += [flag, directory / name]
 
-    env = os.environ.copy()
-    for key in ("CAIRO_VM_RUST_CLI", "CAIRO_VM_DELEGATED"):
-        env.pop(key, None)
     try:
-        result = subprocess.run(cmd, capture_output=True, env=env, timeout=args.timeout)
+        result = subprocess.run(cmd, capture_output=True, env=independent_env(), timeout=args.timeout)
     except subprocess.TimeoutExpired:
         return Observation("TIMEOUT", f"{args.timeout:g}s")
     except OSError as exc:
@@ -181,7 +207,14 @@ def observe(oracle, binary, program, directory, args):
 
 def check(program, oracles, expected, args):
     with tempfile.TemporaryDirectory() as tmp:
-        runs = {name: observe(name, binary, program, Path(tmp).resolve() / name, args)
+        root = Path(tmp).resolve()
+        if args.from_pie:
+            source = root / "input.pie.zip"
+            error = prepare_replay(oracles["rust"], program, source, args)
+            if error:
+                return "FAIL", error
+            program = source
+        runs = {name: observe(name, binary, program, root / name, args)
                 for name, binary in oracles.items()}
     outcomes = ", ".join(f"{name}={r.kind} {r.detail}".rstrip() for name, r in runs.items())
     if expected and all(r.kind == "REJECT" and r.detail == expected for r in runs.values()):
@@ -209,6 +242,8 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--proof", action="store_true")
     modes.add_argument("--pie", action="store_true")
+    modes.add_argument("--from_pie", action="store_true",
+                       help="generate a Rust PIE, replay it on every VM, and compare output PIEs")
     parser.add_argument("--layout")
     parser.add_argument("--layout_params")
     parser.add_argument("--filter", default="")

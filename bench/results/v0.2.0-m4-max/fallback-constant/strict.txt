@@ -1,0 +1,7 @@
+execution 0 SUMMARY oracles=rust,ocaml PASS=150 total=150
+pie 0 SUMMARY oracles=rust,ocaml PASS=150 total=150
+replay 0 SUMMARY oracles=rust,ocaml EXPECTED_REJECTION=4 PASS=146 total=150
+proof 0 SUMMARY oracles=rust,ocaml PASS=150 total=150
+stwo 0 SUMMARY oracles=rust,ocaml PASS=2 total=2
+core 0 SUMMARY oracles=rust,ocaml EXPECTED_REJECTION=2 PASS=1 total=3
+malformed 0 SUMMARY oracles=rust,ocaml EXPECTED_REJECTION=1 total=1

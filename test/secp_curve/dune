@@ -1,0 +1,3 @@
+(test
+ (name secp_curve)
+ (libraries cairovm))

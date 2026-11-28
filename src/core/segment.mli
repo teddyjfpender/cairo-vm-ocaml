@@ -29,3 +29,13 @@ val raw_set : seg -> int -> int -> unit
 
 val seg_grow : seg -> int -> seg
 (** A copy of the segment with the new (larger) capacity. *)
+
+val snapshot : ?off:int -> seg -> int -> seg
+(** Copy [n] words starting at [off] (default zero) into independent storage. *)
+
+val range_marked : bytes -> int -> int -> bool
+(** Whether any cell in a marked-address bitmap range is set. *)
+
+
+val repeat_trace_tail : seg -> first:int -> used:int -> copies:int -> seg * int
+(** Append [copies] instances of the final encoded trace entry, growing the buffer if needed. *)

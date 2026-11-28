@@ -1,0 +1,2 @@
+191408 steps: stdout, trace, memory and five PIE members match pinned Rust 3.2.0
+Identical trace, relocated memory and five decompressed PIE members

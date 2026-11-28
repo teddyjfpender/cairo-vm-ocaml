@@ -44,9 +44,17 @@ class ParityGate(unittest.TestCase):
             self.assertIn(fragment, report)
 
     def test_success_modes_and_normalizations(self):
-        for flags in [(), ("--proof",), ("--pie",)]:
+        for flags in [(), ("--proof",), ("--pie",), ("--from_pie",)]:
             with self.subTest(flags=flags):
                 self.gate(lean="success", flags=flags, contains=["PASS=1", "oracles=rust,ocaml,lean"])
+
+    def test_replay_requires_valid_input_and_matching_outputs(self):
+        for action in ("missing-pie", "bad-zip", "missing-member", "unknown"):
+            with self.subTest(action=action):
+                self.gate(rust=action, flags=["--from_pie"], code=1,
+                          contains=["FAIL=1", "Rust PIE generation"])
+        self.gate(ocaml="pie", flags=["--from_pie"], code=1,
+                  contains=["MISMATCH=1", "rust/ocaml: pie"])
 
     def test_only_reviewed_rejection_passes(self):
         self.gate("prime", "prime", "prime", expected=True, contains=["EXPECTED_REJECTION=1"])

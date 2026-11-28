@@ -1,0 +1,5 @@
+overflowing_dict.json: both exited 1
+control.json: both exited 0
+invalid-debug-locations.json: both exited 1
+numeric-attribute-value.json: both exited 1
+duplicate-debug-info.json: both exited 1

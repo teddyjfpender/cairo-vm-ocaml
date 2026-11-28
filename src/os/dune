@@ -1,0 +1,6 @@
+(rule
+ (target kzg_setup.ml)
+ (deps kzg_monomial.bin)
+ (action
+  (with-stdout-to %{target}
+   (run %{exe:../../scripts/embed_setup.exe} %{dep:kzg_monomial.bin}))))

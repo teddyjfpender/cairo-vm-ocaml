@@ -2,3 +2,5 @@ _build/
 *.trace
 *.mem
 site/
+__pycache__/
+dist/

@@ -6,3 +6,13 @@
 (executable
  (name native_flags)
  (modules native_flags))
+
+(executable
+ (name hint_coverage)
+ (modules hint_coverage)
+ (libraries cairovm yojson))
+
+(executable
+ (name embed_setup)
+ (modules embed_setup)
+ (libraries zarith))

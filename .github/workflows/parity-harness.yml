@@ -18,30 +18,25 @@ jobs:
       OXCAML_SWITCH: 5.2.0+ox
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/oxcaml
+      - name: Build OxCairo
+        run: opam exec --switch "$OXCAML_SWITCH" -- dune build --profile release bin/main.exe
       - uses: actions/checkout@v4
         with:
           repository: starkware-libs/cairo-vm
           ref: 3c3f112d8a40ec465bde6b59e2c659df39b7dbc6 # v4.0.0
           path: _rust
-      - run: sudo apt-get update && sudo apt-get install -y opam libgmp-dev autoconf automake rsync
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.opam
-          key: oxcaml-linux-x86_64-${{ env.OXCAML_SWITCH }}-v1
-      - name: Build and test OxCairo
-        run: |
-          git config --global maintenance.auto false
-          git config --global gc.auto 0
-          [ -d ~/.opam ] || opam init --bare -y --disable-sandboxing
-          opam switch list --short | grep -qx "$OXCAML_SWITCH" || opam switch create "$OXCAML_SWITCH" \
-            --repos ox=git+https://github.com/oxcaml/opam-repository.git,default -y
-          opam install --switch "$OXCAML_SWITCH" -y dune zarith yojson
-          opam exec --switch "$OXCAML_SWITCH" -- dune build --profile release bin/main.exe
-          opam exec --switch "$OXCAML_SWITCH" -- dune test --profile release
+          workspaces: _rust
       - name: Build pinned Rust CLI
         working-directory: _rust
         run: cargo build --locked --release -p cairo-vm-cli
       - name: Check real execution and reviewed rejections
         run: |
-          python3 test/parity.py _rust/target/release/cairo-vm-cli _build/default/bin/main.exe \
-            test/parity_fixtures/core --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+          rust=_rust/target/release/cairo-vm-cli
+          vm=_build/default/bin/main.exe
+          python3 test/parity.py "$rust" "$vm" test/parity_fixtures/core \
+            --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+          python3 test/parity.py "$rust" "$vm" test/parity_fixtures/malformed \
+            --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose

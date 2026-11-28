@@ -19,7 +19,8 @@ let relocation_table r =
   let vm = r.vm in
   let t = Array.make (vm.nsegs + 1) 1 in
   for s = 0 to vm.nsegs - 1 do
-    let size = if r.proof then segment_size r s else used_size vm s in
+    (* proof runs and runs from a PIE finalize their segment sizes *)
+    let size = if r.proof || Hashtbl.length r.seg_sizes > 0 then segment_size r s else used_size vm s in
     t.(s + 1) <- t.(s) + size
   done;
   t
@@ -74,16 +75,12 @@ let with_artifacts r ~trace ~memory k =
 let trace_bounds r =
   let vm = r.vm in
   if vm.tlen = 0 then None
-  else begin
-    let i = ref 0 and first = ref None and last = ref (0, 0, 0, 0) in
-    while !i < vm.tlen do
-      let next, s, pc, ap, fp = trace_entry vm.trace !i in
-      if !first = None then first := Some (s, pc, ap, fp);
-      last := (s, pc, ap, fp);
-      i := next
-    done;
-    Option.map (fun f -> (f, !last)) !first
-  end
+  else
+    let entry i =
+      let _, seg, pc, ap, fp = trace_entry vm.trace i in
+      seg, pc, ap, fp
+    in
+    Some (entry 0, entry vm.last_trace)
 
 let output_segment r =
   List.find_opt (fun b -> b.kind = Output) r.vm.builtins
@@ -102,6 +99,24 @@ let iter_output_lines r emit =
       for i = 0 to used_size r.vm b.base - 1 do
         emit (output_line r.vm b.base i)
       done
+
+external output_chunk : Felt.pool -> seg -> int -> int ref -> bytes -> int = "cvm_output_chunk" [@@noalloc]
+
+let write_output channel r =
+  match output_segment r with
+  | None -> ()
+  | Some b ->
+      let total = used_size r.vm b.base in
+      if total < 64 then iter_output_lines r (fun line -> output_string channel line; output_char channel '\n')
+      else begin
+        let capacity = if total >= 820 then 65536 else 80 * total in
+        let buf = Bytes.create capacity and cursor = ref 0 in
+        while !cursor < total do
+          let size = output_chunk Felt.pool r.vm.segs.(b.base) total cursor buf in
+          if size <= 0 then invalid_arg "output buffer";
+          output channel buf 0 size
+        done
+      end
 
 let output_lines r =
   match output_segment r with

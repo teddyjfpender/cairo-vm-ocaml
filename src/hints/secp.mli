@@ -8,6 +8,7 @@ val secp_p_v2 : Z.t
 (** 2^255 - 19 *)
 
 val r1_p : Z.t
+val r1_b : Z.t
 
 val nonzero : Z.t -> unit
 (** Fails with cairo-vm's division-by-zero error on zero. *)

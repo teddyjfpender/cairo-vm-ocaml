@@ -9,7 +9,14 @@ import time
 import zipfile
 
 name = Path(sys.argv[0]).name
-action = json.loads(Path(sys.argv[1]).read_text()).get(name, "success")
+source = Path(sys.argv[1])
+if "--run_from_cairo_pie" in sys.argv:
+    with zipfile.ZipFile(source) as archive:
+        plan = json.loads(archive.read("metadata.json"))
+else:
+    plan = json.loads(source.read_text())
+action = plan.get(name, "success")
+generating = "--cairo_pie_output" in sys.argv and "--print_output" not in sys.argv
 if "CAIRO_VM_RUST_CLI" in os.environ or "CAIRO_VM_DELEGATED" in os.environ:
     sys.exit(9)
 if action == "timeout":
@@ -48,10 +55,10 @@ def output(flag):
     return Path(sys.argv[sys.argv.index(flag) + 1])
 
 
-if action != "missing-stdout":
+if not generating and action != "missing-stdout":
     print("changed" if action == "stdout" else "Program Output:")
 for kind, flag, size in [("trace", "--trace_file", 24), ("memory", "--memory_file", 40)]:
-    if action != "missing-" + kind:
+    if not generating and action != "missing-" + kind:
         output(flag).write_bytes(bytes([int(action == kind)]) * size)
 if "--proof_mode" in sys.argv:
     segs = {"a": {}, "b": {}}
@@ -78,4 +85,7 @@ if "--cairo_pie_output" in sys.argv and action != "missing-pie":
             for member in ("version.json", "metadata.json", "memory.bin", "additional_data.json",
                            "execution_resources.json"):
                 if member != "memory.bin" or action != "missing-member":
-                    archive.writestr(member, b"1" if action == "pie" else b"0")
+                    data = b"1" if action == "pie" else b"0"
+                    if generating and member == "metadata.json":
+                        data = json.dumps(plan).encode()
+                    archive.writestr(member, data)

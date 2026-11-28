@@ -1,7 +1,142 @@
 # Benchmarks
 
+## Version 0.2
+
+The release comparison measures cold native block execution, persistent workers, secure production PIE replay, and runs that write trace and memory files. It identifies which measurements use the stock Rust CLI, the stock sequencer or its memory-bounded diagnostic. Performance varies with block size, syscall mix and output mode. The 10× target remains open across native workloads. [0.2 measurements and raw pairs](release-0.2.md)
+
+## Earlier measurements
+
+The historical native Starknet OS cold timings below used identical Cairo bytecode, hints and identifiers. Rust loaded its embedded 52,471,230-byte compiler JSON. OxCairo loaded an 8,244,185-byte copy with `debug_info` set to null. This affects startup and is especially visible on short runs. The native timing harness now checks the complete compiler file against the Rust binary and records its SHA-256 before comparing. Direct PIE replay, bootloader task comparisons and equality of execution artifacts use independent checks.
+
+Direct secure replay now decompresses PIE memory in bounded chunks. Across the four large OS archives, the median ratios of the previous OCaml wall time to the streaming wall time were 1.18×, 1.23×, 1.18× and 1.23×, respectively, over nine alternating pairs. Output, trace, relocated memory and all five output PIE members matched the previously Rust-qualified runner on all four archives. [Per-pair timing and peak resident memory](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/os-pie-streaming-m4-max.csv).
+
+Two larger cold native OS runs at `38aa38a` used actual sequencer-generated witnesses. The four-block storage case with 4,096 invokes ran 26,014,395 steps and reached **8.03×** against Rust. The five-block mixed-syscall case with 32 repeats ran 21,356,237 steps and reached **8.81×**. Each timing is the median of seven alternating-order output-only pairs. Public outputs and all five merged PIE members matched Rust. At twice those input sizes OCaml completed in 0.930 s and 1.114 s respectively. The Rust runs exceeded the benchmark's per-process memory limit, so those sizes have OCaml-only measurements. [Paired timings and witness digests](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-scale-m4-max.csv).
+
+Across 70 deterministic upstream sequencer flow inputs at `ffd9582`, the median cold output-only speedup was **2.43×**. The ratio of summed case medians was **9.05×**, and 19 of 70 cases reached 10×. Each case ran five alternating-order pairs against the pinned Rust sequencer on the M4 Max. Every pair matched on public output. These flows exercise distinct transaction paths and include small blocks. The larger multi-block cases below measure sustained work. [Per-case timings](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-upstream-cold-m4-max.csv).
+
+On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revision, five alternating-order pairs produced a median **4.82×** speedup with output, fact topology, trace and memory files checked byte-for-byte. The median elapsed times were 0.497 s for OCaml and 2.466 s for Rust. OS-sampled maximum RSS was 657 MiB for OCaml and 2,263 MiB for Rust.
+
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
+
+## Large native OS witnesses and data availability
+
+The four-block storage workload reaches 51,839,675 executed Cairo steps at 8,192 invokes. The five-block mixed syscall workload reaches 42,218,395 steps at 64 repetitions. OCaml matched the public output and all five decompressed PIE members on both. Stock Rust exceeded the 4 GiB process allowance on these inputs. A separate Rust 3.2.0 diagnostic runs the sequencer's checks and streams the original PIE encoding. Its archives also matched stock Rust on both smaller inputs. With only public output requested from both implementations, seven alternating cold pairs measured 7.43× for the larger storage witness and 8.48× for the larger mixed witness at OCaml revision `faa291a`. [Reference source and reproduction](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/reference/README.md) · [Public-output pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-verified-output-m4-max.csv).
+
+A second family uses four blocks, distinct storage keys, full-width values, and on-chain blob commitments. At 4,096 invokes the sequential-key case executed 29,745,545 Cairo steps and the scattered-key case executed 34,562,436. Expanding the fixed setup at build time and evaluating its multiscalar product with six-limb field arithmetic improved cold end-to-end OCaml wall time by 1.39× and 1.32× respectively. Each number is the median of eleven alternating pairs on an M4 Max. The comparison across all eight sizes and key patterns ranged from 1.15× to 1.46×. [Paired wall times](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-blob-commitments-m4-max.csv).
+
+Against the matched-output Rust diagnostic, nine cold pairs on the 4,096 distinct writes measured 7.61× for sequential keys and 11.63× for scattered keys at `1b0f95a`. The OCaml baseline here uses one thread for the commitment itself. Bounded parallelism across independent scalar windows subsequently improved the two native OS results by 1.10× and 1.11× in seventeen paired runs. On the aggregator, the same change improved four-block blob output by 1.81× and 2.00×. Both aggregator inputs contain full state diffs from four individually executed Rust OS blocks. Public output, blob coefficients and all PIE members matched the pinned sequencer. [Native OS against Rust](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-distinct-state-rust-m4-max.csv) · [Aggregator against stock Rust before parallelization](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/aggregator-distinct-state-m4-max.csv) · [Parallel window pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/blob-window-parallel-m4-max.csv).
+
+The simple bootloader also ran all four large OS archives in proof mode. Public output, fact topology, relocated trace and relocated memory matched Rust in all twelve paired runs. The median paired speedups for SN_PIE_1 through SN_PIE_4 were 4.82×, 6.16×, 6.05× and 6.00×. Each pair ran processes sequentially under a 4 GiB per-process RSS limit. [Bootloader pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/bootloader-large-pies-m4-max.csv).
+
+## Native program startup
+
+On the M4 Max, thirty alternating cold pairs compared the same OCaml executable reading compiler JSON and reading the packed version of that program. The full genesis run was 2.15× faster with the packed input, the account flow 1.63× and the 27-transaction syscall flow 1.18×. At 4,096 storage invokes the ratio was 1.004×. All fifteen OS fixtures checked at this revision matched Rust's five PIE member hashes with packed input. [JSON and packed timings](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-packed-program-m4-max.csv).
+
+## Profile-guided native build
+
+On a Clang-based OxCaml switch, run `python3 scripts/build_pgo.py OS_PROGRAM.json` to train the native kernels on four saved sequencer witnesses and build `_build/pgo/cairo-vm-cli`. Training runs serially by default. The script uses the compiler's LLVM instrumentation and requires a compatible `llvm-profdata`. Both build trees are temporary. The ordinary Dune release profile works with GCC or Clang.
+
+On the M4 Max, eighteen alternating pairs compared this build with the ordinary release binary at `faa291a`. The median improvement was 8.0% on 4,096 storage invokes and 6.3% on the 32-repeat mixed workload. Both were held out of training. The Poseidon benchmark was 1.0% slower. Fifteen main OS witnesses, four virtual OS witnesses and nine aggregator configurations matched the pinned Rust PIE member digests with the profiled build. [Paired wall times](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-pgo-m4-max.csv).
+
+## Native aggregator and virtual OS on Apple M4 Max
+
+The aggregator consumed consecutive block outputs produced by the pinned Rust OS. The virtual OS ran one account transaction with repeated Keccak, elliptic-curve and SHA-512 calls. Both used the pinned sequencer's Rust 3.2.0 VM. Each output-only result is the median of seven alternating Rust/OCaml wall-time ratios. Each PIE result uses three pairs and checks all five decompressed members. The PIE timings include archive compression.
+
+| Workload | Output only | Output and PIE |
+| --- | ---: | ---: |
+| Aggregator, 32 blocks | 1.31× | 2.93× |
+| Aggregator, 128 blocks | 2.19× | 6.16× |
+| Aggregator, 512 blocks | 3.87× | 10.52× |
+| Aggregator, 1,024 blocks | 4.46× | 12.38× |
+| Aggregator, 2,048 blocks | 5.11× | 13.64× |
+| Virtual OS, 3 inner calls | 1.81× | 4.83× |
+| Virtual OS, 12 inner calls | 2.01× | 6.00× |
+| Virtual OS, 48 inner calls | 2.65× | 9.93× |
+| Virtual OS, 192 inner calls | 4.11× | 17.27× |
+
+[Aggregator pairs and input digests](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/aggregator-scale-m4-max.csv) · [Virtual OS pairs and input digests](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/virtual-os-scale-m4-max.csv).
+
+## Native Starknet OS on Apple M4 Max
+
+The mixed five-block witness contains 282 transactions and executes 10,954,713
+Cairo steps. At revision `13d228a`, cold output took a median 3.106 s in Rust
+and 0.312 s in OCaml over three alternating pairs (9.97× median paired
+speedup). Writing the PIE brought the median paired speedup to 19.28×. The
+archive comparison checks every decompressed member. The two runners use
+different ZIP compression settings, as described below.
+[Cold pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-282-cold-m4-max.csv).
+
+A persistent-worker measurement after the field-storage lifetime fix at
+`723b1a2` gave 6.37× on the same mixed witness, 7.47× on 2,048 storage
+transactions, 6.02× on 512 storage transactions, 5.20× on the 27-transaction
+five-block flow and 4.75× on alternating inner calls. Each worker ran one
+warmup and five measured requests. The CLI and benchmark worker use a larger
+minor heap for OS execution unless the caller supplies an OCaml runtime
+configuration. [Persistent pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-persistent-syscalls-m4-max.csv).
+
+Revision `a6b5c3a` also measures sustained execution. The workers perform one
+warmup, then alternate five pairs. Each request rereads the witness and runs a
+fresh VM. Rust retains its initialized KZG setup, and OCaml retains its decoded
+program. Each cold process ran once per invocation, alternating three pairs.
+The table gives median paired Rust/OCaml wall-time ratios.
+
+| OS witness | Cold output | Cold output and PIE | Persistent output |
+| --- | ---: | ---: | ---: |
+| Alternating inner calls, 2 transactions | 20.24× | 18.84× | 2.73× |
+| Syscalls, 27 transactions in five blocks | 14.23× | 14.50× | 4.25× |
+| Storage, 512 transactions | 4.60× | 9.62× | 5.67× |
+| Storage, 2,048 transactions in four blocks | 6.14× | 11.43× | 7.16× |
+
+Initializing the KZG setup contributes to the cold Rust times on the first two
+rows. Every measured output matched. [Persistent pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-persistent-m4-max.csv),
+[cold pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-cold-m4-max.csv), [2,048-transaction cold pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-cold-storage-m4-max.csv).
+
+On the saved four-block, 2,048-Invoke workload, both runners executed 13,101,755 Cairo
+steps from sequencer block inputs. Each row gives the median wall time for each binary
+and the median of three alternating speedup ratios. OCaml revision `5fee19a` ran on
+the 36 GB laptop with unrelated builds active.
+
+| Requested result | Rust (s) | OCaml (s) | Paired speedup |
+| --- | ---: | ---: | ---: |
+| Printed OS output | 2.101 | 0.331 | 6.38× |
+| Printed OS output and merged PIE | 8.053 | 0.540 | 14.75× |
+
+Rust uses the sequencer's `run_os_stateless` API at `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`
+with cairo-vm 3.2.0. This API constructs an in-memory PIE even when only output is requested.
+OCaml reads its compiled OS JSON at startup. Rust embeds the same bytecode. For the archive
+row Rust deflates the members and OCaml stores them uncompressed. File sizes and compression
+work therefore differ. Every timed pair matched field output and every requested uncompressed
+archive member. The measurements include input parsing, execution, finalization and process
+startup. Both runs use `all_cairo`.
+
+Reproduce with `bench/compare_native_os.py --ocaml OCAML_CLI --rust OS_REFERENCE --program OS_JSON
+--pairs 3 --merge-extra-segments test/fixtures/os/storage-2048.json.gz` using `bench/os_reference.rs`
+as the Rust example. [Paired observations](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/native-os-storage-2048-m4-max.csv).
+
+## Starknet OS PIE replay on Apple M4 Max
+
+Rust cairo-vm v4.0.0 and the OCaml candidate ran sequentially with secure
+execution, the `all_cairo` layout and `--print_output`. Each timing is the
+median of three wall-clock runs, alternating order within each pair. Full
+runs also wrote a trace, relocated memory and a new PIE. All 12 full pairs
+matched on stdout, trace, memory and every uncompressed archive member.
+The four inputs replay previously executed OS blocks from their recorded
+memory. Direct OS execution with transaction and state inputs is a separate
+workload. [Raw pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/os-pie-m4-max-rust4.csv)
+
+| Input | Rust exec (s) | OCaml exec (s) | Speedup | Rust full (s) | OCaml full (s) | Speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SN_PIE_1.zip | 6.145 | 0.520 | 11.83× | 15.422 | 1.122 | 13.75× |
+| SN_PIE_2 | 2.952 | 0.278 | 10.61× | 7.714 | 0.573 | 13.46× |
+| SN_PIE_3 | 5.515 | 0.507 | 10.88× | 14.746 | 1.087 | 13.57× |
+| SN_PIE_4 | 5.635 | 0.460 | 12.24× | 14.315 | 1.096 | 13.06× |
+
+The Rust v3.2.0 comparison used its `mod_builtin` feature to support the OS layout.
+All twelve full replay pairs matched on stdout, trace, memory and every PIE member.
+Median paired speedups were 11.50×, 13.39×, 12.60× and 12.73× for SN_PIE_1 through
+SN_PIE_4. The slowest individual pair was 8.80×.
+[Raw v3.2.0 pairs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/results/os-pie-m4-max-rust32.csv)
 
 ## Apple M5 Max, Rust cairo-vm v4.0.0 (main at 2b07b77)
 

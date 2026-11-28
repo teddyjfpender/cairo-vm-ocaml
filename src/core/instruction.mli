@@ -25,3 +25,6 @@ exception Generic_instruction
 val decode_word : Z.t -> int
 (** Decode an instruction word, failing on invalid encodings.
     @raise Generic_instruction on shapes cairo-vm v4.0.0 cannot execute. *)
+
+val decode_legacy_word : Z.t -> int
+(** Decode a cairo-vm 3.2 instruction for the generic executor. *)

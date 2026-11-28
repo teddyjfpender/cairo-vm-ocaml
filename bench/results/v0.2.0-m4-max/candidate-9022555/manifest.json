@@ -1,0 +1,16 @@
+{
+  "runtime": "90225553d6d73b4df9d4875b4335216298053dd4",
+  "measured_source": "762e250",
+  "before": "f6e37bd34ba7ccf821725c5e1d5bd8180ad3bb55",
+  "package": "oxcairo-v0.2.0-macos-arm64.tar.gz",
+  "package_sha256": "77ade018db0b43a4bbd44af3b210bae0bd04c715c7b16e9c46a52581cd0217aa",
+  "package_bytes": 13694329,
+  "host": "Apple M4 Max, 36 GiB, macOS arm64",
+  "sha256": {
+    "cairo-vm-cli": "778a0e4222bb057be95b83f2376f2d370bbdccf1e988de27bf9d054c88587bec",
+    "native-worker": "a15e35dca3108e12c90629b3136a4fb8b57e0f55451e5e2b87eb69594dd339a3",
+    "oxcairo.so": "b1e2a45db71f41fbea1818f52528dd7980fb95b717696c1911beddf285134ed5"
+  },
+  "program_sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+  "sequencer": "ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45"
+}

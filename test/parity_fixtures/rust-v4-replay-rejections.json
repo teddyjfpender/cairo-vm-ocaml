@@ -1,0 +1,6 @@
+{
+  "memory_holes.json": "pie-memory-address-out-of-bounds",
+  "test_addition_if.json": "pie-memory-address-out-of-bounds",
+  "test_reverse_if.json": "pie-memory-address-out-of-bounds",
+  "test_subtraction_if.json": "pie-memory-address-out-of-bounds"
+}

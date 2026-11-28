@@ -1,0 +1,23 @@
+{
+  "runtime_commit": "d884acca5e5386899490bd7ba320e034201c5906",
+  "machine": "Apple M4 Max, 36 GiB",
+  "build": "OxCaml 5.2, LLVM PGO on four separate OS training witnesses, optional libdeflate and OpenSSL",
+  "binaries": {
+    "cairo-vm-cli": "e8361960841a0af09d97edc79006e9825a9e9cffa25344bef03976cbece25efc",
+    "native-worker": "12516a4290c6f9fda4e458c20aac69101ce9e933c48d4ae461aa4152e1ad3e99",
+    "oxcairo.so": "b77d277d3f560f6ebe13290676576e4aa4f1d3326d0369797e5b592a6596c6eb",
+    "portable-cli": "b20c85f0e155b681a7f99034a5f77068fe77726b2439725321eb76f63ced07d2"
+  },
+  "rust_revisions": "Same as ../manifest.json",
+  "full_compiler": {
+    "bytes": 52471230,
+    "sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded"
+  },
+  "packed_compiler": {
+    "bytes": 1321699,
+    "sha256": "a48576085fe533b27f82a45c149db20751e001fac9d7bd5d39fc0623a8c3b21c",
+    "one_time_pack_seconds": 0.0649
+  },
+  "production_artifact_baseline": "Full receipts in ../pie-artifacts.json",
+  "checkpoint": "43598c9"
+}

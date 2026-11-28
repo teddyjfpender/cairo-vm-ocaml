@@ -21,9 +21,17 @@ module Int_tbl = Hashtbl.Make (struct
   let hash = Felt.mix
 end)
 
+(* Python ordering on felt values (ints); relocatables after ints, ordered by (segment, offset) *)
+let compare_values a b =
+  match (Felt.is_felt a, Felt.is_felt b) with
+  | true, true -> Felt.compare a b
+  | true, false -> -1
+  | false, true -> 1
+  | false, false -> Stdlib.compare a b
+
 module Dict_changes = Map.Make (struct
   type t = Felt.t
-  let compare (a : t) (b : t) = Int.compare (a :> int) (b :> int)
+  let compare = compare_values
 end)
 type snapshot = Felt.t Felt_tbl.t * Felt.t Dict_changes.t
 
@@ -35,11 +43,17 @@ type dict_tracker = {
 }
 
 type dyn =
+  | Class_segment of Casm_segments.t
+  | Class_segments of Casm_segments.t list
+  | Patricia_node of Patricia_tree.update
+  | Patricia_descents of Patricia_tree.descents
   | Int of Z.t
   | Field of Secp_field.t
   | Value of Felt.t
   | Ints of int list
   | Values of Felt.t list
+  | Casm_dicts of (int * Felt.t Felt_tbl.t) Int_tbl.t
+  | Casm_squash of (Felt.t * int list) list
   | Dict_manager of dict_tracker Int_tbl.t (* by segment index *)
   | Access_indices of int list Felt_tbl.t
   | Positions of int list Felt_tbl.t
@@ -94,30 +108,7 @@ let var_num s name =
 let num_z = function Int z -> z | Field v -> Secp_field.to_z v | Value v -> Felt.to_z v | _ -> assert false
 let var_z s name = num_z (var_num s name)
 
-(* ---- canonical keys (big felts interned so keys are plain ints) ---- *)
-
-module Felt_keys = Hashtbl.Make (struct
-  type t = Felt.t
-  let equal = Felt.equal
-  let hash = Felt.hash
-end)
-
-let intern = Felt_keys.create 64
-
-let canon v =
-  if Felt.is_big v then begin
-    match Felt_keys.find_opt intern v with
-    | Some c -> c
-    | None -> Felt_keys.add intern v v; v
-  end else v
-
-(* Python ordering on felt values (ints); relocatables after ints, ordered by (segment, offset) *)
-let compare_values a b =
-  match (Felt.is_felt a, Felt.is_felt b) with
-  | true, true -> Felt.compare a b
-  | true, false -> -1
-  | false, true -> 1
-  | false, false -> Stdlib.compare a b
+let canon = Felt.intern
 
 (* ---- compiled hint context ---- *)
 
@@ -151,7 +142,7 @@ let make_ctx prog scopes (hint : P.hint) =
           String.sub full (String.length inner + 1) (String.length full - String.length inner - 1)
         else match String.rindex_opt full '.' with Some i -> String.sub full (i + 1) (String.length full - i - 1) | None -> full
       in
-      if id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
+      if id >= 0 && id < Array.length prog.P.references then Hashtbl.replace refs short prog.P.references.(id))
     hint.ref_ids;
   { prog; hint; scopes; refs; constants = []; bindings = []; plans = [] }
 
@@ -352,14 +343,16 @@ let resolve_constant ctx name =
   | Some _ as value -> value
   | None -> (
       let suffix = "." ^ name in
-      let found = ref None in
-      Hashtbl.iter
-        (fun k (id : P.ident) ->
-          if !found = None && id.i_type = "const" && String.length k > String.length suffix
-             && String.sub k (String.length k - String.length suffix) (String.length suffix) = suffix
-          then found := id.i_value)
-        ctx.prog.P.identifiers;
-      !found)
+      (* Preserve identifier iteration order when several scopes define the same suffix. *)
+      let exception Found of Z.t in
+      try
+        Hashtbl.iter (fun k (id : P.ident) ->
+            if id.i_type = "const" && String.length k > String.length suffix
+               && String.ends_with ~suffix k then
+              Option.iter (fun v -> raise_notrace (Found v)) id.i_value)
+          ctx.prog.P.identifiers;
+        None
+      with Found v -> Some v)
 
 (* The identifier table and accessible scopes are fixed for a compiled hint.
    Cache misses too: optional constants can otherwise scan every identifier

@@ -1,0 +1,7 @@
+case,mode,pair,first,rust_s,ocaml_s,speedup
+storage-2048,pie,1,rust,8.473769,0.761518,11.127
+storage-2048,pie,2,ocaml,8.372481,0.732531,11.430
+storage-2048,pie,3,rust,8.491390,0.554225,15.321
+storage-2048,output,1,rust,2.001143,0.327652,6.108
+storage-2048,output,2,ocaml,2.016014,0.327240,6.161
+storage-2048,output,3,rust,2.004739,0.326691,6.136

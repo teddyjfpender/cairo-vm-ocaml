@@ -36,6 +36,7 @@ nav:
       - 6. Runs, relocation and proofs: learn/runs-and-proofs.md
   - Architecture: architecture.md
   - Reference:
+      - Version 0.2 qualification: release-0.2.md
       - Parity: parity.md
       - Benchmarks: benchmarks.md
   - Contributing: contributing.md

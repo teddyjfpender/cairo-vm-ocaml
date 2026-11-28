@@ -96,6 +96,23 @@ static inline int eq4(const u64 a[4], const u64 b[4]) {
    104 signed bits. Normalize carries, fold the carry above limb 3,
    and finish with the top-limb quotient estimate for p. */
 static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
+  /* Cairo's multi-limb integers frequently multiply two 86- or 128-bit
+     limbs. Their product already fits in four words. */
+  if (!(a[2] | a[3] | b[2] | b[3])) {
+    u128 low = (u128)a[0]*b[0];
+    u128 left = (u128)a[0]*b[1] + (u64)(low >> 64);
+    u128 right = (u128)a[1]*b[0] + (u64)left;
+    u128 top = (u128)a[1]*b[1] + (left >> 64) + (right >> 64);
+    r[0] = (u64)low; r[1] = (u64)right; r[2] = (u64)top; r[3] = (u64)(top >> 64);
+    u64 q = r[3] >> 59;
+    if (q) {
+      /* q=floor(product/2^251) overestimates floor(product/p) by at
+         most one since product < 2^256 and p=2^251+17*2^192+1. */
+      u64 multiple[4] = {q,0,0,q*P[3]};
+      if (sub4(r,r,multiple)) add4(r,r,P);
+    }
+    return;
+  }
   u64 t[8] = {0};
   for (int i = 0; i < 4; i++) {
     u128 carry = 0;
@@ -132,9 +149,9 @@ static inline void fmul(u64 r[4], const u64 a[4], const u64 b[4]) {
 
 #define SLOT(pool, i) ((u64 *)Caml_ba_data_val(pool) + ((size_t)(i) << 2))
 
-static inline void load(value pool, intnat code, u64 out[4]) {
+static inline void load_limbs(const u64 *pool, intnat code, u64 out[4]) {
   if ((code & 3) == 3) {
-    memcpy(out, SLOT(pool, code >> 2), 32);
+    memcpy(out, pool + 4 * (code >> 2), 32);
   } else {
     i64 v = (i64)code >> 2;
     if (v >= 0) {
@@ -144,6 +161,10 @@ static inline void load(value pool, intnat code, u64 out[4]) {
       sub4(out, P, n);
     }
   }
+}
+
+static inline void load(value pool, intnat code, u64 out[4]) {
+  load_limbs(Caml_ba_data_val(pool), code, out);
 }
 
 /* Return the canonical code for x, storing it at [dst] when it is big. */
@@ -174,8 +195,17 @@ static inline void fmul_word(u64 r[4], const u64 x[4], i64 word) {
     product = (u128)x[i] * magnitude + (u64)(product >> 64);
     r[i] = (u64)product;
   }
-  u64 quotient = (u64)(product / P[3]);
-  r[3] = (u64)(product - (u128)quotient * P[3]);
+  /* P[3] = 2^59 + 17. Fold the top bits twice to obtain a
+     remainder in [0, 2^59 + 17*33], then correct by at most one.
+     This avoids a general 128-bit division on the hot word path. */
+  const u64 mask = (UINT64_C(1) << 59) - 1;
+  u64 quotient = (u64)(product >> 59);
+  __int128 rem = (i64)((u64)product & mask) - (__int128)17 * quotient;
+  i64 adjustment = (i64)(rem >> 59);
+  quotient += adjustment;
+  u64 reduced = ((u64)rem & mask) - 17 * adjustment;
+  if (reduced >= P[3]) { reduced -= P[3]; ++quotient; }
+  r[3] = reduced;
   u64 correction[4] = {quotient, 0, 0, 0};
   fsub(r, r, correction);
   if (word < 0 && !is_zero(r)) sub4(r, P, r);

@@ -1,0 +1,102 @@
+{
+  "os_input": {
+    "os_block_inputs": [
+      {
+        "contract_state_commitment_info": {
+          "previous_root": "0x0",
+          "updated_root": "0x3c538d437670f4c6f72dd799f215a007720ec7d19bc64195c96399145d8746f",
+          "tree_height": 251,
+          "commitment_facts": {
+            "0x3c538d437670f4c6f72dd799f215a007720ec7d19bc64195c96399145d8746f": [
+              "0xfb",
+              "0x2",
+              "0x2f84fd0707d8246348f2f814852e77a75d261625fe1c4a16161cc7ac2dcb807"
+            ]
+          }
+        },
+        "address_to_storage_commitment_info": {
+          "0x2": {
+            "previous_root": "0x0",
+            "updated_root": "0x41e158f6df25fc003f27924cc20e9a6d518a842cb09ba6192d3a2e3d4526e20",
+            "tree_height": 251,
+            "commitment_facts": {
+              "0x41e158f6df25fc003f27924cc20e9a6d518a842cb09ba6192d3a2e3d4526e20": [
+                "0xfb",
+                "0x0",
+                "0x80"
+              ]
+            }
+          }
+        },
+        "contract_class_commitment_info": {
+          "previous_root": "0x0",
+          "updated_root": "0x0",
+          "tree_height": 251,
+          "commitment_facts": {}
+        },
+        "transactions": [],
+        "tx_execution_infos": [],
+        "declared_class_hash_to_component_hashes": {},
+        "block_info": {
+          "block_number": 1,
+          "block_timestamp": 1072023,
+          "starknet_version": "0.14.5",
+          "sequencer_address": "0x1000",
+          "gas_prices": {
+            "eth_gas_prices": {
+              "l1_gas_price": "0x174876e800",
+              "l1_data_gas_price": "0xf4240",
+              "l2_gas_price": "0xf4240"
+            },
+            "strk_gas_prices": {
+              "l1_gas_price": "0x174876e800",
+              "l1_data_gas_price": "0x3b9aca00",
+              "l2_gas_price": "0x3b9aca00"
+            }
+          },
+          "use_kzg_da": false
+        },
+        "starknet_version_override": null,
+        "block_hash_commitments": {
+          "transaction_commitment": "0x0",
+          "event_commitment": "0x0",
+          "receipt_commitment": "0x0",
+          "state_diff_commitment": "0x0",
+          "concatenated_counts": "0x0"
+        },
+        "prev_block_hash": "0x0",
+        "new_block_hash": "0x7108978e71e216278cd2fc4584ae32d510794b5cba1d82ca26956387eb7c422",
+        "old_block_number_and_hash": null,
+        "class_hashes_to_migrate": [],
+        "initial_reads": {
+          "nonces": {
+            "0x2": "0x0"
+          },
+          "class_hashes": {
+            "0x2": "0x0"
+          },
+          "storage": {
+            "0x2": {
+              "0x0": "0x0"
+            }
+          },
+          "compiled_class_hashes": {},
+          "declared_contracts": {}
+        }
+      }
+    ],
+    "deprecated_compiled_classes": {},
+    "compiled_classes": {}
+  },
+  "os_hints_config": {
+    "debug_mode": false,
+    "full_output": false,
+    "use_kzg_da": false,
+    "chain_info": {
+      "chain_id": "0x434841494e5f49445f535542444952",
+      "strk_fee_token_address": "0x6381c1cc53c0d41f57990aeb12f9337e4758beb704fe2da37ce9bcb6e03ba50"
+    },
+    "public_keys": null,
+    "rng_seed_salt": null
+  }
+}

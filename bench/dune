@@ -1,3 +1,15 @@
 (executable
  (name repeat)
+ (modules repeat)
  (libraries cairovm unix))
+
+(executable
+ (name native_os_worker)
+ (public_name oxcairo-os-worker)
+ (modules native_os_worker)
+ (libraries cairovm unix))
+
+(executable
+ (name stwo_snapshot)
+ (modules stwo_snapshot)
+ (libraries cairovm))

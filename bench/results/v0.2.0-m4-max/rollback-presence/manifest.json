@@ -1,0 +1,20 @@
+{
+  "before": "d884acca5e5386899490bd7ba320e034201c5906",
+  "after": "7e611bc0bbc2b55f173777d608b1b610ca2fe1fc",
+  "binaries": {
+    "ocaml_before": "e8361960841a0af09d97edc79006e9825a9e9cffa25344bef03976cbece25efc",
+    "ocaml_after": "ee94abbb91be92c9412a3409e5977c5df1b1b8cab83301d7c48c975b976be3be",
+    "rust_checked": "5c5cf91833a5dd932d5ed368b076244cd1fe7b199c80904e0a791b4066bfd289"
+  },
+  "witness_sha256": "4a3f210b08bbd01433a556dc8f48c6ef5d77e39fa9067b40fe077a96b2548bfc",
+  "phase": "Cold fresh processes, full compiler JSON, validate all public words, no trace or archive emission in timing.",
+  "host": "Apple M4 Max, 36 GiB",
+  "seed": 2711,
+  "pairs": 9,
+  "trace_differential": "rollback-1536 8340910 7630536 trace, memory and public output match Rust",
+  "integrated_pgo": {
+    "cairo-vm-cli": "f1caadab7204d3faa11526010b08e72d419a2f32055fa6789b548f34a1f764c3",
+    "native-worker": "d0709878739ca9828a78d39dbfbc3e6f209116c3fa42db1feb37a753ea1952b5",
+    "oxcairo.so": "e3c9ebdac1ff8aeb188919442f213fd4f1a038a6d49d77e88851c96e88d04494"
+  }
+}

@@ -82,6 +82,14 @@ val pool : pool
 val pool_n : int ref
 (** Next free slot. *)
 
+val with_temporary_slots : (unit -> 'a) -> 'a
+(** Exclusive serial execution. The callback must return or retain only
+    results independent of the pool, and join readers before it returns.
+    Both successful and failed runs release the slots allocated inside. *)
+
+val intern : t -> t
+(** A representative of a field value within the current allocation scope. *)
+
 val reserve : int -> unit
 (** [reserve k] raises [Out_of_memory] unless [k] slots are free. *)
 
@@ -116,6 +124,9 @@ val div : t -> t -> t option
 val neg : t -> t
 val split_at_limb : two_limbs:bool -> t -> t * t
 val to_z : t -> Z.t
+val of_hex_opt : string -> t option
+(** Read one to 64 hexadecimal digits prefixed by 0x. Values must be below the field prime. *)
+
 val of_z : Z.t -> t
 val to_signed_z : t -> Z.t
 val to_nat : t -> int

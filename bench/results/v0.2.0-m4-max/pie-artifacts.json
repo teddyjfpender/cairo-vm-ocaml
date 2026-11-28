@@ -1,0 +1,155 @@
+[
+  {
+    "archive": "SN_PIE_1.zip",
+    "engine": "prior",
+    "input_sha256": "dbdda06ffb2cee7ee7c499b7805e9b9a20eba20518b301998edfb195ea2da0ee",
+    "stdout": "9404670e346be39010b45a6572b297b4f571a95d7f7929a1523c6a06f7bf4df3",
+    "trace": "22d2ab11d2dddbc14904766d956722dbfeb1db6d7face9bcd363ec2a72f96a4e",
+    "memory": "5f426262044722a954a96f640d736de3a011b7648518e6b1a32dceae4f4b121a",
+    "trace_bytes": 351482688,
+    "memory_bytes": 601669240,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "05cf0dd1bd6858b6906ae2d91c20e9f8ae326ee19481251728528f8883a2bf43",
+      "memory.bin": "2d91656e59065264dd058baa50aeb41d5465c5c5104f67bc4e07b57abe7d490a",
+      "additional_data.json": "885a883f6c2180f5afa2567a9ee2d7d3e70f192ab043d07e84123becb8aff4cc",
+      "execution_resources.json": "b4db40f22f594c951fc974bb3e42bf94ca21cf7aabd1baf53e39c6d744bf710f"
+    }
+  },
+  {
+    "archive": "SN_PIE_1.zip",
+    "engine": "release",
+    "input_sha256": "dbdda06ffb2cee7ee7c499b7805e9b9a20eba20518b301998edfb195ea2da0ee",
+    "stdout": "9404670e346be39010b45a6572b297b4f571a95d7f7929a1523c6a06f7bf4df3",
+    "trace": "22d2ab11d2dddbc14904766d956722dbfeb1db6d7face9bcd363ec2a72f96a4e",
+    "memory": "5f426262044722a954a96f640d736de3a011b7648518e6b1a32dceae4f4b121a",
+    "trace_bytes": 351482688,
+    "memory_bytes": 601669240,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "05cf0dd1bd6858b6906ae2d91c20e9f8ae326ee19481251728528f8883a2bf43",
+      "memory.bin": "2d91656e59065264dd058baa50aeb41d5465c5c5104f67bc4e07b57abe7d490a",
+      "additional_data.json": "885a883f6c2180f5afa2567a9ee2d7d3e70f192ab043d07e84123becb8aff4cc",
+      "execution_resources.json": "b4db40f22f594c951fc974bb3e42bf94ca21cf7aabd1baf53e39c6d744bf710f"
+    }
+  },
+  {
+    "archive": "SN_PIE_2",
+    "engine": "prior",
+    "input_sha256": "f10b70ca8af790a934ac36b3835136bbdc0cc47f62d6bc63169856dec3f0dc41",
+    "stdout": "6cb64a0796f9d81666cacd2f48be87f52a77abf2b6d2aa701c77fc066a492de1",
+    "trace": "12a5bacb174489d7b8dca55b61e038ea06058f3eab4e30a06e9f73a3b4860800",
+    "memory": "22a77649713de64ed608977b9ef485a14c323be0f86082160b696562e9bc4c0b",
+    "trace_bytes": 184964736,
+    "memory_bytes": 330648840,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "d134591bf5f61b59d3c4ee9ecc774308ca52a45cd8d62ef8f58607942a1cf36e",
+      "memory.bin": "e5247d858dab209b719036fda69939544b06fd9ecb9cfa4170e086eb4daa1221",
+      "additional_data.json": "9881d3aef4aafa16fd597dd40ec392938be5620e7389f1912bdbb78cf272431a",
+      "execution_resources.json": "a5282df8fbc364352a34eb4809aaa24b7acdd6a9d779ea5e9081081cc2e132d9"
+    }
+  },
+  {
+    "archive": "SN_PIE_2",
+    "engine": "release",
+    "input_sha256": "f10b70ca8af790a934ac36b3835136bbdc0cc47f62d6bc63169856dec3f0dc41",
+    "stdout": "6cb64a0796f9d81666cacd2f48be87f52a77abf2b6d2aa701c77fc066a492de1",
+    "trace": "12a5bacb174489d7b8dca55b61e038ea06058f3eab4e30a06e9f73a3b4860800",
+    "memory": "22a77649713de64ed608977b9ef485a14c323be0f86082160b696562e9bc4c0b",
+    "trace_bytes": 184964736,
+    "memory_bytes": 330648840,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "d134591bf5f61b59d3c4ee9ecc774308ca52a45cd8d62ef8f58607942a1cf36e",
+      "memory.bin": "e5247d858dab209b719036fda69939544b06fd9ecb9cfa4170e086eb4daa1221",
+      "additional_data.json": "9881d3aef4aafa16fd597dd40ec392938be5620e7389f1912bdbb78cf272431a",
+      "execution_resources.json": "a5282df8fbc364352a34eb4809aaa24b7acdd6a9d779ea5e9081081cc2e132d9"
+    }
+  },
+  {
+    "archive": "SN_PIE_2",
+    "engine": "rust4",
+    "input_sha256": "f10b70ca8af790a934ac36b3835136bbdc0cc47f62d6bc63169856dec3f0dc41",
+    "stdout": "6cb64a0796f9d81666cacd2f48be87f52a77abf2b6d2aa701c77fc066a492de1",
+    "trace": "12a5bacb174489d7b8dca55b61e038ea06058f3eab4e30a06e9f73a3b4860800",
+    "memory": "22a77649713de64ed608977b9ef485a14c323be0f86082160b696562e9bc4c0b",
+    "trace_bytes": 184964736,
+    "memory_bytes": 330648840,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "d134591bf5f61b59d3c4ee9ecc774308ca52a45cd8d62ef8f58607942a1cf36e",
+      "memory.bin": "e5247d858dab209b719036fda69939544b06fd9ecb9cfa4170e086eb4daa1221",
+      "additional_data.json": "9881d3aef4aafa16fd597dd40ec392938be5620e7389f1912bdbb78cf272431a",
+      "execution_resources.json": "a5282df8fbc364352a34eb4809aaa24b7acdd6a9d779ea5e9081081cc2e132d9"
+    }
+  },
+  {
+    "archive": "SN_PIE_3",
+    "engine": "prior",
+    "input_sha256": "673212f6fcc64b2c4fe3817a041756ddaa2386712fc971e3bd2dd7fca7b4aea4",
+    "stdout": "e13e65eb82f96cd12d5592e806c61a0f3beaaaff8dda509cd56efc00a055e7c2",
+    "trace": "149adb1a3dc71f64b427339c15c927c86616f772b2124b90e0c4f536d0567ae4",
+    "memory": "68aabc939a6ae937a04149a60b4a4bc4de00d26ba201770c56356c1cdbd9fa70",
+    "trace_bytes": 337800456,
+    "memory_bytes": 585694480,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "3fee31d090ed79afff8d105d35031825a7c5ab8ef1b00017066e45fbe859a53b",
+      "memory.bin": "6f4a051ac1ee764e93a57b9a2fcd2d2a0bd05175767463a45b312139b760e33b",
+      "additional_data.json": "2a7a6fe910c3bacd75c73211313f18ad9c8bd774fe0fb35421b466912e933e04",
+      "execution_resources.json": "75878387d3868b704e5dbc39de52e04c01ec182e2fb983247567358252ef97e6"
+    }
+  },
+  {
+    "archive": "SN_PIE_3",
+    "engine": "release",
+    "input_sha256": "673212f6fcc64b2c4fe3817a041756ddaa2386712fc971e3bd2dd7fca7b4aea4",
+    "stdout": "e13e65eb82f96cd12d5592e806c61a0f3beaaaff8dda509cd56efc00a055e7c2",
+    "trace": "149adb1a3dc71f64b427339c15c927c86616f772b2124b90e0c4f536d0567ae4",
+    "memory": "68aabc939a6ae937a04149a60b4a4bc4de00d26ba201770c56356c1cdbd9fa70",
+    "trace_bytes": 337800456,
+    "memory_bytes": 585694480,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "3fee31d090ed79afff8d105d35031825a7c5ab8ef1b00017066e45fbe859a53b",
+      "memory.bin": "6f4a051ac1ee764e93a57b9a2fcd2d2a0bd05175767463a45b312139b760e33b",
+      "additional_data.json": "2a7a6fe910c3bacd75c73211313f18ad9c8bd774fe0fb35421b466912e933e04",
+      "execution_resources.json": "75878387d3868b704e5dbc39de52e04c01ec182e2fb983247567358252ef97e6"
+    }
+  },
+  {
+    "archive": "SN_PIE_4",
+    "engine": "prior",
+    "input_sha256": "991eff7c3323e1b6b6cb2bb2d7df1704b1e31f4854c00c60d7413603fe455603",
+    "stdout": "5907810b31c5d7d5eb34e27bb57eaf0cf1fec665e844d0e445bb87f49b88bc54",
+    "trace": "8e09238046ba19041a58de53a14ac317fc4f95d4af208e5f65992946a1258c4c",
+    "memory": "d99fe825245f9f357aa55deec7b2efa228492a904b6c2298e5d48d716721395b",
+    "trace_bytes": 337397928,
+    "memory_bytes": 593715160,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "704c23122120794490e2ed64cec679b5ee7d1e899101b35ad645ae55a0844275",
+      "memory.bin": "42e85af91aeb1d0884a152b4d9ff9dd51063a7dff6c7ae9a126f51b66282834b",
+      "additional_data.json": "87eede9a40194a9bfbbab71546d8d1ea282883c0bd71f4179a8e41dcff22e86a",
+      "execution_resources.json": "66e12093544102ee81a5c0e9a0ac2e1eca6166469310dcce28cc846fe8765aa6"
+    }
+  },
+  {
+    "archive": "SN_PIE_4",
+    "engine": "release",
+    "input_sha256": "991eff7c3323e1b6b6cb2bb2d7df1704b1e31f4854c00c60d7413603fe455603",
+    "stdout": "5907810b31c5d7d5eb34e27bb57eaf0cf1fec665e844d0e445bb87f49b88bc54",
+    "trace": "8e09238046ba19041a58de53a14ac317fc4f95d4af208e5f65992946a1258c4c",
+    "memory": "d99fe825245f9f357aa55deec7b2efa228492a904b6c2298e5d48d716721395b",
+    "trace_bytes": 337397928,
+    "memory_bytes": 593715160,
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "704c23122120794490e2ed64cec679b5ee7d1e899101b35ad645ae55a0844275",
+      "memory.bin": "42e85af91aeb1d0884a152b4d9ff9dd51063a7dff6c7ae9a126f51b66282834b",
+      "additional_data.json": "87eede9a40194a9bfbbab71546d8d1ea282883c0bd71f4179a8e41dcff22e86a",
+      "execution_resources.json": "66e12093544102ee81a5c0e9a0ac2e1eca6166469310dcce28cc846fe8765aa6"
+    }
+  }
+]

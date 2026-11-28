@@ -1,0 +1,10 @@
+canonical candidate 0 all Rust digests match
+canonical rust 0 all Rust digests match
+swap candidate 0 all Rust digests match
+swap rust 0 all Rust digests match
+same candidate 0 all Rust digests match
+same rust 0 all Rust digests match
+conflict candidate 1 b'Error: Inconsistent memory assignment at address 0:0. 2345108766317314046 != 2345108766317314047\n'
+conflict rust 1 b'Inconsistent memory assignment at address Relocatable { segment_index: 0, offset: 0 }. Int(2345108766317314046) != Int(2345108766317314047)\nError: Run'
+duplicate-missing candidate 1 b'Error: Cairo PIE diff: memory mismatch\n'
+duplicate-missing rust 1 b'Cairo PIE diff: memory mismatch\nError: Runner(CairoPieValidation(DiffMemory))\n'

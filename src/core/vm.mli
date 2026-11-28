@@ -9,6 +9,8 @@
     Segment indices are non-negative for real segments and negative for
     temporary ones ([-1] is the first). *)
 
+type 'a hint_page = 'a array array array
+
 type vm = {
   mutable segs : Segment.seg array;
   mutable nsegs : int;
@@ -21,22 +23,44 @@ type vm = {
   mutable fp : int;
   mutable steps : int;
   mutable icache : int array;  (** decoded words of segment 0, 0 = not decoded *)
+  mutable selection : selection option;
+  mutable selection_remaining : int;  (** count published by the last selection hint *)
+  runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
+  mutable page_hints : (vm -> unit) hint_page;
+  code_pages : ((int * int), int array) Hashtbl.t;
+  mutable code_seg : int;
+  mutable code_base : int;
+  mutable code_page : int array;
+  mutable watched : Bytes.t array; (** accessed words of selected contract bytecode segments *)
+  mutable allow_legacy_instructions : bool;
   trace_on : bool;
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
+  mutable last_trace : int;  (* starting word of the last trace entry *)
+  signatures : (Felt.t, Z.t * Z.t) Hashtbl.t;
   mutable builtins : Builtin.builtin list;
   mutable tsegs : Segment.seg array;  (** temporary segments *)
   mutable thi : int array;
   mutable ntsegs : int;
-  mutable rules : (int * Felt.t) list;  (** temporary index -> destination *)
+  mutable rules : Felt.t array;  (** temporary index -> destination *)
   mutable relocating : bool;
-      (** a rule exists: reads translate temporary relocatables, so the
-          interpreter leaves its fast path *)
+      (** reads translate temporary relocatables when a rule exists *)
   mutable had_temp : bool;
+}
+
+and selection = {
+  action : vm -> unit;
+  publish : int -> unit;
 }
 
 val create : trace:bool -> vm
 (** An empty machine; [trace] preallocates the trace buffer. *)
+
+val watch_segment : vm -> int -> int -> unit
+(** Track accesses to the first words of a newly allocated contract bytecode segment. *)
+
+val mark_watched : vm -> int -> int -> unit
+val watched_range : vm -> Felt.t -> int -> bool
 
 val add_segment : vm -> int
 (** Append a real segment and return its index. *)
@@ -76,13 +100,13 @@ val value_to_string : Felt.t -> string
 
 (** {2 Temporary segments and relocation rules} *)
 
-val add_relocation_rule : vm -> Felt.t -> Felt.t -> unit
-(** cairo-vm Memory.add_relocation_rule (without extensive_hints). *)
+val add_relocation_rule : ?allow_felt:bool -> vm -> Felt.t -> Felt.t -> unit
+(** Enable integer destinations for sequencer extensive hints with [allow_felt]. *)
 
 val relocate_temp_value : vm -> Felt.t -> Felt.t
 (** One application of the current rules to a value. *)
 
-val relocate_temp_memory : vm -> unit
+val relocate_temp_memory : ?on_resolved:((Felt.t -> Felt.t) -> unit) -> vm -> unit
 (** cairo-vm Memory.relocate_memory: rewrite temporary relocatables and move
     relocated temporary segments into real memory. *)
 

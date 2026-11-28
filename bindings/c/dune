@@ -1,0 +1,7 @@
+(executable
+ (name oxcairo)
+ (modes (native shared_object))
+ (libraries cairovm)
+ (foreign_stubs
+  (language c)
+  (names replay)))

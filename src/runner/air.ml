@@ -146,20 +146,6 @@ let int_cell vm seg off =
   let v = read vm seg off in
   if v <> Felt.empty && Felt.is_felt v then Some v else None
 
-let instances vm b fields =
-  let cpi = cells_per_instance b.kind in
-  let n = used_size vm b.base in
-  let out = ref [] in
-  let idx = ref 0 and off = ref 0 in
-  while !off < n do
-    let vals = List.mapi (fun i _ -> int_cell vm b.base (!off + i)) fields in
-    if List.for_all Option.is_some vals then
-      out := Obj (("index", Int !idx) :: List.map2 (fun name v -> (name, hex_felt (Option.get v))) fields vals) :: !out;
-    incr idx;
-    off := !off + cpi
-  done;
-  List.rev !out
-
 (* ModBuiltinRunner::air_private_input: missing values default to 0 *)
 let mod_private_input (r : Runner.t) b =
   let vm = r.vm in
@@ -204,27 +190,11 @@ let mod_private_input (r : Runner.t) b =
   let zero = if r.zero_seg >= 0 && r.zero_seg < Array.length table then table.(r.zero_seg) else 0 in
   Obj [ ("instances", Arr instances); ("zero_value_address", Int zero) ]
 
-let builtin_private_input (r : Runner.t) b =
+let ecdsa_private_input (r : Runner.t) b =
   let vm = r.vm in
-  match b.kind with
-  | Range_check | Range_check96 ->
-      List.filter_map
-        (fun o -> Option.map (fun v -> Obj [ ("index", Int o); ("value", hex_felt v) ]) (int_cell vm b.base o))
-        (List.init (used_size vm b.base) Fun.id)
-  | Pedersen | Bitwise -> instances vm b [ "x"; "y" ]
-  | Ec_op ->
-      (* memory order p_x, p_y, q_x, q_y, m; serialized as p_x, p_y, m, q_x, q_y *)
-      List.map
-        (function
-          | Obj [ i; px; py; qx; qy; m ] -> Obj [ i; px; py; ("m", snd m); ("q_x", snd qx); ("q_y", snd qy) ]
-          | j -> j)
-        (instances vm b [ "p_x"; "p_y"; "q_x"; "q_y"; "m" ])
-  | Poseidon -> instances vm b [ "input_s0"; "input_s1"; "input_s2" ]
-  | Keccak -> instances vm b (List.init 8 (Printf.sprintf "input_s%d"))
-  | Ecdsa ->
       (* signatures recorded by the verify_ecdsa_signature hints, ordered by
          instance index *)
-      let sigs = Hashtbl.fold (fun off rs acc -> (off, rs) :: acc) Builtins_ext.signatures [] in
+      let sigs = Builtins_ext.segment_signatures vm b.base in
       let sigs = List.stable_sort (fun (a, _) (b, _) -> compare (a / 2) (b / 2)) (List.sort compare sigs) in
       List.filter_map
         (fun (off, (r_, s_)) ->
@@ -238,25 +208,61 @@ let builtin_private_input (r : Runner.t) b =
                      ("signature_input", Obj [ ("r", Str (hex_z (Z.erem r_ Felt.p))); ("w", Str (hex_z w)) ]) ])
           | _ -> None)
         sigs
-  | Add_mod | Mul_mod -> [ mod_private_input r b ]
-  | Output -> []
 
-let private_input (r : Runner.t) ~trace_path ~memory_path =
+external hex_into : Felt.pool -> (int[@untagged]) -> bytes -> (int[@untagged])
+  = "cvm_hex_felt_byte" "cvm_hex_felt" [@@noalloc]
+
+(* The common builtin arrays can contain millions of instances. Write each
+   row to a bounded buffer while preserving serde_json's field order. *)
+let write_instances oc buf vm b fields =
+  let width = cells_per_instance b.kind and n = used_size vm b.base in
+  let digits = Bytes.create 66 and first = ref true in
+  let fields = Array.map (fun (name, index) -> ",\n      \"" ^ name ^ "\": \"", index) fields in
+  Buffer.add_char buf '[';
+  for instance = 0 to Resources.div_ceil n width - 1 do
+    let base = instance * width in
+    if Array.for_all (fun (_, i) -> Felt.is_felt (read vm b.base (base + i))) fields then begin
+      Buffer.add_string buf (if !first then "\n" else ",\n");
+      first := false;
+      Buffer.add_string buf "    {\n      \"index\": ";
+      Buffer.add_string buf (string_of_int instance);
+      Array.iter (fun (prefix, i) ->
+          Buffer.add_string buf prefix;
+          let v = read vm b.base (base + i) in
+          let len = hex_into Felt.pool (v :> int) digits in
+          Buffer.add_subbytes buf digits 0 len;
+          Buffer.add_char buf '"') fields;
+      Buffer.add_string buf "\n    }";
+      if Buffer.length buf >= 65536 then (Buffer.output_buffer oc buf; Buffer.clear buf)
+    end
+  done;
+  if not !first then Buffer.add_string buf "\n  ";
+  Buffer.add_char buf ']'
+
+let write_private_input (r : Runner.t) ~trace_path ~memory_path path =
   if not r.proof then fail "AIR private input requires proof mode";
   let canon p = try Unix.realpath p with Unix.Unix_error _ -> p in
   let order = [ Pedersen; Range_check; Range_check96; Ecdsa; Bitwise; Ec_op; Keccak; Poseidon; Add_mod; Mul_mod ] in
-  let fields =
-    List.filter_map
-      (fun k ->
-        match List.find_opt (fun b -> b.kind = k) r.vm.builtins with
-        | Some b -> (
-            match (k, builtin_private_input r b) with
-            | (Add_mod | Mul_mod), l -> Option.map (fun x -> (bname k, x)) (List.nth_opt l 0)
-            | _, l -> Some (bname k, Arr l))
-        | None -> None)
-      order
-  in
-  Obj ((("trace_path", Str (canon trace_path)) :: ("memory_path", Str (canon memory_path)) :: fields))
-
-let write_private_input r ~trace_path ~memory_path path =
-  write_file path (to_string (private_input r ~trace_path ~memory_path))
+  Out_channel.with_open_bin path (fun oc ->
+      let buf = Buffer.create 65536 in
+      Buffer.add_string buf "{\n  \"trace_path\": ";
+      escape buf (canon trace_path);
+      Buffer.add_string buf ",\n  \"memory_path\": ";
+      escape buf (canon memory_path);
+      List.iter (fun k ->
+          match List.find_opt (fun b -> b.kind = k) r.vm.builtins with
+          | None -> ()
+          | Some b ->
+              Buffer.add_string buf (",\n  \"" ^ bname k ^ "\": ");
+              let rows = write_instances oc buf r.vm b in
+              match k with
+              | Pedersen | Bitwise -> rows [|"x", 0; "y", 1|]
+              | Range_check | Range_check96 -> rows [|"value", 0|]
+              | Ec_op -> rows [|"p_x", 0; "p_y", 1; "m", 4; "q_x", 2; "q_y", 3|]
+              | Poseidon -> rows [|"input_s0", 0; "input_s1", 1; "input_s2", 2|]
+              | Keccak -> rows (Array.init 8 (fun i -> Printf.sprintf "input_s%d" i, i))
+              | Ecdsa -> pp buf 2 (Arr (ecdsa_private_input r b))
+              | Add_mod | Mul_mod -> pp buf 2 (mod_private_input r b)
+              | Output -> assert false) order;
+      Buffer.add_string buf "\n}";
+      Buffer.output_buffer oc buf)

@@ -208,7 +208,7 @@ let register reg =
       let pos = Felt_tbl.create 64 in
       let keys = ref [] in
       for i = 0 to n - 1 do
-        let v = canon (mem_at vm inp i) in
+        let v = mem_at vm inp i in
         match Felt_tbl.find_opt pos v with
         | Some l -> Felt_tbl.replace pos v (i :: l)
         | None ->
@@ -224,7 +224,7 @@ let register reg =
   reg C.usort_verify (fun c vm ->
       set c.scopes "last_pos" (Int Z.zero);
       let pos = match var c.scopes "positions_dict" with Positions p -> p | _ -> fail "positions_dict missing" in
-      let l = match Felt_tbl.find_opt pos (canon (get_val vm c "value")) with Some l -> l | None -> [] in
+      let l = match Felt_tbl.find_opt pos (get_val vm c "value") with Some l -> l | None -> [] in
       (* h57 stores positions in increasing order. Consume that immutable list
          from the head, preserving positions_dict for subsequent lookups. *)
       set c.scopes "positions" (Ints l));

@@ -1,0 +1,44 @@
+{
+  "machine": "Apple M4 Max, 36 GiB",
+  "os": "15.3.1",
+  "runtime_commit": "e559436",
+  "starting_main": "9a03bb99a0599d2fd369b4bf87633d190cb1f018",
+  "previous_pie": "95d09f23e510231887fa150505049f8394a33986",
+  "sequencer": "ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45",
+  "native_reference_cairo_vm": "3.2.0",
+  "replay_and_generic_reference_cairo_vm": "4.0.0",
+  "build": "OxCaml 5.2, release LLVM profile, libdeflate and OpenSSL enabled",
+  "programs": {
+    "starknet_os_bytes": {
+      "sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+      "bytes": 52471230
+    },
+    "virtual_os_bytes": {
+      "sha256": "29e33ce637c308a8170a0608342a562b9e1a3164000be8c41ebea07017e4f8c0",
+      "bytes": 37030715
+    },
+    "starknet_aggregator_bytes": {
+      "sha256": "a5f573e1d90b7d536ed1535bb3fb7ebfe23b49bdb4ac511bb80169793edda498",
+      "bytes": 8136700
+    }
+  },
+  "binaries": {
+    "ocaml_cli": "0d34de7744041e0f73bf16ea64ecbed32a7c8e8d8221c40416f05afc78024f01",
+    "ocaml_worker": "f957bdafa65b2460ee6c081961544d128c23fb238b78491e45f1b61370fb2f66",
+    "ocaml_c_library": "f6354b77380c47fa521779da0ca955143c9d914b4116feacac25b69f817fde2b",
+    "rust4_cli": "c24da6261ff8ced0febb7b23c9f2cb3d1c2cddb7fc6943e296b8b21e24b1a191",
+    "rust_stock_os": "fe90a1218e152949d561bccf31bd52be8c69d46455e26197c56f4b1ac5564c53",
+    "rust_checked_output": "5c5cf91833a5dd932d5ed368b076244cd1fe7b199c80904e0a791b4066bfd289",
+    "rust_virtual": "6e2c66a803161d402253f3c831f149e06e578a45b7f5c152dd26db3bb11c7680",
+    "rust_aggregator": "17458ecc366283a220c3127da48ea0d1f1a34bce5407a9ba5720e07b5629ba65",
+    "rust_traced": "2a2162b149574ae49044fbf2202ea1d120f3f3e71f1bb5d9625978acaecec020",
+    "rust_stock_worker": "ced16cef4487d619f783dca7442374c5698825bab2bb4bb30e50047d6ff7b67c",
+    "rust_bootloader": "9e3afecf40ab701f441d287b07d23067f7dfe391ff579fcdf78f352076b81bbe",
+    "rust_related_workers": "842bf82cdf5a3a5a6c885afb4b2ff8f793213939231aa5a802db4918c949c0e9",
+    "rust_os_worker": "681ae0de2c2aec24f88a32ad567d119fd7fb46734e739631561f8934c5adeb34",
+    "starting_main": "25b200e999a28551a8c51a1e56c89640ec629ccb10a4b174817e818c5e21c4eb",
+    "previous_pie": "ff8f620a8aaf02249dc7b411c547d782fe2972c145bc56a34d4f52f91df920f7"
+  },
+  "regularity": "Sequential engines in each pair; unrelated jobs and qualification lanes also ran on the host.",
+  "rust_stock_worker": "Stock run_os_stateless with a fresh witness per request."
+}

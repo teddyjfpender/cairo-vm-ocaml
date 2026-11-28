@@ -1,0 +1,77 @@
+name: build and parity
+on: pull_request
+permissions:
+  contents: read
+env:
+  OXCAML_SWITCH: 5.2.0+ox
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/oxcaml
+      - name: Build and test
+        run: |
+          eval "$(opam env --switch "$OXCAML_SWITCH")"
+          dune build --profile release
+          dune runtest --profile release
+      - name: Reproduce sequencer OS archive digests
+        run: |
+          gzip -dc test/fixtures/programs/starknet-os-training.json.gz > "$RUNNER_TEMP/starknet-os.json"
+          python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/starknet-os.json" \
+            --only genesis --only account --only deprecated-calls --only storage-2048
+
+      - name: Reproduce virtual OS and aggregator outputs
+        run: |
+          gzip -dc test/fixtures/programs/virtual-os.json.gz > "$RUNNER_TEMP/virtual-os.json"
+          gzip -dc test/fixtures/programs/aggregator.json.gz > "$RUNNER_TEMP/aggregator.json"
+          python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/virtual-os.json" --virtual-os
+          python3 test/fixtures/aggregator/check.py _build/default/bin/main.exe "$RUNNER_TEMP/aggregator.json" --only storage4
+
+      - uses: actions/checkout@v4
+        if: runner.os == 'Linux'
+        with:
+          repository: starkware-libs/cairo-vm
+          ref: 3c3f112d8a40ec465bde6b59e2c659df39b7dbc6 # v4.0.0
+          path: upstream
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        with:
+          python-version: '3.10'
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Linux'
+        with:
+          workspaces: upstream
+      - name: Build reference and compile corpus
+        if: runner.os == 'Linux'
+        working-directory: upstream
+        run: |
+          cargo build --locked --release -p cairo-vm-cli
+          pip install -r requirements.txt
+          make create-proof-programs-symlinks
+          for source in cairo_programs/*.cairo cairo_programs/proof_programs/*.cairo cairo_programs/stwo_exclusive_programs/*.cairo; do
+            make "${source%.cairo}.json"
+          done
+      - name: Compare execution, proof artifacts and PIEs
+        if: runner.os == 'Linux'
+        run: |
+          rust=upstream/target/release/cairo-vm-cli
+          vm=_build/default/bin/main.exe
+          programs=upstream/cairo_programs
+          python test/cli_exit_codes.py "$rust" "$vm" "$programs"
+          python test/parity.py "$rust" "$vm" test/parity_fixtures/core \
+            --expect-rejections test/parity_fixtures/core-rejections.json --verbose
+          python test/parity.py "$rust" "$vm" test/parity_fixtures/malformed \
+            --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose
+          for mode in '' --pie; do
+            python test/parity.py "$rust" "$vm" "$programs" -j 1 $mode
+          done
+          python test/parity.py "$rust" "$vm" "$programs" --from_pie -j 1 \
+            --expect-rejections test/parity_fixtures/rust-v4-replay-rejections.json
+          python test/parity.py "$rust" "$vm" "$programs/proof_programs" --proof -j 1
+          python test/parity.py "$rust" "$vm" "$programs/stwo_exclusive_programs" --layout stwo_no_ecop -j 1

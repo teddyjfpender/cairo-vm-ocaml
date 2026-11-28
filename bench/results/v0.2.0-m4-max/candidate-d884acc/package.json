@@ -1,0 +1,35 @@
+{
+  "runtime": "d884acca5e5386899490bd7ba320e034201c5906",
+  "target": "macos-arm64, Apple M4 Max local PGO build",
+  "runtime_dependencies": [
+    "macOS system zlib",
+    "Homebrew libgmp.10.dylib"
+  ],
+  "contents": [
+    "cairo-vm-cli",
+    "oxcairo-os-worker",
+    "lib/oxcairo.so",
+    "include/oxcairo.h",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "licenses/libdeflate.txt",
+    "licenses/openssl.txt"
+  ],
+  "tests": [
+    "Packaged native CLI and two full worker request outputs matched stock Rust",
+    "Three valid and three invalid requests through the packaged C library",
+    "C library trace, relocated memory and all five round-tripped PIE members matched the oracle",
+    "Ten extracted Stwo proof files verified independently"
+  ],
+  "archives": {
+    "oxcairo-v0.2.0-macos-arm64.tar.gz": {
+      "bytes": 13620229,
+      "sha256": "23a585020f96f213506ba1f754b4a4be60ce51de30709857653c226ec2b3169d"
+    },
+    "oxcairo-v0.2.0-stwo-proofs.tar.gz": {
+      "bytes": 18082318,
+      "sha256": "5251add0ba58e7cc9df92e138f386772e09c46887cc98fbbed2e964466a88a4c"
+    }
+  }
+}

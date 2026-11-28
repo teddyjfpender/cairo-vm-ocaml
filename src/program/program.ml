@@ -1,51 +1,7 @@
 module J = Yojson.Safe
 module U = Yojson.Safe.Util
 
-type expr =
-  | Reg_ap
-  | Reg_fp
-  | Int of Z.t
-  | Deref of expr
-  | Add of expr * expr
-  | Sub of expr * expr
-  | Mul of expr * expr
-  | Neg of expr
-  | Tuple of expr list
-  | Cast of expr * string
-
-type reference = {
-  r_expr : expr; (* the full reference value, e.g. [cast(fp + (-3), felt-pointer)] *)
-  r_group : int;
-  r_offset : int;
-}
-
-type hint = {
-  code : string;
-  scopes : string list;
-  h_group : int;
-  h_offset : int;
-  ref_ids : (string * int) list; (* full name -> reference index *)
-}
-
-type ident = {
-  i_type : string;
-  i_value : Z.t option;
-  i_pc : int option;
-  i_destination : string option;
-  i_members : (string * int) list; (* struct member offsets *)
-  i_member_types : (string * string) list;
-}
-
-type t = {
-  data : Z.t array;
-  builtins : string list;
-  main : int option;
-  start : int option;
-  end_ : int option;
-  hints : (int * hint list) list;
-  references : reference array;
-  identifiers : (string, ident) Hashtbl.t;
-}
+include Program_types
 
 (* ---- expression parser ---- *)
 
@@ -181,40 +137,94 @@ let z_of_json = function
   | `String s -> Z.of_string s
   | _ -> raise (Parse_error "expected number")
 
-let load_json (j : J.t) : t =
+let add_identifier identifiers name v =
+  let ty = match U.member "type" v with `String s -> s | _ -> "" in
+  let value = match U.member "value" v with `Null -> None | x -> (try Some (z_of_json x) with _ -> None) in
+  let pc = to_int_opt (U.member "pc" v) in
+  let dest = match U.member "destination" v with `String s -> Some s | _ -> None in
+  let members =
+    match U.member "members" v with
+    | `Assoc ms ->
+        List.filter_map (fun (m, mv) -> Option.map (fun o -> (m, o)) (to_int_opt (U.member "offset" mv))) ms
+    | _ -> []
+  in
+  let member_types =
+    match U.member "members" v with
+    | `Assoc ms ->
+        List.filter_map (fun (m, mv) -> match U.member "cairo_type" mv with `String t -> Some (m, t) | _ -> None) ms
+    | _ -> []
+  in
+  Hashtbl.replace identifiers name
+    { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types }
+
+(* Kind numbers and row fields match json_identifiers.h. Sharing these empty
+   immutable records leaves identifier insertion and duplicate replacement
+   in exactly the order used by the general reader. *)
+let identifier_kinds =
+  Array.map (fun i_type ->
+      {i_type; i_value=None; i_pc=None; i_destination=None; i_members=[]; i_member_types=[]})
+    [|""; "reference"; "type_definition"; "namespace"; "function"; "alias"; "const"; "label"|]
+
+let add_identifier_batch table source rows used =
+  for i = 0 to used / 8 - 1 do
+    let p = i * 8 in
+    let name = String.sub source rows.(p) rows.(p + 1) in
+    let common = identifier_kinds.(rows.(p + 2)) in
+    let pc = rows.(p + 3) and dest = rows.(p + 4) and number = rows.(p + 6) in
+    let identifier =
+      if pc < 0 && dest < 0 && number < 0 then common
+      else
+        {common with
+         i_pc = (if pc < 0 then None else Some pc);
+         i_destination = (if dest < 0 then None else Some (String.sub source dest rows.(p + 5)));
+         i_value = (if number < 0 then None else Some (Z.of_string (String.sub source number rows.(p + 7))))} in
+    Hashtbl.replace table name identifier
+  done
+
+let add_struct table source rows used =
+  let members = ref [] and types = ref [] in
+  for i = (used - 2) / 5 - 1 downto 0 do
+    let p = 2 + 5 * i in
+    let name = String.sub source rows.(p) rows.(p + 1) in
+    let typ = String.sub source rows.(p + 2) rows.(p + 3) in
+    members := (name, rows.(p + 4)) :: !members;
+    types := (name, typ) :: !types
+  done;
+  let name = String.sub source rows.(0) rows.(1) in
+  Hashtbl.replace table name
+    {i_type = "struct"; i_pc = None; i_value = None; i_destination = None;
+     i_members = !members; i_member_types = !types}
+
+let load_with_identifiers ?word_offsets ?reference_offsets identifiers (j : J.t) : t =
   let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
-  let data =
-    U.member "data" j |> U.to_list
-    |> List.map (fun x -> z_of_string (U.to_string x))
-    |> Array.of_list
+  let data = match word_offsets with
+    | Some (src, rows) ->
+        let words = Array.make (Array.length rows / 2) Z.zero in
+        for i = 0 to Array.length words - 1 do
+          let pos = rows.(2 * i) and len = rows.(2 * i + 1) in
+          words.(i) <- if pos < 0 then words.(-pos - 1) else
+            try Z.of_substring src ~pos ~len
+            with Invalid_argument _ -> raise (Parse_error ("Invalid number " ^ String.sub src pos len))
+        done;
+        words
+    | None ->
+        let words = U.member "data" j |> U.to_list in
+        let parse x = z_of_string (U.to_string x) in
+        if List.compare_length_with words 128 < 0 then Array.of_list (List.map parse words)
+        else
+          let parsed = Hashtbl.create 512 in
+          let word x =
+            let text = U.to_string x in
+            match Hashtbl.find_opt parsed text with
+            | Some z -> z
+            | None ->
+                let z = z_of_string text in
+                if Hashtbl.length parsed < 8192 then Hashtbl.add parsed text z;
+                z in
+          Array.of_list (List.map word words)
   in
   let builtins = U.member "builtins" j |> U.to_list |> List.map U.to_string in
-  let identifiers = Hashtbl.create 1024 in
-  (match U.member "identifiers" j with
-  | `Assoc l ->
-      List.iter
-        (fun (name, v) ->
-          let ty = match U.member "type" v with `String s -> s | _ -> "" in
-          let value = match U.member "value" v with `Null -> None | x -> (try Some (z_of_json x) with _ -> None) in
-          let pc = to_int_opt (U.member "pc" v) in
-          let dest = match U.member "destination" v with `String s -> Some s | _ -> None in
-          let members =
-            match U.member "members" v with
-            | `Assoc ms ->
-                List.filter_map (fun (m, mv) -> Option.map (fun o -> (m, o)) (to_int_opt (U.member "offset" mv))) ms
-            | _ -> []
-          in
-          let member_types =
-            match U.member "members" v with
-            | `Assoc ms ->
-                List.filter_map (fun (m, mv) -> match U.member "cairo_type" mv with `String t -> Some (m, t) | _ -> None) ms
-            | _ -> []
-          in
-          Hashtbl.replace identifiers name
-            { i_type = ty; i_value = value; i_pc = pc; i_destination = dest; i_members = members; i_member_types = member_types })
-        l
-  | _ -> ());
   let rec resolve name depth =
     if depth > 32 then None
     else
@@ -225,12 +235,27 @@ let load_json (j : J.t) : t =
   let label n = match resolve n 0 with Some { i_pc = Some pc; _ } -> Some pc | _ -> None in
   let main_scope = match U.member "main_scope" j with `String s -> s | _ -> "__main__" in
   let refs =
-    match U.member "reference_manager" j with
-    | `Assoc _ as rm ->
+    let expressions = Hashtbl.create (if Array.length data >= 4096 then 512 else 64) in
+    let parse value =
+      match Hashtbl.find_opt expressions value with
+      | Some e -> e
+      | None ->
+          let e = try parse_expr value with Parse_error _ -> Int Z.minus_one in
+          Hashtbl.add expressions value e; e in
+    match reference_offsets, U.member "reference_manager" j with
+    | Some (source, spans), _ ->
+        Array.init (Array.length spans / 4) (fun i ->
+            let p = i * 4 in
+            let start = spans.(p + 2) and length = spans.(p + 3) in
+            let expr =
+              if length >= 0 then String.sub source start length
+              else U.to_string (J.from_string (String.sub source (start - 1) (2 - length))) in
+            {r_group = spans.(p); r_offset = spans.(p + 1); r_expr = parse expr})
+    | None, (`Assoc _ as rm) ->
         U.member "references" rm |> U.to_list
         |> List.map (fun r ->
                let apt = U.member "ap_tracking_data" r in
-               let e = try parse_expr (U.to_string (U.member "value" r)) with Parse_error _ -> Int Z.minus_one in
+               let e = parse (U.to_string (U.member "value" r)) in
                {
                  r_expr = e;
                  r_group = U.to_int (U.member "group" apt);
@@ -244,7 +269,9 @@ let load_json (j : J.t) : t =
     | `Assoc l ->
         List.map
           (fun (pc, hs) ->
-            ( int_of_string pc,
+            let pc = int_of_string pc in
+            if pc < 0 then raise (Parse_error "Negative hint offset");
+            ( pc,
               U.to_list hs
               |> List.map (fun h ->
                      let ftd = U.member "flow_tracking_data" h in
@@ -256,7 +283,10 @@ let load_json (j : J.t) : t =
                        h_offset = U.to_int (U.member "offset" apt);
                        ref_ids =
                          (match U.member "reference_ids" ftd with
-                         | `Assoc l -> List.map (fun (k, v) -> (k, U.to_int v)) l
+                         | `Assoc l -> List.map (fun (k, v) ->
+                             let id = U.to_int v in
+                             if id < 0 then raise (Parse_error "Negative hint reference index");
+                             k, id) l
                          | _ -> []);
                      }) ))
           l
@@ -273,128 +303,55 @@ let load_json (j : J.t) : t =
     identifiers;
   }
 
-(* Word-at-a-time scanning (little-endian): [zero_bytes x] flags the zero
-   bytes of [x]; its lowest set bit is exact (the borrow only taints higher
-   bytes), and multiplying that bit (as 1 lsl 8k) by bytes 7..0 yields k. *)
-let bcast c = Int64.mul 0x0101010101010101L (Int64.of_int (Char.code c))
-let quote = bcast '"' and lbrace = bcast '{' and rbrace = bcast '}' and space = bcast ' '
-let[@inline] zero_bytes x = Int64.(logand (logand (sub x 0x0101010101010101L) (lognot x)) 0x8080808080808080L)
+let load_json j =
+  Program_metadata.validate_program j;
+  let identifiers = Hashtbl.create 1024 in
+  (match U.member "identifiers" j with
+   | `Assoc entries -> List.iter (fun (name, v) -> add_identifier identifiers name v) entries
+   | _ -> ());
+  load_with_identifiers identifiers j
 
-(* the first index >= i holding '"' (or, unless [in_string], a bracket: '['
-   ']' are '{' '}' with bit 5 cleared), or else some index in the last 7 bytes *)
-let[@inline] next_special src i ~in_string =
-  let i = ref i and found = ref false in
-  while (not !found) && !i + 8 <= String.length src do
-    let w = String.get_int64_le src !i in
-    let m = zero_bytes (Int64.logxor w quote) in
-    let m =
-      if in_string then m
-      else
-        let w = Int64.logor w space in
-        Int64.(logor m (logor (zero_bytes (logxor w lbrace)) (zero_bytes (logxor w rbrace))))
-    in
-    if m = 0L then i := !i + 8
-    else (
-      i := !i + Int64.(to_int (shift_right_logical (mul (shift_right_logical (logand m (neg m)) 7) 0x0001020304050607L) 56));
-      found := true)
-  done;
-  !i
+external read_program : Unix.file_descr -> int -> string option = "cvm_pread_program"
 
-let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
+let load_projection source word_offsets reference_offsets ids root =
+  let spans offsets = Option.map (fun rows -> source, rows) offsets in
+  load_with_identifiers ?word_offsets:(spans word_offsets)
+    ?reference_offsets:(spans reference_offsets) ids root
 
-(* A JSON reader building the [Yojson.Safe.t] that [J.from_string] would:
-   structure, plain strings and plain integers are read here; escaped strings,
-   literals and other numbers go through Yojson itself.  Yojson's comment,
-   tuple and variant extensions are not accepted.  debug_info is typically
-   >95% of a compiled program and is never needed to execute it: a top-level
-   debug_info object or array is skipped by the word scanner (string/escape
-   aware) and read as [`Null]. *)
-let read_json src : J.t =
-  let n = String.length src and pos = ref 0 in
-  let peek () =
-    while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
-      (* indentation comes in runs of spaces *)
-      pos := !pos + if !pos + 8 <= n && String.get_int64_le src !pos = space then 8 else 1
-    done;
-    if !pos < n then src.[!pos] else json_error "Unexpected end of input"
-  in
-  let expect c = if peek () <> c then json_error "Expected '%c' at byte %d" c !pos else incr pos in
-  (* index of the closing quote of the string starting at i *)
-  let string_end i =
-    let q = ref (i - 1) and fin = ref false in
-    while not !fin do
-      q := next_special src (!q + 1) ~in_string:true;
-      while !q < n && src.[!q] <> '"' do incr q done;
-      if !q >= n then json_error "Unterminated string";
-      (* count preceding backslashes: odd means the quote is escaped *)
-      let k = ref (!q - 1) in
-      while src.[!k] = '\\' do decr k done;
-      fin := (!q - 1 - !k) land 1 = 0
-    done;
-    !q
-  in
-  let string () =
-    expect '"';
-    let st = !pos in
-    let q = string_end st in
-    pos := q + 1;
-    let raw = String.sub src st (q - st) in
-    if String.contains raw '\\' then U.to_string (J.from_string ("\"" ^ raw ^ "\"")) else raw
-  in
-  (* the end of the object or array starting at i *)
-  let skip_container i =
-    let depth = ref 0 and j = ref i and fin = ref false in
-    while not !fin do
-      j := next_special src !j ~in_string:false;
-      if !j >= n then json_error "Unexpected end of input";
-      (match src.[!j] with
-      | '"' -> j := string_end (!j + 1)
-      | '{' | '[' -> incr depth
-      | '}' | ']' -> decr depth; fin := !depth = 0
-      | _ -> ());
-      incr j
-    done;
-    !j
-  in
-  let items close item =
-    incr pos;
-    if peek () = close then (incr pos; [])
-    else
-      let rec go acc =
-        let acc = item () :: acc in
-        match peek () with
-        | ',' -> incr pos; go acc
-        | c when c = close -> incr pos; List.rev acc
-        | _ -> json_error "Expected ',' or '%c' at byte %d" close !pos
-      in
-      go []
-  in
-  let rec value ~top =
-    match peek () with
-    | '{' ->
-        `Assoc
-          (items '}' (fun () ->
-               let k = string () in
-               expect ':';
-               if top && k = "debug_info" && (peek () = '{' || peek () = '[') then (pos := skip_container !pos; (k, `Null))
-               else (k, value ~top:false)))
-    | '[' -> `List (items ']' (fun () -> value ~top:false))
-    | '"' -> `String (string ())
-    | _ ->
-        let st = !pos in
-        while !pos < n && (match src.[!pos] with 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' | '+' | '.' -> true | _ -> false) do
-          incr pos
-        done;
-        let tok = String.sub src st (!pos - st) in
-        if tok <> "" && String.for_all (function '0' .. '9' -> true | _ -> false) tok && (tok.[0] <> '0' || tok = "0")
-        then match int_of_string_opt tok with Some i -> `Int i | None -> `Intlit tok
-        else J.from_string tok
-  in
-  let v = value ~top:true in
-  match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v
+let load_bytes contents =
+  if String.starts_with ~prefix:Packed_program.magic contents then
+    (try Packed_program.decode contents
+     with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
+  else
+    let word_offsets = ref None and reference_offsets = ref None in
+    let consume ids root = load_projection contents !word_offsets !reference_offsets ids root in
+    Json_reader.with_program_document ~word_offsets ~add_struct ~add_batch:add_identifier_batch
+      ~reference_offsets ~add_identifier ~consume contents
+
+external read_sections : Unix.file_descr -> int array -> string option = "cvm_pread_program_sections"
+external find_file_span : Unix.file_descr -> int -> int array -> bool = "cvm_file_span" [@@noalloc]
 
 let load_file path =
-  let ic = open_in_bin path in
-  let src = really_input_string ic (in_channel_length ic) in
-  close_in ic;
-  load_json (read_json src)
+  In_channel.with_open_bin path (fun ic ->
+      let fd = Unix.descr_of_in_channel ic in
+      let stat = Unix.fstat fd in
+      let size = stat.st_size and cpus = Domain.recommended_domain_count () in
+      let streaming_read () = load_bytes (In_channel.input_all ic) in
+      if stat.st_kind <> Unix.S_REG || size < 4_000_000 || size > Sys.max_string_length || cpus < 2
+      then streaming_read ()
+      else
+        let full () = match read_program fd size with
+          | Some source -> load_bytes source
+          | None -> streaming_read () in
+        let bounds = Array.make 7 0 in
+        if size < 32 lsl 20 || cpus < 4 || not (find_file_span fd size bounds) then full ()
+        else
+          let read () = read_sections fd [|size; 0; bounds.(0); bounds.(1); size - bounds.(1)|] in
+          match Json_reader.with_program_slices ~add_identifier ~add_batch:add_identifier_batch
+                  ~add_struct ~consume:load_projection ~bounds ~fd read with
+          | Some program -> program
+          | None -> full ())
+
+let pack program =
+  try Packed_program.encode program
+  with Packed_program.Invalid reason -> raise (Parse_error ("Cannot pack program: " ^ reason))

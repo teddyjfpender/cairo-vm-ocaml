@@ -95,6 +95,9 @@ let pool = pool_make (1 lsl 28)
 let capacity = Bigarray.Array1.dim pool lsr 5 (* slots actually reserved *)
 let pool_n = ref scratch
 
+(* A standalone run returning only serialized results can reuse its slots.
+   The caller owns the single VM thread and joins all artifact readers before
+   leaving this scope. Values from surrounding live VMs lie below [first]. *)
 (* Fail unless slots [pool_n .. pool_n + k) exist. *)
 let[@inline] reserve k = if !pool_n + k > capacity then raise Out_of_memory
 
@@ -117,15 +120,6 @@ let one = small 1
 
 let[@inline] fits_small v = v > - small_bound && v < small_bound
 
-let of_int v =
-  if fits_small v then small v
-  else begin
-    reserve 1;
-    let c = c_binop pool 0 (small (v asr 1)) (small (v - (v asr 1))) !pool_n in
-    commit c;
-    c
-  end
-
 (* Field equality for felt codes; relocatables compare structurally. *)
 let[@inline] equal a b =
   a = b || (a land 3 = 3 && b land 3 = 3 && c_big_eq pool a b = 1)
@@ -137,6 +131,26 @@ external c_big_hash : pool -> (int[@untagged]) -> (int[@untagged])
    valid hash. Big felts hash their limbs. *)
 let[@inline] mix x = let h = x * 0x9E3779B97F4A7C1 in h lxor (h lsr 29)
 let hash v = if is_big v then c_big_hash pool v else mix v
+
+module Keys = Hashtbl.Make (struct
+  type t = int
+  let equal = equal
+  let hash = hash
+end)
+
+let interned = ref (Keys.create 64)
+
+let intern v =
+  if not (is_big v) then v else
+    match Keys.find_opt !interned v with
+    | Some existing -> existing
+    | None -> Keys.add !interned v v; v
+
+let with_temporary_slots f =
+  let first = !pool_n and previous = !interned in
+  interned := Keys.create 16;
+  Fun.protect ~finally:(fun () -> interned := previous; pool_n := first) f
+
 
 (* ---- field arithmetic on felt codes (caller guarantees felts) ---- *)
 
@@ -214,6 +228,14 @@ let to_z c =
     Z.of_bits (Bytes.unsafe_to_string b)
   end
 
+external c_parse_hex : pool -> string -> (int[@untagged]) -> (int[@untagged])
+  = "cvm_parse_hex_byte" "cvm_parse_hex" [@@noalloc]
+
+let of_hex_opt s =
+  reserve 1;
+  let result = c_parse_hex pool s !pool_n in
+  if result = 0 then None else begin commit result; Some result end
+
 let of_z z =
   if Z.fits_int z && fits_small (Z.to_int z) then small (Z.to_int z)
   else begin
@@ -225,6 +247,9 @@ let of_z z =
   end
 
 (* Signed representative in (-p/2, p/2], as cairo-vm's signed_felt. *)
+let of_int v =
+  if fits_small v then small v else of_z (Z.of_int v)
+
 let to_signed_z c =
   let z = to_z c in
   if Z.gt z half_p then Z.sub z p else z

@@ -2,6 +2,8 @@
 
 ## Install
 
+PIE archives use zlib. On Linux install the zlib development headers (`zlib1g-dev` on Debian and Ubuntu). On macOS the SDK provides them.
+
 The VM builds with OxCaml, an OCaml compiler with extra optimisations, installed through opam:
 
 ```sh
@@ -50,8 +52,17 @@ cairo-vm-cli program_proof.json --layout starknet_with_keccak --proof_mode \
   --trace_file run.trace --memory_file run.mem
 ```
 
-`--cairo_pie_output`, `--layout dynamic --cairo_layout_params_file FILE` and `--fill-holes`
-work as they do in the Rust CLI.
+`--cairo_pie_output`, `--run_from_cairo_pie`, `--layout dynamic --cairo_layout_params_file FILE`
+and `--fill-holes` work as they do in the Rust CLI. To re-execute a Cairo PIE, pass the zip as the
+input file:
+
+```sh
+cairo-vm-cli os_run.pie.zip --run_from_cairo_pie --layout all_cairo --print_output
+```
+
+The PIE's program has no hints, so its recorded memory supplies every hinted value. The run is
+bounded by the PIE's step count, and with the default secure run the PIE it would write must
+match the input.
 
 ## Use it as a library
 
@@ -93,3 +104,65 @@ it off.
    absorbing hundreds of megabytes; see [Benchmarks](benchmarks.md).
 
 </details>
+
+## Embed a PIE replay
+
+From OCaml, pass the input archive and the desired output paths to the library.
+
+```ocaml
+Cairovm.Pie_run.replay_file ~trace:"trace.bin" ~memory:"memory.bin"
+  ~output:"validated.zip" "input.zip"
+```
+
+The replay uses secure execution and the `all_cairo` layout by default.
+Each artifact path is optional. Serialize VM calls within the process because
+the felt pool and builtin state are shared.
+
+For a standalone C or Rust process, build the shared library with
+`dune build --profile release bindings/c/oxcairo.so`. The
+[header](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bindings/c/oxcairo.h)
+declares `oxcairo_replay_v1`. The first call initializes the embedded OCaml
+runtime. Make all calls from the same OS thread. The function returns zero on
+success and can copy an error message into a caller-owned buffer.
+
+The [in-memory replay proposal](proposals/pie-snapshot/README.md) specifies the planned Rust interface for receiving owned artifacts.
+
+## Reusing a compiled program
+
+A service that launches a fresh native process for each block can pack its compiler JSON once. The packed file holds program words, references, identifiers and hint descriptions. The runner initializes a fresh VM on every invocation.
+
+```sh
+cairo-vm-cli os.json --pack_program os.oxcp
+cairo-vm-cli os.oxcp --os_hints block.json --layout all_cairo --print_output
+```
+
+Keep the compiler JSON for Rust comparisons. Repack after changing the compiled program. The loader checks the format version and table bounds before execution.
+
+## Run successive blocks in one process
+
+The release archive includes `oxcairo-os-worker`. It loads the compiler program once and starts a fresh secure VM for each request. Each request reads the witness from disk. For example, this stream executes two different blocks and then closes the worker.
+
+```sh
+printf '%s\n' 'RUN' 'RUN second-block.json' | oxcairo-os-worker os.json first-block.json
+```
+
+The worker prints `READY` once. Each `RUN` emits the public output words and a final `DONE` line. A bare `RUN` uses the initial witness. A path after `RUN ` selects another witness, including paths containing spaces. An execution error exits the process. Supply the corresponding compiled program and append `--virtual-os` or `--aggregator` to run those modes.
+
+## Compressed Cairo PIE output
+
+The writer stores ZIP members by default. Add `--pie_compression_level 6` to compress them. Levels 1 through 9 select DEFLATE. Level 0 selects storage. Archive member contents, CRCs and replay semantics are the same across levels. ZIP sizes and compressed bytes depend on the compressor.
+
+The release build can use libdeflate for archive output and OpenSSL for the two public Starknet secp scalar-multiplication syscalls. The portable build uses zlib and Zarith. On macOS with Homebrew the optional build is:
+
+```sh
+OXC_LIBDEFLATE="$(brew --prefix libdeflate)" OXC_OPENSSL="$(brew --prefix openssl@3)" \
+  dune build --profile release -j2
+```
+
+An absolute prefix links that library's static archive. Set either variable to `system` to use the toolchain's header and library search paths. Omit it to select the portable implementation.
+
+## Unpadded proof execution
+
+Add `--disable_trace_padding` to `--proof_mode` to stop after the final proof instruction and use the unpadded builtin allocation rules from cairo-vm 3.2.0. The default proof invocation pads to the Stone layout's resource requirements. The independent Stwo proof and Rust input comparison can be reproduced from [the qualification instructions](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/reference/stwo/README.md).
+
+For native OS blob data, pass `--os_da_output coefficients.json` with `--os_hints`. The file contains a JSON array of hexadecimal field elements in sequencer order. A calldata run writes JSON `null`. The producer captures the cells used for the KZG commitment. The encrypted fixture check decrypts the resulting state diff and verifies the commitment with the pinned sequencer. [Reproduction](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/reference/README.md).

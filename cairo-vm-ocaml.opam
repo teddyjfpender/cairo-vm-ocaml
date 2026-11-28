@@ -1,10 +1,10 @@
 opam-version: "2.0"
-version: "0.1.0"
+version: "0.2.0"
 name: "cairo-vm-ocaml"
 synopsis: "OxCairo: a fast Cairo VM in OCaml (OxCaml), byte-compatible with starkware-libs/cairo-vm v4.0.0"
 homepage: "https://github.com/teddyjfpender/cairo-vm-ocaml"
 bug-reports: "https://github.com/teddyjfpender/cairo-vm-ocaml/issues"
 license: "Apache-2.0"
 depends: ["dune" {>= "3.0"} "zarith" "yojson"]
-depexts: [["gmp"] {os = "macos"} ["libgmp-dev"] {os-family = "debian"}]
+depexts: [["gmp"] {os = "macos"} ["libgmp-dev" "zlib1g-dev"] {os-family = "debian"}]
 build: [["dune" "build" "-p" name "-j" jobs]]

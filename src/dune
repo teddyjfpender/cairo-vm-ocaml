@@ -3,10 +3,11 @@
 (library
  (name cairovm)
  (public_name cairo-vm-ocaml)
- (libraries zarith yojson unix)
+ (libraries zarith yojson unix str)
  (ocamlopt_flags (:standard -O3 -unboxed-types -inline 200 -unsafe))
  (flags (:standard -w -32-26-27-35-37-69))
+ (c_library_flags (-lz (:include native/native_link_flags.sexp)))
  (foreign_stubs
   (language c)
-  (names felt_stubs cpu_kernel)
+  (names output_decimal bls_msm secp_curve hex_felt felt_stubs cpu_kernel pie_deflate pie_stream pie_stubs trace_access json_skip program_read relocation blake_compress)
   (flags (:standard -O3 (:include native/native_flags.sexp) -I/opt/homebrew/include -I/usr/local/include))))

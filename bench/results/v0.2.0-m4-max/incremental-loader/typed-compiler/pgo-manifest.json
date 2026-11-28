@@ -1,0 +1,16 @@
+{
+  "runtime": "16aa093",
+  "before": "7e611bc",
+  "typed": "afbf090",
+  "seed": 5803,
+  "sha256": {
+    "rust": "fe90a1218e152949d561bccf31bd52be8c69d46455e26197c56f4b1ac5564c53",
+    "before": "f1caadab7204d3faa11526010b08e72d419a2f32055fa6789b548f34a1f764c3",
+    "typed": "7c98a88ff372eb384c4e93e221c32d7ad9744ddd8e4d3265968997a2caf23719",
+    "both": "3c1bcef6c653b3d1bb371d4c54d5ec3f7112a79ce2ceea090f00e3d0b568a56a",
+    "compiler": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+    "worker": "99908ab993dd4d2f49cd6297ac6046100d1d359f6eeed62275c14e9384b9e870",
+    "library": "10e77f53117663da1a23de74f7f0817c599efacd766ce54fff41f337ede071b2",
+    "package": "e10198c82075a68477793e439bb384ba5643afe5432a6f97bd06d7b6d70971ce"
+  }
+}

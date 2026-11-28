@@ -1,0 +1,11 @@
+availability,deployments,transactions,steps,pairs,rust_api,rust_s,ocaml_s,median_paired_ratio,rust_peak_kib,ocaml_peak_kib,public_output_and_five_members
+calldata,8,25,410034,5,stock,0.15987,0.04239,3.754,109312,,matched memory-bounded Rust writer
+blob,8,25,414134,5,stock,1.22723,0.0437,28.106,169664,,matched memory-bounded Rust writer
+calldata,64,193,1652716,5,stock,0.43676,0.07662,5.712,312368,,matched memory-bounded Rust writer
+blob,64,193,1675323,5,stock,1.52928,0.08312,18.332,220368,,matched memory-bounded Rust writer
+calldata,256,769,5912627,5,stock,1.46261,0.20085,7.311,686752,117712,matched memory-bounded Rust writer
+blob,256,769,6000409,5,stock,2.55008,0.20731,12.3,584080,118960,matched memory-bounded Rust writer
+calldata,1024,3073,22914589,5,stock,5.61893,0.69976,8.011,2617200,387744,matched memory-bounded Rust writer
+blob,1024,3073,23268752,5,stock,6.78138,0.72038,9.395,2639424,396720,matched memory-bounded Rust writer
+calldata,2048,6145,45600547,0,stock RSS cap,,,,,,matched memory-bounded Rust writer
+blob,2048,6145,46319846,0,stock RSS cap,,,,,,matched memory-bounded Rust writer

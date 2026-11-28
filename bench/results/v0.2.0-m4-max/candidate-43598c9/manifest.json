@@ -1,0 +1,29 @@
+{
+  "runtime_commit": "43598c9a4d9ee63a8844b34b12d54a0b3f634e49",
+  "machine": "Apple M4 Max, 36 GiB",
+  "build": "OxCaml 5.2, LLVM PGO on four separate OS training witnesses, optional libdeflate and OpenSSL",
+  "binaries": {
+    "cairo-vm-cli": "3673fc0e3a7ffa8b6541953dc5a72a13549fc9ba012605adb6f572aed234e5cc",
+    "native-worker": "f1f59c41d86cf6d7ee17af422ccba3d86b05e279e6443045ae7b279cd3080918",
+    "oxcairo.so": "6f494b87e9fc46b51ad8b15b3cf11bb6a724538f6063428d0bbcc326a7e3212e",
+    "portable-cli": "9fb0cfd0c509fc467f93270fd05f3f6e970bc31b79cdf3c75f9779ef81bd22e7"
+  },
+  "rust_revisions": "Same as ../manifest.json",
+  "full_compiler": {
+    "bytes": 52471230,
+    "sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded"
+  },
+  "packed_compiler": {
+    "bytes": 1321699,
+    "sha256": "a48576085fe533b27f82a45c149db20751e001fac9d7bd5d39fc0623a8c3b21c",
+    "one_time_pack_seconds": 0.0559
+  },
+  "production_artifact_baseline": "Full receipts in ../pie-artifacts.json",
+  "checkpoint": "e559436",
+  "prepared_class_comparison": {
+    "baseline": "5ad5da4",
+    "change_landed_as": "576f9ae",
+    "measured_candidate": "Private ordinary build on 5ad5da4 with equivalent exact-byte JSON change, prior to integration with loader",
+    "scope": "Same complete-key Pedersen cache on both sides. Candidate adds immutable class JSON reuse. Ordinary release builds, no PGO. Five shuffled traversals of 70 independently qualified witnesses."
+  }
+}

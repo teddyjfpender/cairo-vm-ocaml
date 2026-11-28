@@ -8,20 +8,16 @@
 
 [![OxCaml](https://img.shields.io/badge/built%20with-OxCaml%205.2-ee6a1a?logo=ocaml&logoColor=white)](https://oxcaml.org/)
 [![cairo-vm](https://img.shields.io/badge/parity-cairo--vm%20v4.0.0-6b46c1)](docs/parity.md)
-[![Corpus](https://img.shields.io/badge/corpus-0%20mismatches-2ea44f)](docs/parity.md)
-[![Speed](https://img.shields.io/badge/speed-6.8%C3%97%20vs%20Rust-ff69b4)](docs/benchmarks.md)
+[![Stwo proofs](https://img.shields.io/badge/Stwo-10%20verified%20proofs-2ea44f)](docs/parity.md)
+[![OS benchmarks](https://img.shields.io/badge/Starknet%20OS-benchmarks-ff69b4)](docs/release-0.2.md)
 [![Docs](https://img.shields.io/badge/docs-site-ee6a1a)](https://teddyjfpender.github.io/cairo-vm-ocaml/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 </div>
 
-A drop-in replacement for the `cairo-vm-cli` of
-[starkware-libs/cairo-vm](https://github.com/starkware-libs/cairo-vm): same flags,
-byte-identical outputs, about **7× faster**.
+OxCairo runs Cairo programs in execution and proof mode. It supports the Rust Cairo VM v4.0.0 CLI and adds native execution of Starknet OS block witnesses, Virtual OS and the block aggregator. Programs can also replay Cairo PIEs through the CLI, OCaml library or C interface.
 
-- **Fast:** 6.8× the Rust CLI across its 17 benchmarks, up to 11× on single programs
-- **Exact:** identical trace, memory, AIR inputs and PIE archives on the upstream corpus
-- **Complete:** execution and proof mode, every builtin, dynamic layouts, Stwo opcodes
+On an Apple M4 Max, runtime `f6e37bd` ran 70 native Starknet OS scenarios against the stock Rust sequencer. Across 350 cold comparisons using the full compiler, the median scenario was **3.02× faster** and summed case medians fell from **28.24 s to 2.46 s** (**11.48×**). **19 of 70** scenarios reached 10×. Secure replay of two production OS PIEs reached **15.25×** and **15.95×** against Rust v4. [0.2 performance and qualification](docs/release-0.2.md)
 
 ## Quick start
 
@@ -38,6 +34,7 @@ The docs are published at **[teddyjfpender.github.io/cairo-vm-ocaml](https://ted
 
 | | |
 | --- | --- |
+| [0.2 qualification](docs/release-0.2.md) | end-to-end speed, comparison baselines and proof evidence |
 | [Getting started](docs/getting-started.md) | install, run, proof mode, library use |
 | [Learn](docs/learn/index.md) | how a Cairo VM works and how this one is built, with exercises |
 | [Architecture](docs/architecture.md) | module map, data flow, design choices |

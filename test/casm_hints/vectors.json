@@ -1,0 +1,702 @@
+[
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x0"
+          },
+          "b": {
+            "Immediate": "0x0"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ],
+    "stack": [
+      "0x1",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x1"
+          },
+          "b": {
+            "Immediate": "0x0"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x1",
+      "0x0",
+      "0x4400000000000000080",
+      "0x1ffffffffffffffffffffffffffffff80"
+    ],
+    "stack": [
+      "0x1",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x0"
+          },
+          "b": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x0",
+      "0x0",
+      "0x3fffffffffffde87fffffffffffffc0",
+      "0x3f"
+    ],
+    "stack": [
+      "0x1",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          },
+          "b": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x0",
+      "0x0",
+      "0x3fffffffffffde87fffffffffffffc0",
+      "0x3f"
+    ],
+    "stack": [
+      "0x1",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x2aaaaaaaaaaaab0555555555555555555555555555555555555555555555555"
+          },
+          "b": {
+            "Immediate": "0x555555555555560aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x16aaaaaaaaaaaaaaad5",
+      "0xffffffffffffffffffffffffffffffc0",
+      "0x16aaaaaaaaaaaaaaad5",
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa80"
+    ],
+    "stack": [
+      "0x1",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x800000000000011000000000000000000000000000000000000000000000000"
+          },
+          "b": {
+            "Immediate": "0x800000000000011000000000000000000000000000000000000000000000000"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ],
+    "stack": [
+      "0x0",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "AssertLeFindSmallArcs": {
+          "a": {
+            "Immediate": "0x400000000000008800000000000000000000000000000000000000000000000"
+          },
+          "b": {
+            "Immediate": "0x800000000000011000000000000000000000000000000000000000000000000"
+          },
+          "range_check_ptr": {
+            "Deref": {
+              "offset": 0,
+              "register": "AP"
+            }
+          }
+        }
+      },
+      {
+        "AssertLeIsFirstArcExcluded": {
+          "skip_exclude_a_flag": {
+            "offset": 1,
+            "register": "AP"
+          }
+        }
+      },
+      {
+        "AssertLeIsSecondArcExcluded": {
+          "skip_exclude_b_minus_a": {
+            "offset": 2,
+            "register": "AP"
+          }
+        }
+      }
+    ],
+    "range_check": [
+      "0x0",
+      "0x0",
+      "0x2200000000000000040",
+      "0xffffffffffffffffffffffffffffffc0"
+    ],
+    "stack": [
+      "0x1",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0x0"
+          },
+          "value_low": {
+            "Immediate": "0x0"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0x0"
+          },
+          "value_low": {
+            "Immediate": "0x1"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0x1",
+      "0x0",
+      "0x0",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0x0"
+          },
+          "value_low": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0xffffffffffffffff",
+      "0x0",
+      "0x1fffffffffffffffe",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0x1"
+          },
+          "value_low": {
+            "Immediate": "0x0"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0x0",
+      "0x1",
+      "0x0",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0x1"
+          },
+          "value_low": {
+            "Immediate": "0x1"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0x0",
+      "0x1",
+      "0x1",
+      "0x0",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0xfffffffffffffffffffffffffffffffe"
+          },
+          "value_low": {
+            "Immediate": "0x1"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0xffffffffffffffff",
+      "0xffffffffffffffff",
+      "0x0",
+      "0x0",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0xfffffffffffffffffffffffffffffffe"
+          },
+          "value_low": {
+            "Immediate": "0x0"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0xfffffffffffffffe",
+      "0xffffffffffffffff",
+      "0xfffffffffffffffffffffffffffffffc",
+      "0x1",
+      "0x0"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0xfffffffffffffffffffffffffffffffe"
+          },
+          "value_low": {
+            "Immediate": "0x2"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0xffffffffffffffff",
+      "0xffffffffffffffff",
+      "0x1",
+      "0x0",
+      "0x1"
+    ]
+  },
+  {
+    "hints": [
+      {
+        "Uint256SquareRoot": {
+          "remainder_high": {
+            "offset": 4,
+            "register": "AP"
+          },
+          "remainder_low": {
+            "offset": 3,
+            "register": "AP"
+          },
+          "sqrt0": {
+            "offset": 1,
+            "register": "AP"
+          },
+          "sqrt1": {
+            "offset": 2,
+            "register": "AP"
+          },
+          "sqrt_mul_2_minus_remainder_ge_u128": {
+            "offset": 5,
+            "register": "AP"
+          },
+          "value_high": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          },
+          "value_low": {
+            "Immediate": "0xffffffffffffffffffffffffffffffff"
+          }
+        }
+      }
+    ],
+    "range_check": [],
+    "stack": [
+      "0xffffffffffffffff",
+      "0xffffffffffffffff",
+      "0xfffffffffffffffffffffffffffffffe",
+      "0x1",
+      "0x0"
+    ]
+  }
+]

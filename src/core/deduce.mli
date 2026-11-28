@@ -9,3 +9,6 @@ val deduce_builtin : Vm.vm -> Builtin.builtin -> int -> int -> Felt.t
 
 val deduce_cell : Vm.vm -> int -> int -> Felt.t
 (** Deduce a cell of any segment; [Felt.empty] unless a deducing builtin owns it. *)
+
+val cache_set : Builtin.builtin -> int -> Felt.t -> unit
+(** Record a verified builtin output at its segment offset. *)

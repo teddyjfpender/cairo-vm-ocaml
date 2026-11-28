@@ -3,3 +3,11 @@
 val compile : Program.t -> Hintrt.scopes -> Program.hint -> Vm.vm -> unit
 (** The implementation of a hint, bound to its compiled context. Unknown
     codes compile to a hint that fails when executed. *)
+
+val mem : string -> bool
+(** Whether a hint code has a native implementation. *)
+
+val extend : unit ->
+  (string -> (Hintrt.ctx -> Vm.vm -> unit) -> unit) *
+  (Program.t -> Hintrt.scopes -> Program.hint -> Vm.vm -> unit)
+(** Create a local hint registry and compiler. Unregistered codes use [compile]. *)

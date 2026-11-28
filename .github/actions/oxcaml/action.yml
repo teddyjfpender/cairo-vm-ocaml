@@ -1,0 +1,30 @@
+name: Set up OxCaml
+description: Install build dependencies and restore the compiler switch
+runs:
+  using: composite
+  steps:
+    - name: System dependencies
+      shell: bash
+      run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install opam gmp autoconf automake
+          else
+            sudo apt-get update && sudo apt-get install -y opam libgmp-dev zlib1g-dev autoconf automake rsync
+          fi
+
+    - name: Cache the OxCaml switch
+      uses: actions/cache@v4
+      with:
+          path: ~/.opam
+          key: oxcaml-${{ runner.os }}-${{ env.OXCAML_SWITCH }}-v1
+
+    - name: OxCaml switch
+      shell: bash
+      run: |
+          # git's background maintenance can delete files while opam copies the repo
+          git config --global maintenance.auto false
+          git config --global gc.auto 0
+          [ -d ~/.opam ] || opam init --bare -y --disable-sandboxing
+          opam switch list --short | grep -qx "$OXCAML_SWITCH" || opam switch create "$OXCAML_SWITCH" \
+            --repos ox=git+https://github.com/oxcaml/opam-repository.git,default -y
+          opam install --switch "$OXCAML_SWITCH" -y dune zarith yojson
