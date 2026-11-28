@@ -278,3 +278,19 @@ let () =
      {|{"value":"ap","pc":0,"other":[1,2],"ap_tracking_data":{"offset":0,"group":2}}|}];
   check {|"reference_manager":{"references":[]},"reference_manager":{"references":[{"ap_tracking_data":{"group":0,"offset":0},"pc":0,"value":"ap"}]}|};
   check {|"identifiers":{"first":{"type":"const","value":"0xbeef"},"last":{"type":"const","value":17,"value":99},"p":{"type":"label","pc":-2},"s":{"type":"alias","destination":"\u0061"}}|}
+
+let () =
+  (* The apparent midpoint member belongs to "extra", not to the instruction
+     map. Both partitions must validate up to precisely their own delimiter. *)
+  let location = {|{"end_line":1,"end_col":1,"input_file":{"filename":"a"},"start_line":1,"start_col":1}|} in
+  let instruction = {|{"hints":[],"inst":|} ^ location ^ "}" in
+  let padding = String.make 8_300_000 'a' in
+  let source last =
+    Printf.sprintf
+      "{\n  \"debug_info\": {\n    \"instruction_locations\": {\n      \"0\": {\"hints\":[],\"inst\":%s,\"extra\":{\"long\":\"%s%s\",\n      \"123\":%s},\"tail\":\"%s\"},\n      \"1\":%s\n    }\n  },\n  \"hints\":{},\"prime\":\"%s\",\"data\":[],\"builtins\":[]}"
+      location padding (String.make 8192 'a') instruction padding last (Z.to_string Felt.p) in
+  with_json (source instruction) (fun path -> ignore (Program.load_file path));
+  with_json (source {|{"hints":false,"inst":null}|}) (fun path ->
+      match Program.load_file path with
+      | exception Yojson.Json_error _ -> ()
+      | _ -> failwith "invalid instruction after a nested partition candidate")

@@ -7,6 +7,7 @@ struct schema_reader {
   int debug_root;
   const unsigned char *base, *end, *p;
   struct json_span previous[32];
+  int allow_partition;
 };
 /* Text is immediate. Block tags follow the declaration order of the other
    constructors in src/program/program_metadata.ml. */
@@ -60,7 +61,7 @@ static int schema_skip_cached(struct schema_reader *s, const unsigned char *key,
     s->p = p + 1;
   } else {
     intnat pos = Long_val(cvm_json_skip(s->source, Val_long(first - s->base)));
-    if (pos < 0) return 0;
+    if (pos < 0 || (uintnat)pos > (size_t)(s->end-s->base)) return 0;
     s->p = s->base + pos;
   }
   if (container && s->p-first >= 32) {
@@ -77,6 +78,92 @@ static int schema_take(struct schema_reader *s, unsigned char c) {
   s->p = p + 1;
   return 1;
 }
+#include <pthread.h>
+
+static int schema_value(struct schema_reader *s, value spec, unsigned depth);
+
+struct map_partition {
+  struct schema_reader reader;
+  value element;
+  unsigned depth;
+  const unsigned char *boundary;
+  int valid;
+};
+
+/* Validate consecutive integer-keyed map members. A left partition must
+   reach its exact separating comma; a right partition ends at the map close. */
+static void *validate_partition(void *arg) {
+  struct map_partition *part = arg;
+  struct schema_reader *s = &part->reader;
+  for (;;) {
+    if (!schema_take(s, '"'))
+      return NULL;
+    const unsigned char *key = s->p;
+    while (s->p < s->end && digit(*s->p))
+      ++s->p;
+    if (!schema_uint(key, (size_t)(s->p - key), UINT64_MAX) || s->p == s->end ||
+        *s->p++ != '"' || !schema_take(s, ':') ||
+        !schema_value(s, part->element, part->depth + 1))
+      return NULL;
+    const unsigned char *after = whitespace(s->p, s->end);
+    if (after == s->end)
+      return NULL;
+    if (part->boundary && after >= part->boundary) {
+      part->valid = after == part->boundary && *after == ',';
+      return NULL;
+    }
+    if (*after == '}') {
+      s->p = after + 1;
+      part->valid = part->boundary == NULL;
+      return NULL;
+    }
+    if (*after != ',')
+      return NULL;
+    s->p = after + 1;
+  }
+}
+
+static int split_instruction_map(struct schema_reader *s, value element,
+                                 unsigned depth) {
+  const unsigned char *first = whitespace(s->p, s->end);
+  if (s->end - first < 16000000 || *first != '"')
+    return 0;
+  const unsigned char *line = first;
+  while (line > s->p && line[-1] == ' ')
+    --line;
+  size_t indent = (size_t)(first - line);
+  if (line == s->p || line[-1] != '\n' || indent > 64)
+    return 0;
+  const unsigned char *scan = first + (s->end - first) / 2;
+  const unsigned char *limit = scan + 131072;
+  while ((scan = memchr(scan, '\n', (size_t)(limit - scan))) != NULL) {
+    const unsigned char *nl = scan++;
+    if ((size_t)(s->end - scan) < indent + 2 || memcmp(scan, line, indent) ||
+        scan[indent] != '"' || !digit(scan[indent + 1]))
+      continue;
+    const unsigned char *comma = nl;
+    while (comma > first &&
+           (comma[-1] == ' ' || comma[-1] == '\r' || comma[-1] == '\t'))
+      --comma;
+    if (comma == first || comma[-1] != ',')
+      continue;
+    --comma;
+    struct map_partition left = {*s, element, depth, comma, 0};
+    struct map_partition right = {*s, element, depth, NULL, 0};
+    right.reader.p = comma + 1;
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, validate_partition, &right))
+      return 0;
+    validate_partition(&left);
+    pthread_join(worker, NULL);
+    if (!left.valid || !right.valid)
+      return 0;
+    s->p = right.reader.p;
+    return 1;
+  }
+  return 0;
+}
+
 static int schema_value(struct schema_reader *s, value spec, unsigned depth) {
   s->p = whitespace(s->p, s->end);
   if (s->p == s->end || depth > 100)
@@ -130,6 +217,9 @@ static int schema_value(struct schema_reader *s, value spec, unsigned depth) {
   }
   if ((tag != S_MAP && tag != S_RECORD) || !schema_take(s, '{'))
     return 0;
+  if (tag == S_MAP && s->allow_partition && s->debug_root && Bool_val(child) &&
+      Field(spec, 1) == s->projected_instruction &&
+      split_instruction_map(s, Field(spec, 1), depth)) return 1;
   uint64_t seen = 0;
   if (!schema_take(s, '}')) {
     do {
@@ -208,4 +298,27 @@ CAMLprim value cvm_json_validate_schema(value source, value position,
     return Val_false;
   Field(position, 0) = Val_long(s.p - s.base);
   return Val_true;
+}
+
+
+/* The calling OCaml domain retains its runtime lock throughout this noalloc
+   primitive. Any native worker only borrows immutable source/schema blocks,
+   performs no OCaml allocation or callback, and is joined before we return.
+   A candidate end offset can precede the actual value on unusual input. */
+CAMLprim value cvm_json_validate_debug_range(value source, value bounds,
+                                             value spec,
+                                             value projected_instruction) {
+  const unsigned char *base = (const unsigned char *)String_val(source);
+  size_t size = caml_string_length(source);
+  uintnat first = Long_val(Field(bounds, 0)), last = Long_val(Field(bounds, 1));
+  if (first >= last || last > size)
+    return Val_false;
+  struct schema_reader reader = {.source = source,
+                                 .projected_instruction = projected_instruction,
+                                 .debug_root = 1,
+                                 .base = base,
+                                 .end = base + last,
+                                 .p = base + first,
+                                 .allow_partition = 1};
+  return Val_bool(schema_value(&reader, spec, 0) && reader.p == reader.end);
 }

@@ -252,6 +252,10 @@ let from_file ?identifiers ?projection path =
 
 external find_debug_span : string -> int array -> bool = "cvm_json_debug_span" [@@noalloc]
 
+external validate_debug_range :
+  string -> int array -> Program_metadata.schema -> Program_metadata.schema -> bool
+  = "cvm_json_validate_debug_range" [@@noalloc]
+
 let with_program_document ?add_batch ?reference_offsets ~add_identifier ~consume src =
   let read ?debug_span () =
     Option.iter (fun saved -> saved := None) reference_offsets;
@@ -274,9 +278,13 @@ let with_program_document ?add_batch ?reference_offsets ~add_identifier ~consume
          that collection until the consumer has released the temporary JSON. *)
       Fun.protect ~finally:(fun () ->
           Semaphore.Binary.release ready; Semaphore.Binary.acquire release) (fun () ->
-          let pos = ref first in
-          Atomic.set verified
-            (validate_schema src pos Program_metadata.debug Program_metadata.instruction && !pos = last)) in
+          let valid =
+            if Domain.recommended_domain_count () >= 4 then
+              validate_debug_range src bounds Program_metadata.debug Program_metadata.instruction
+            else
+              let pos = ref first in
+              validate_schema src pos Program_metadata.debug Program_metadata.instruction && !pos = last in
+          Atomic.set verified valid) in
     match (try Some (Domain.spawn validate) with Failure _ -> None) with
     | None -> full ()
     | Some worker ->
