@@ -1,0 +1,43 @@
+{
+  "input": {
+    "bytes": 1201214,
+    "sha256": "838484a931239dedf85edc7bda855ef15fc488a97903c2f7c95dc29495e00288"
+  },
+  "steps": 191408,
+  "input_memory_holes": 24648,
+  "regenerated_memory_holes": 46493,
+  "trace": {
+    "bytes": 4593792,
+    "sha256": "95920a8363e0be850d04f2714a9e68c64b81b850d4a4c692fca992f692aa18a4"
+  },
+  "relocated_memory": {
+    "bytes": 8846440,
+    "sha256": "0304567e12ae92c31757d9e90bb39cc18c1546cf850f99d5acf694b76cc7207b"
+  },
+  "stdout": {
+    "bytes": 1432,
+    "sha256": "a2c863e9dce44b54da7d1619956370c03c970c450a322ebe4dd5c46d502508ed"
+  },
+  "regenerated_members": {
+    "additional_data.json": {
+      "bytes": 2651,
+      "sha256": "7be7a553e87d8a3f56cb7d163a714e3cb59d1b926354dca9ec4a623d596e58bf"
+    },
+    "execution_resources.json": {
+      "bytes": 304,
+      "sha256": "5caad4c1fb81ff0817322b28a53a1d634dd001dba014350e4867f74fc792be9b"
+    },
+    "memory.bin": {
+      "bytes": 8846440,
+      "sha256": "f487dc80532e844cd395267890629cc3e65482d050107b18e4646b6070453a81"
+    },
+    "metadata.json": {
+      "bytes": 362054,
+      "sha256": "5e8e619ac10e815616bb406b05a5243177971ff254e220f429873b11e7a324f3"
+    },
+    "version.json": {
+      "bytes": 19,
+      "sha256": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  }
+}
