@@ -1,0 +1,67 @@
+name: Reproducible Ubuntu package
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/reproducible-linux.yml'
+      - 'scripts/reproducible/**'
+      - 'scripts/package_release.py'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        default: false
+      tag:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+      - name: Build and exercise the package in a fresh pinned container
+        run: |
+          source scripts/reproducible/sources.env
+          mkdir "$RUNNER_TEMP/package"
+          chmod 777 "$RUNNER_TEMP/package"
+          docker run --rm --platform linux/amd64 --mount "type=bind,src=$PWD,dst=/checkout,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/package,dst=/out" "$BUILD_IMAGE" bash /checkout/scripts/reproducible/linux-build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-${{ matrix.replica }}
+          path: ${{ runner.temp }}/package/*
+          if-no-files-found: error
+
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: linux-package-*
+          path: packages
+      - name: Check independent packages and records
+        run: |
+          set -euo pipefail
+          diff -r packages/linux-package-1 packages/linux-package-2
+          cd packages/linux-package-1
+          sha256sum -c *.sha256
+      - name: Publish the verified binaries and provenance
+        if: inputs.publish && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd packages/linux-package-1
+          test -s "oxcairo-$TAG-linux-x86_64.tar.gz"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" ./*
