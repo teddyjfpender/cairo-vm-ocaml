@@ -32,7 +32,7 @@ let () =
   let compression_level = ref 0 and explicit_level = ref false and archive_profile = ref Pie_zip.Fast in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
-  let pack_program = ref None in
+  let pack_program = ref None and pack_witness = ref None in
   let from_pie = ref false and os_hints = ref None and bootloader_input = ref None in
   let virtual_os = ref false in
   let set_os_hints virtual_mode path =
@@ -45,6 +45,7 @@ let () =
   let bool_of s = match s with "true" -> true | "false" -> false | _ -> raise (Arg.Bad ("expected true|false: " ^ s)) in
   let spec =
     [
+      ("--pack_os_witness", Arg.String (fun s -> pack_witness := Some s), "FILE  encode a JSON OS witness for native runs");
       ("--pack_program", Arg.String (fun s -> pack_program := Some s), "FILE  save parsed compiler metadata for subsequent native runs");
       ("--trace_file", Arg.String (fun s -> trace := Some s), "FILE  write the relocated binary trace");
       ("--memory_file", Arg.String (fun s -> memory := Some s), "FILE  write the relocated binary memory");
@@ -132,19 +133,28 @@ let () =
   if Option.is_some !aggregator_da && Option.is_none !aggregator_input then
     usage_error "--aggregator_da_output requires --aggregator_input";
   try
-    (match !pack_program with
-     | None -> ()
-     | Some path ->
-         if Hashtbl.length seen <> 1 then usage_error "--pack_program takes only a program file";
+    (match !pack_program, !pack_witness with
+     | None, None -> ()
+     | Some path, _ | _, Some path ->
+         if Hashtbl.length seen <> 1 then usage_error "packing takes only an input file";
          if Sys.file_exists path then begin
            let input = Unix.stat file and output = Unix.stat path in
            if input.st_dev = output.st_dev && input.st_ino = output.st_ino then
-             usage_error "packed output must be separate from the input program"
+             usage_error "packed output must be separate from the input"
          end;
-         let packed = Program.pack (Program.load_file file) in
+         let write =
+           if Option.is_some !pack_witness then begin
+             let stat = Unix.LargeFile.stat file in
+             if stat.st_kind <> Unix.S_REG || stat.st_size > Int64.of_int Witness_wire.max_bytes then
+               usage_error "expected a regular JSON witness of at most 256 MiB";
+             let doc = Json_reader.from_file file in
+             fun out -> Witness_wire.write out doc
+           end else
+             let packed = Program.pack (Program.load_file file) in
+             fun out -> output_string out packed in
          let tmp, out = Filename.open_temp_file ~temp_dir:(Filename.dirname path) ~mode:[Open_binary] "oxcairo-" ".tmp" in
          Fun.protect ~finally:(fun () -> close_out_noerr out; if Sys.file_exists tmp then Sys.remove tmp)
-           (fun () -> output_string out packed; close_out out; Sys.rename tmp path);
+           (fun () -> write out; close_out out; Sys.rename tmp path);
          exit 0);
     let t0 = Unix.gettimeofday () in
     let proof = !proof in
@@ -238,6 +248,8 @@ let () =
       exit 1
   | Os_hints.Randomized_encryption -> prerr_endline "Encryption requires a fresh private entropy draw"; exit 6
   | Runner.Step_limit -> prerr_endline "Cairo step limit exceeded"; exit 20
+  | Stack_overflow when Option.is_some !pack_witness -> prerr_endline "witness exceeds nesting limit"; exit 1
+  | Invalid_argument msg when Option.is_some !pack_witness -> prerr_endline msg; exit 1
   | Out_of_memory -> prerr_endline "VM memory budget exhausted"; exit 21
   | Program.Parse_error msg ->
       prerr_endline ("Error: " ^ msg);
