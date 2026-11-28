@@ -42,3 +42,9 @@ such as `sample` or `perf` enough data on short programs.
 3. `.github/workflows/release.yml` creates the GitHub release from the changelog section, builds
    and tests on macOS arm64 and Linux x86-64, and uploads `oxcairo-vX.Y.Z-<target>.tar.gz`
    with checksums.
+
+## Upstream Cairo VM releases
+
+**Watch upstream Cairo VM** checks the public version tags of `starkware-libs/cairo-vm` every six hours. It covers tag-only release candidates, stable releases and maintenance branches. Each new tag and commit pair opens one OxCairo compatibility issue. Closing the issue records the decision; a moved tag opens a new issue for the new commit. The initial baseline suppresses historical tag/commit pairs. The watcher leaves the qualified references pinned until a maintainer reviews a compatibility PR.
+
+Use **Run workflow** on the default branch to check immediately or catch up after a missed schedule. The checker scans the complete tag history on each run. GitHub can disable scheduled workflows in inactive public repositories; re-enable the workflow in Actions if scheduling is disabled. [Watcher and run history](https://github.com/teddyjfpender/cairo-vm-ocaml/actions/workflows/watch-cairo-vm.yml)
