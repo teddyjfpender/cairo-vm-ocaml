@@ -32,3 +32,11 @@ The stock API exceeded the 3.3 GiB process allowance on the two 6,145-transactio
 ## Compiler input identity
 
 Pass the sequencer build's `apollo_starknet_os_program-*/out/starknet_os_bytes` file to `bench/compare_native_os.py --program`. The harness maps the independent Rust executable and checks that the complete compiler file occurs byte-for-byte in its image before starting any timings. Both VMs then use those bytes. To test a packed or debug-stripped input, supply the verified compiler output as usual and also pass `--prepared-program ALTERNATIVE`. The resulting rows are labelled and carry both SHA-256 digests.
+
+For persistent production-runner comparisons, build `os_verified.rs` for the main OS or `related_workers.rs` for the virtual OS and aggregator as a sequencer example. The main OS diagnostic omits materialization of unrequested artifacts. The related workers call the stock public sequencer APIs. Each timed command reads the entire witness, creates a new VM and checks the public words. Both processes warm up once per input. The compiler program supplied to the OCaml worker must be present byte-for-byte in the reference executable.
+
+```sh
+python3 bench/compare_native_os_workers.py --kind virtual-os --pairs 7 \
+  --rust /path/to/oxcairo_related_workers --ocaml _build/default/bench/native_os_worker.exe \
+  --program /path/to/virtual_os_bytes test/fixtures/os/virtual-multicall-64.json.gz
+```

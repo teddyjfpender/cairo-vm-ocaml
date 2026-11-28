@@ -3,7 +3,7 @@ open Errors
 open Hintrt
 module U = Yojson.Safe.Util
 
-let initialize ?layout_def ?on_da ~proof ~path cfg prog =
+let initialize ?image ?layout_def ?on_da ~proof ~path cfg prog =
   let input = Json_reader.from_file ~projection:(Fields ["bootloader_output", Encoded]) path in
   let member name = U.member name input in
   let felt = Os_hints.felt in
@@ -57,6 +57,6 @@ let initialize ?layout_def ?on_da ~proof ~path cfg prog =
     match Hashtbl.find_opt handlers h.code with
     | Some f -> f (make_ctx p scopes h)
     | None -> Hints.compile p scopes h in
-  let r = Runner.initialize ?layout_def ~compile_hint ~proof cfg prog in
+  let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof cfg prog in
   runner := Some r;
   r

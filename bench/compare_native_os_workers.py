@@ -29,6 +29,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("ocaml", "rust", "program"):
         parser.add_argument("--" + name, required=True, type=Path)
+    parser.add_argument("--kind", choices=("os", "virtual-os", "aggregator"), default="os")
     parser.add_argument("--pairs", type=int, default=5)
     parser.add_argument("inputs", nargs="+", type=Path)
     args = parser.parse_args()
@@ -48,8 +49,9 @@ def main():
                 with gzip.open(source, "rb") as compressed, path.open("wb") as raw:
                     shutil.copyfileobj(compressed, raw)
             workers = {}
-            commands = {"rust": [args.rust.resolve(), "--worker", path],
-                        "ocaml": [args.ocaml.resolve(), args.program, path]}
+            mode = [] if args.kind == "os" else ["--" + args.kind]
+            commands = {"rust": [args.rust.resolve(), *mode, "--worker", path],
+                        "ocaml": [args.ocaml.resolve(), args.program, path, *mode]}
             for name, command in commands.items():
                 proc = stack.enter_context(subprocess.Popen(command, stdin=subprocess.PIPE,
                                                            stdout=subprocess.PIPE, text=True))
