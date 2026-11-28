@@ -1,0 +1,3 @@
+(test
+ (name witness_wire_test)
+ (libraries cairovm unix))

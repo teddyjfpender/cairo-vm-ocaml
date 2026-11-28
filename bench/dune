@@ -18,3 +18,8 @@
  (name supplied_pie)
  (modules supplied_pie)
  (libraries cairovm unix))
+
+(executable
+ (name witness_decode)
+ (modules witness_decode)
+ (libraries cairovm unix))

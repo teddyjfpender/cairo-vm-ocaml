@@ -1,0 +1,7 @@
+[package]
+name = "witness-interop"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+serde_json = {version="=1.0.150", features=["preserve_order"]}
+cbor4ii = { version = "=0.3.3", features = ["serde1","use_std"] }
