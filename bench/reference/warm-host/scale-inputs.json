@@ -1,0 +1,61 @@
+[
+  {
+    "name": "100-1",
+    "witness_sha256": "99992291da2bd4fb8108b93a91e17901e71dbb9c321147bdefc081521430bbb1",
+    "transactions_per_block": [
+      100
+    ],
+    "canonical_members": {
+      "additional_data.json": "45a24186d69fca5cea5610a6abdb4b3b32e8940d3f5e882a72142be14b8f9799",
+      "execution_resources.json": "9332adba97dc4905b1c718a8b576d6e1929bf7edbc42d6059fe835f281d00793",
+      "memory.bin": "589ab34940541253cca4eb3633480249209c4a9f42674a52ed6c0d2c3d423f44",
+      "metadata.json": "f78dcffb3791c140bcc7d27dc1184799a8082414d1ca4ed41395fb33bf0e46b0",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  },
+  {
+    "name": "500-1",
+    "witness_sha256": "2d486917ee2550f33520a6fb95ee0f1d5a541ff058262c44da238d8efcfcfa99",
+    "transactions_per_block": [
+      500
+    ],
+    "canonical_members": {
+      "additional_data.json": "4fd1c6a0ce45157812ee83abdb6828731f5b7561c5c5642e4cdc19fedd74e1f3",
+      "execution_resources.json": "9e16f25e5b3c46e801c3293a8af1d831efde5aaac4b57bea23d0faba774e2c57",
+      "memory.bin": "10f249bd3c2888e424769be246e2cf04cf735b0be66145b8ac8dc9f8a5c98d1b",
+      "metadata.json": "2344f04dbd74120676be9f6c22fb385acf3bb81e77990436e32cc41c31dfcd9f",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  },
+  {
+    "name": "1000-1",
+    "witness_sha256": "e67e9058bdac7e803e26dae18ab97e19dce6f2bbeade2a19b9a382475752531b",
+    "transactions_per_block": [
+      1000
+    ],
+    "canonical_members": {
+      "additional_data.json": "575a65a3a517047d6bf91c41c947a9eb8be7855b9627ec3255861f9f6d26dbeb",
+      "execution_resources.json": "3a0dd3a2dd93295d29b9a44e183cb2021d798723227dbaa1fee4bebb169b6aed",
+      "memory.bin": "119ebd4f27f7cd68d5aed92c2d8e47fb01cb359f2c56b67ee51bd23041a8a90a",
+      "metadata.json": "1eba916ad1d679d8d464e2747b7b786a455e469adb6cba1b7c27fcb203a1923a",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  },
+  {
+    "name": "1000-4",
+    "witness_sha256": "15ee217433e68711112bb84791bccb86054f0ce7fbc316c30e5ac9edbf8a059f",
+    "transactions_per_block": [
+      250,
+      250,
+      250,
+      250
+    ],
+    "canonical_members": {
+      "additional_data.json": "3b5915614310a2a6377564c05935464074735a6ed9ceddefe2259e1ec3ef6675",
+      "execution_resources.json": "891f8460fd2b50bf974cec6f54d2f75f838a1f1cffd515723af5dc2cd489e328",
+      "memory.bin": "4d55206e67a00a3c9889e763cf50414ce712e720ae6bb525ec9014e7821d4c20",
+      "metadata.json": "2abe49df07f651c6fd569c83342afb2837409582446b53bcccf11aa09f28ec18",
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f"
+    }
+  }
+]

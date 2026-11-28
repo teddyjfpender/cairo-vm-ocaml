@@ -1,0 +1,154 @@
+[
+  {
+    "ox-fast-1": {
+      "case": "100-1",
+      "engine": "ox-fast-1",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 71.148625,
+      "first_ms": 71.224042,
+      "bytes": 5865098,
+      "files": 1,
+      "content": 1
+    },
+    "ox-stored": {
+      "case": "100-1",
+      "engine": "ox-stored",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 91.617,
+      "first_ms": 92.673417,
+      "bytes": 37569880,
+      "files": 1,
+      "content": 1
+    },
+    "rust": {
+      "case": "100-1",
+      "engine": "rust",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 221.525042,
+      "first_ms": 1265.84,
+      "bytes": 37569880,
+      "files": 1,
+      "content": 1
+    },
+    "paired_stored_ratio": null,
+    "median_stored_ratio": 2.417946909416375,
+    "ox_codec_ratio": 1.2876847584897109
+  },
+  {
+    "ox-fast-1": {
+      "case": "1000-1",
+      "engine": "ox-fast-1",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 392.369833,
+      "first_ms": 406.300541,
+      "bytes": 43744571,
+      "files": 1,
+      "content": 1
+    },
+    "ox-stored": {
+      "case": "1000-1",
+      "engine": "ox-stored",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 420.674667,
+      "first_ms": 469.971667,
+      "bytes": 290228641,
+      "files": 1,
+      "content": 1
+    },
+    "rust": {
+      "case": "1000-1",
+      "engine": "rust",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 1238.394458,
+      "first_ms": 2238.847208,
+      "bytes": 290228641,
+      "files": 1,
+      "content": 1
+    },
+    "paired_stored_ratio": null,
+    "median_stored_ratio": 2.943829412955832,
+    "ox_codec_ratio": 1.072138150335324
+  },
+  {
+    "ox-fast-1": {
+      "case": "1000-4",
+      "engine": "ox-fast-1",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 448.0085,
+      "first_ms": 449.641083,
+      "bytes": 45984076,
+      "files": 1,
+      "content": 1
+    },
+    "ox-stored": {
+      "case": "1000-4",
+      "engine": "ox-stored",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 480.941,
+      "first_ms": 449.536625,
+      "bytes": 304111485,
+      "files": 1,
+      "content": 1
+    },
+    "rust": {
+      "case": "1000-4",
+      "engine": "rust",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 1541.513083,
+      "first_ms": 2441.136375,
+      "bytes": 304111485,
+      "files": 1,
+      "content": 1
+    },
+    "paired_stored_ratio": null,
+    "median_stored_ratio": 3.205202058048701,
+    "ox_codec_ratio": 1.0735086499474897
+  },
+  {
+    "ox-fast-1": {
+      "case": "500-1",
+      "engine": "ox-fast-1",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 219.383167,
+      "first_ms": 227.186625,
+      "bytes": 22691186,
+      "files": 1,
+      "content": 1
+    },
+    "ox-stored": {
+      "case": "500-1",
+      "engine": "ox-stored",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 211.278166,
+      "first_ms": 320.608583,
+      "bytes": 149858138,
+      "files": 1,
+      "content": 1
+    },
+    "rust": {
+      "case": "500-1",
+      "engine": "rust",
+      "runs": 4,
+      "warm_n": 3,
+      "warm_ms": 724.148667,
+      "first_ms": 1780.44325,
+      "bytes": 149858138,
+      "files": 1,
+      "content": 1
+    },
+    "paired_stored_ratio": null,
+    "median_stored_ratio": 3.42746569941354,
+    "ox_codec_ratio": 0.9630555018836063
+  }
+]

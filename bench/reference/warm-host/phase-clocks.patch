@@ -1,0 +1,246 @@
+diff --git a/bench/supplied_pie.ml b/bench/supplied_pie.ml
+index 4116cb6..201d807 100644
+--- a/bench/supplied_pie.ml
++++ b/bench/supplied_pie.ml
+@@ -1,33 +1,32 @@
+-(* Run a series of supplied witnesses in one pinned compiler process. Each
+-   request gets a fresh secure VM and writes its complete stored PIE. *)
+ open Cairovm
+-
++module C = Warm_clock
++let phases = ["program",C.program;"witness_read_parse",C.witness;"hints",C.hints;
++  "builtin_deduction",C.builtins;"stepping",C.stepping;"runner_setup",C.setup;
++  "finalization",C.finalize;"memory_encoding",C.encoding;"payload_write",C.write;
++  "archive_other",C.archive]
++let snapshot () = List.map (fun (label, id) -> label,C.get id) phases
++let report before =
++  let fields = List.map2 (fun (label,prev) (_,curr) ->
++      Printf.sprintf "%S:%d" label (curr-prev)) before (snapshot ()) in
++  Printf.printf "{%s}\n%!" (String.concat "," fields)
+ let () =
+-  if Array.length Sys.argv < 4 || Array.length Sys.argv mod 2 <> 0 then
+-    invalid_arg "supplied_pie PROGRAM WITNESS OUTPUT [WITNESS OUTPUT ...]";
+   Os_hints.configure_batch_gc ();
+-  let now = Unix.gettimeofday in
+-  let started = now () in
+-  let program = Program.load_file Sys.argv.(1) in
+-  let image = Program_image.prepare program in
+-  Printf.printf "{\"compiler_prepare_s\":%.9f}\n%!" (now () -. started);
++  let before = snapshot () in
++  let program, image = C.during C.program (fun () ->
++      let p = Program.load_file Sys.argv.(1) in p,Program_image.prepare p) in
++  report before;
+   let cfg = {Runner.layout="all_cairo"; trace=true; secure_run=true;
+              allow_missing_builtins=false; entrypoint="main"} in
+-  let run path output = Felt.with_temporary_slots (fun () ->
+-      let started = now () in
+-      let r = Os_hints.initialize ~image ~proof:false ~record_trace:true ~path cfg program in
+-      let initialized = now () in
+-      Runner.run_until_end r;
+-      let executed = now () in
+-      Finalize.end_run r ~secure:true ~allow_missing:false;
+-      let finalized = now () in
+-      Pie.write ~profile:Pie_zip.Fast ~compression_level:0 ~merge_extra_segments:false
+-        ~main:(Runner.entry_pc cfg program) ~secure:true r output;
+-      let published = now () in
+-      Printf.printf
+-        "{\"initialize_s\":%.9f,\"execute_s\":%.9f,\"finalize_s\":%.9f,\"store_s\":%.9f,\"total_s\":%.9f}\n%!"
+-        (initialized -. started) (executed -. initialized) (finalized -. executed)
+-        (published -. finalized) (published -. started)) in
+   for i = 1 to (Array.length Sys.argv - 2) / 2 do
+-    run Sys.argv.(2*i) Sys.argv.(2*i+1)
++    let witness = Sys.argv.(2*i) and output = Sys.argv.(2*i+1) in
++    let before = snapshot () in
++    Felt.with_temporary_slots (fun () ->
++        let r = C.during C.setup (fun () ->
++            Os_hints.initialize ~image ~proof:false ~record_trace:true ~path:witness cfg program) in
++        C.during C.stepping (fun () -> Runner.run_until_end r);
++        C.during C.finalize (fun () -> Finalize.end_run r ~secure:true ~allow_missing:false);
++        C.during C.archive (fun () ->
++            Pie.write ~profile:Pie_zip.Fast ~compression_level:0 ~merge_extra_segments:false
++              ~main:(Runner.entry_pc cfg program) ~secure:true r output));
++    report before
+   done
+diff --git a/src/core/cpu.ml b/src/core/cpu.ml
+index 7913e70..ba37298 100644
+--- a/src/core/cpu.ml
++++ b/src/core/cpu.ml
+@@ -406,14 +406,14 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
+       vm.squash <- None;
+       vm.selection <- None;
+       incr hint_steps;
+-      Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
++      Warm_clock.during Warm_clock.hints (fun () -> Array.iter (fun h -> h vm) (Array.unsafe_get hints pc))
+     end;
+     if vm.pc_seg > 0 && Hashtbl.length vm.runtime_hints <> 0 then begin
+       ignore (contract_page vm);
+       let handlers = page_handlers vm.page_hints (pc land 1023) in
+       if Array.length handlers <> 0 then begin
+         incr hint_steps;
+-        Array.iter (fun run -> run vm) handlers
++        Warm_clock.during Warm_clock.hints (fun () -> Array.iter (fun run -> run vm) handlers)
+       end
+     end;
+     let count =
+diff --git a/src/core/deduce.ml b/src/core/deduce.ml
+index 53dd8a1..18db441 100644
+--- a/src/core/deduce.ml
++++ b/src/core/deduce.ml
+@@ -45,7 +45,7 @@ let bitwise_output vm seg off idx =
+     r
+   end
+ 
+-let deduce_builtin vm (b : builtin) seg off =
++let deduce_raw vm (b : builtin) seg off =
+   let cpi = cells_per_instance b.kind in
+   let idx = off mod cpi in
+   let nin = n_input_cells b.kind in
+@@ -93,6 +93,9 @@ let deduce_builtin vm (b : builtin) seg off =
+     end
+   end
+ 
++let deduce_builtin vm b seg off =
++  Warm_clock.during Warm_clock.builtins (fun () -> deduce_raw vm b seg off)
++
+ let[@inline never] deduce_cell vm seg off =
+   if seg >= 0 && seg < vm.nsegs && is_deducing vm.seg_flag.(seg) then
+     match vm.seg_builtin.(seg) with Some b -> deduce_builtin vm b seg off | None -> Felt.empty
+diff --git a/src/core/warm_clock.ml b/src/core/warm_clock.ml
+new file mode 100644
+index 0000000..e761b27
+--- /dev/null
++++ b/src/core/warm_clock.ml
+@@ -0,0 +1,15 @@
++external switch : int -> int = "cvm_warm_switch" [@@noalloc]
++external get : int -> int = "cvm_warm_get" [@@noalloc]
++let program = 1
++let witness = 2
++let hints = 3
++let builtins = 4
++let stepping = 5
++let setup = 6
++let finalize = 7
++let encoding = 8
++let write = 9
++let archive = 10
++let during phase f =
++  let old = switch phase in
++  Fun.protect f ~finally:(fun () -> ignore (switch old))
+diff --git a/src/native/cpu_kernel.c b/src/native/cpu_kernel.c
+index ea72eea..a2cc143 100644
+--- a/src/native/cpu_kernel.c
++++ b/src/native/cpu_kernel.c
+@@ -2,6 +2,7 @@
+    steps. All pointers are borrowed for one bounded, nonallocating call. The
+    OCaml runner owns decoding, hints, segment growth and builtin deduction. */
+ #include "field.h"
++#include "warm_clock.h"
+ #include "trace_encoding.h"
+ 
+ extern intnat cvm_binop(value, intnat, intnat, intnat, intnat);
+@@ -112,7 +113,7 @@ static void queue_poseidon(struct pending_poseidon *q, value pool, const intnat
+ 
+ static void finish_poseidon(struct pending_poseidon *q, value pool, value cache) {
+   if (!q->count) return;
+-  cvm_poseidon_jobs(q->jobs,q->count);
++  WARM_BUILTIN(cvm_poseidon_jobs(q->jobs,q->count));
+   for (unsigned j = 0; j < q->count; j++) {
+     struct poseidon_job *job = &q->jobs[j];
+     for (unsigned i = 0; i < 3; i++) {
+@@ -352,7 +353,7 @@ general:;
+             if (previous && same_value(pool, x, Long_val(Field(state, 6))) &&
+                             same_value(pool, y, Long_val(Field(state, 7)))) b = previous;
+             else {
+-              b = cvm_pedersen(pool, x, y, slot);
++              WARM_BUILTIN(b = cvm_pedersen(pool, x, y, slot));
+               Field(state, 6) = Val_long(x); Field(state, 7) = Val_long(y);
+               Field(state, 8) = Val_long(b);
+             }
+@@ -365,7 +366,7 @@ general:;
+               if (!(cells[base] & cells[base+1] & cells[base+2] & 1) || slot > slots-3) break;
+               ++permutations;
+               if (queue) queue_poseidon(queue,pool,cells+base,pose_cache,base+3,&slot);
+-              else cvm_poseidon_codes(pool,cells+base,pose_cache,base+3,&slot);
++              else WARM_BUILTIN(cvm_poseidon_codes(pool,cells+base,pose_cache,base+3,&slot));
+               b = Long_val(Field(pose_cache,at));
+             }
+           } else if (kind == 5) {
+@@ -373,7 +374,7 @@ general:;
+             if (idx < 2 || slot >= slots || dst || result) break;
+             intnat x = cells[at-idx], y = cells[at-idx+1];
+             if (!(x & y & 1)) break;
+-            b = bitwise(pool, idx-2, x, y, slot);
++            WARM_BUILTIN(b = bitwise(pool, idx-2, x, y, slot));
+             if (!b) break;
+           } else {
+             if (kind && kind != 1 && kind != 2) break;
+diff --git a/src/native/warm_clock.h b/src/native/warm_clock.h
+new file mode 100644
+index 0000000..6f9aa7e
+--- /dev/null
++++ b/src/native/warm_clock.h
+@@ -0,0 +1,24 @@
++/* Single-domain, diagnostic-build exclusive timers. */
++#include <time.h>
++
++static int warm_phase;
++static uint64_t warm_last, warm_duration[12];
++
++static uint64_t warm_now(void) {
++  struct timespec t;
++  clock_gettime(CLOCK_MONOTONIC, &t);
++  return (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec;
++}
++
++static int warm_switch(int next) {
++  uint64_t now = warm_now();
++  int old = warm_phase;
++  if (old) warm_duration[old] += now - warm_last;
++  warm_last = now;
++  warm_phase = next;
++  return old;
++}
++
++#define WARM_BUILTIN(call) do { int old = warm_switch(4); call; warm_switch(old); } while (0)
++CAMLprim value cvm_warm_switch(value next) { return Val_int(warm_switch(Int_val(next))); }
++CAMLprim value cvm_warm_get(value phase) { return Val_long(warm_duration[Int_val(phase)]); }
+diff --git a/src/os/os_hints.ml b/src/os/os_hints.ml
+index 4db43d2..19e1b44 100644
+--- a/src/os/os_hints.ml
++++ b/src/os/os_hints.ml
+@@ -174,7 +174,7 @@ let initialize_input ?entropy_source ?on_da ?image ?layout_def ?(record_trace=tr
+ 
+ let initialize ?entropy_source ?on_da ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
+   let cache = Option.map (fun _ -> Domain.DLS.get classes_cache) image in
+-  let hints = read_input ?cache ~virtual_os path in
++  let hints = Warm_clock.during Warm_clock.witness (fun () -> read_input ?cache ~virtual_os path) in
+   initialize_input ?entropy_source ?on_da ?image ?layout_def ?record_trace ~proof hints cfg prog
+ 
+ let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path cfg program_path =
+diff --git a/src/runner/pie.ml b/src/runner/pie.ml
+index e0d202d..fc744aa 100644
+--- a/src/runner/pie.ml
++++ b/src/runner/pie.ml
+@@ -64,7 +64,8 @@ let memory_member (r : Runner.t) merged offsets emit =
+   let vm = r.vm and chunk = Bytes.create (40 * 8192) in
+   let cursor = [|0; 0; merged|] in
+   while cursor.(0) < vm.nsegs do
+-    let n = encode_memory vm.segs vm.hi vm.nsegs Felt.pool offsets cursor chunk in
++    let n = Warm_clock.during Warm_clock.encoding (fun () ->
++        encode_memory vm.segs vm.hi vm.nsegs Felt.pool offsets cursor chunk) in
+     if n < 0 then fail "Cairo PIE memory address exceeds its encoding";
+     if n > 0 then emit chunk n
+   done
+diff --git a/src/runner/pie_zip.ml b/src/runner/pie_zip.ml
+index 44a2927..f2ac129 100644
+--- a/src/runner/pie_zip.ml
++++ b/src/runner/pie_zip.ml
+@@ -85,7 +85,7 @@ let write_fast ~level path members =
+         original := !original + len;
+         if level = 0 then begin
+           crc := crc_update !crc bytes len;
+-          output oc bytes 0 len
++          Warm_clock.during Warm_clock.write (fun () -> output oc bytes 0 len)
+         end else feed (Lazy.force compressed) oc crc bytes len in
+       write emit;
+       if level <> 0 then begin
