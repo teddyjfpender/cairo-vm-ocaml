@@ -1,7 +1,9 @@
 # Changelog
 
-## 0.3.0 (release candidate)
+## 0.3.0 (2026-11-28)
 
+- Keep a pinned OS program resident across jobs and accept JSON or bounded binary witnesses. Each guarded job executes a fresh VM and returns the SHA-256 of its durably published PIE.
+- Speed up traced VM execution, finalized memory-access accounting and PIE publication. On two prepared mainnet blocks, the warm guarded worker measured 2.03× and 2.17× the speed of the Rust reference with stored PIEs. Generated workloads reached 3.66–4.10×. These measurements exclude node witness assembly. [Workloads, output checks and paired timings](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/d858136/bench/results/v0.3.0-m4-max/warm-round-two/README.md)
 - Generate and securely replay PIEs through the versioned OS-host process. The host checks the compiled OS identity, bounds execution and publishes the finished file atomically. Its deterministic profile reports a typed refusal for generation that requires fresh encryption randomness.
 - Match the stock cairo-vm 3.2.0 ZIP profile, including compression, headers and member order. The general CLI retains its fast archive profile. The exact profile uses a pinned static Rust archive library for ZIP encoding.
 - Qualify Apollo 0.20.0-rc.1 at sequencer revision `1860b9850b5c51858c50c0f5038933e49f932eef`. Eight fixtures matched execution and proof-mode artifacts. The upstream Stwo verifier accepted direct genesis, Virtual OS and aggregator proofs. The latter two use the simple bootloader.
