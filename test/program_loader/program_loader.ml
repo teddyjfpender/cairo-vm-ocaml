@@ -214,3 +214,33 @@ let () =
   match parse (input (first ^ "x")) with
   | exception Yojson.Json_error _ -> ()
   | _ -> failwith "invalid bytes following a cached class were accepted"
+
+let () =
+  let padding = String.make 4_100_000 'x' in
+  let repeated = {|{"nested":{"key":"a long string with a closing } and [ bracket inside it"}}|} in
+  let document extra =
+    Printf.sprintf
+      "{\n  \"debug_info\": {\n    \"file_contents\":{\"x\":\"%s\"},\"extra\":%s,\"extra\":%s,%s\n  },\n  \"ignored\":{}}"
+      padding repeated repeated extra in
+  let visits = ref 0 in
+  let run extra consume =
+    Json_reader.with_program_document ~add_identifier:(fun _ _ _ -> ())
+      ~consume:(fun _ _ -> incr visits; consume ()) (document extra) in
+  run {|"instruction_locations":{}|} (fun () ->
+      run {|"instruction_locations":{}|} (fun () -> ()));
+  assert (!visits = 2);
+  (* A nested closing brace with root indentation forces a complete retry. *)
+  run "\"unknown\":{\"ok\":true\n  },\"instruction_locations\":{}" (fun () -> ());
+  assert (!visits = 3);
+  (match run {|"instruction_locations":{}|} (fun () -> raise Exit) with
+   | exception Exit -> ()
+   | _ -> failwith "consumer exception lost");
+  assert (!visits = 4);
+  (match run "\"extra\":{\"nested\":{\"key\":\"a long string with a closing } and [ bracket inside it\",}},\"instruction_locations\":{}"
+           (fun () -> ()) with
+   | exception Yojson.Json_error _ -> ()
+   | _ -> failwith "malformed repeated span accepted");
+  (match run "\"unknown\":{\"ok\":true\n  },\"instruction_locations\":false" (fun () -> ()) with
+   | exception Yojson.Json_error _ -> ()
+   | _ -> failwith "malformed parallel document accepted");
+  assert (!visits = 4)

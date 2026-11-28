@@ -215,27 +215,41 @@ let from_file ?identifiers ?projection path =
 
 external find_debug_span : string -> int array -> bool = "cvm_json_debug_span" [@@noalloc]
 
-let program_document ~add_identifier src =
+let with_program_document ~add_identifier ~consume src =
   let read ?debug_span () =
+    (* Ambiguous suffix lookup follows the original identifier table order. *)
     let identifiers = Hashtbl.create 1024 in
-    let root = parse_value ~identifiers:(add_identifier identifiers) ?debug_span ~projection:Program ~start:0 ~whole:true src in
+    let root = parse_value ~identifiers:(add_identifier identifiers) ?debug_span
+        ~projection:Program ~start:0 ~whole:true src in
     identifiers, root in
+  let full () = let ids, root = read () in consume ids root in
   let bounds = [|0; 0|] in
   if String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
-     not (find_debug_span src bounds) then read ()
+     not (find_debug_span src bounds) then full ()
   else begin
     let first = bounds.(0) and last = bounds.(1) in
+    let ready = Semaphore.Binary.make false and release = Semaphore.Binary.make false in
+    let verified = Atomic.make false in
     let validate () =
-      let pos = ref first in
-      validate_schema src pos Program_metadata.debug Program_metadata.instruction && !pos = last in
+      (* Terminating an OCaml domain collects all domains' nurseries. Leave
+         that collection until the consumer has released the temporary JSON. *)
+      Fun.protect ~finally:(fun () ->
+          Semaphore.Binary.release ready; Semaphore.Binary.acquire release) (fun () ->
+          let pos = ref first in
+          Atomic.set verified
+            (validate_schema src pos Program_metadata.debug Program_metadata.instruction && !pos = last)) in
     match (try Some (Domain.spawn validate) with Failure _ -> None) with
-    | None -> read ()
+    | None -> full ()
     | Some worker ->
-        (* Only accept the speculative parse if the complete schema ends at
-           precisely the observed boundary. A retry owns a fresh identifier table. *)
-        match read ~debug_span:(first, last) () with
-        | parsed -> if Domain.join worker then parsed else read ()
-        | exception exn ->
-            let bt = Printexc.get_raw_backtrace () in
-            if Domain.join worker then Printexc.raise_with_backtrace exn bt else read ()
+        Fun.protect ~finally:(fun () -> Semaphore.Binary.release release; Domain.join worker) (fun () ->
+            let tentative = try Ok (read ~debug_span:(first,last) ())
+              with e -> Error (e, Printexc.get_raw_backtrace ()) in
+            Semaphore.Binary.acquire ready;
+            if not (Atomic.get verified) then full () else
+            match tentative with
+            | Ok (ids,root) -> consume ids root
+            | Error (e,bt) -> Printexc.raise_with_backtrace e bt)
   end
+
+let program_document ~add_identifier src =
+  with_program_document ~add_identifier ~consume:(fun ids root -> ids,root) src

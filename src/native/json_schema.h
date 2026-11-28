@@ -1,10 +1,12 @@
 /* Fast validation for the data constructors in Program_metadata.schema.
    Unusual spellings and deep inputs return to the original OCaml validator. */
+struct json_span { const unsigned char *start; size_t length; };
 struct schema_reader {
   value source;
   value projected_instruction;
   int debug_root;
   const unsigned char *base, *end, *p;
+  struct json_span previous[32];
 };
 /* Text is immediate. Block tags follow the declaration order of the other
    constructors in src/program/program_metadata.ml. */
@@ -22,15 +24,54 @@ static int schema_uint(const unsigned char *p, size_t n, uint64_t limit) {
   }
   return 1;
 }
-static int schema_skip(struct schema_reader *s) {
-  intnat pos = Long_val(cvm_json_skip(s->source, Val_long(s->p - s->base)));
-  if (pos < 0)
-    return 0;
-  s->p = s->base + pos;
+/* Compiler records frequently repeat the same arrays or maps at adjacent
+   locations. A span validated in this source can be reused only on an exact
+   byte match. Object and array closing delimiters make each span unambiguous. */
+static int schema_skip_cached(struct schema_reader *s, const unsigned char *key,
+                              size_t key_length, int split_object) {
+  const unsigned char *first = whitespace(s->p, s->end);
+  if (first == s->end) return 0;
+  unsigned slot = (unsigned)(key_length * 11 + (key_length ? key[0] : 0));
+  struct json_span *span = &s->previous[slot % 32];
+  int container = *first == '{' || *first == '[';
+  if (container && span->length && (size_t)(s->end-first) >= span->length &&
+      !memcmp(first, span->start, span->length)) {
+    s->p = first + span->length;
+    return 1;
+  }
+  if (split_object && *first == '{') {
+    const unsigned char *p = whitespace(first+1, s->end);
+    if (p == s->end) return 0;
+    if (*p != '}') for (;;) {
+      if (*p != '"') return 0;
+      const unsigned char *name = p+1, *after = string_end(name, s->end, NULL);
+      if (!after) return 0;
+      p = whitespace(after, s->end);
+      if (p == s->end || *p != ':') return 0;
+      s->p = p+1;
+      if (!schema_skip_cached(s, name, (size_t)(after-name-1), 0)) return 0;
+      p = whitespace(s->p, s->end);
+      if (p == s->end) return 0;
+      if (*p == '}') break;
+      if (*p != ',') return 0;
+      p = whitespace(p+1, s->end);
+      if (p == s->end) return 0;
+    }
+    s->p = p + 1;
+  } else {
+    intnat pos = Long_val(cvm_json_skip(s->source, Val_long(first - s->base)));
+    if (pos < 0) return 0;
+    s->p = s->base + pos;
+  }
+  if (container && s->p-first >= 32) {
+    span->start = first;
+    span->length = (size_t)(s->p-first);
+  }
   return 1;
 }
 static int schema_take(struct schema_reader *s, unsigned char c) {
   const unsigned char *p = whitespace(s->p, s->end);
+  s->p = p;
   if (p == s->end || *p != c)
     return 0;
   s->p = p + 1;
@@ -130,7 +171,7 @@ static int schema_value(struct schema_reader *s, value spec, unsigned depth) {
         if (list == Val_emptylist &&
             (!(s->debug_root &&
                (depth == 1 || spec == s->projected_instruction)) ||
-             !schema_skip(s)))
+             !schema_skip_cached(s, key, n, 1)))
           return 0;
       }
     } while (schema_take(s, ','));

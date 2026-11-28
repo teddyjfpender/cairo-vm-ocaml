@@ -161,9 +161,20 @@ let load_with_identifiers identifiers (j : J.t) : t =
   let prime = z_of_string (U.to_string (U.member "prime" j)) in
   if not (Z.equal prime Felt.p) then raise (Parse_error "Unexpected Cairo field prime");
   let data =
-    U.member "data" j |> U.to_list
-    |> List.map (fun x -> z_of_string (U.to_string x))
-    |> Array.of_list
+    let words = U.member "data" j |> U.to_list in
+    let parse x = z_of_string (U.to_string x) in
+    if List.compare_length_with words 128 < 0 then Array.of_list (List.map parse words)
+    else
+      let parsed = Hashtbl.create 512 in
+      let word x =
+        let text = U.to_string x in
+        match Hashtbl.find_opt parsed text with
+        | Some z -> z
+        | None ->
+            let z = z_of_string text in
+            if Hashtbl.length parsed < 8192 then Hashtbl.add parsed text z;
+            z in
+      Array.of_list (List.map word words)
   in
   let builtins = U.member "builtins" j |> U.to_list |> List.map U.to_string in
   let rec resolve name depth =
@@ -178,7 +189,7 @@ let load_with_identifiers identifiers (j : J.t) : t =
   let refs =
     match U.member "reference_manager" j with
     | `Assoc _ as rm ->
-        let expressions = Hashtbl.create 64 in
+        let expressions = Hashtbl.create (if Array.length data >= 4096 then 512 else 64) in
         let parse value =
           match Hashtbl.find_opt expressions value with
           | Some e -> e
@@ -260,8 +271,7 @@ let load_file path =
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
-    let identifiers, j = Json_reader.program_document ~add_identifier contents in
-    load_with_identifiers identifiers j
+    Json_reader.with_program_document ~add_identifier ~consume:load_with_identifiers contents
 
 let pack program =
   try Packed_program.encode program
