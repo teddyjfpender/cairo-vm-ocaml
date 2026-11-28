@@ -5,8 +5,7 @@ use std::error::Error;
 use std::fs::File;
 use std::path::PathBuf;
 
-use cairo_program_runner_lib::types::RunMode;
-use cairo_vm::cairo_run::cairo_run_program;
+use cairo_vm::cairo_run::{cairo_run_program, CairoRunConfig};
 use cairo_vm::types::layout_name::LayoutName;
 use cairo_vm::types::program::Program;
 use starknet_os::hint_processor::panicking_state_reader::PanickingStateReader;
@@ -17,29 +16,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let [program, task, snapshot, kind, layout] = args.as_slice() else {
         return Err(
-            "expected PROGRAM INPUT SNAPSHOT os|aggregator all_cairo|all_cairo_stwo".into(),
+            "expected PROGRAM INPUT SNAPSHOT os|virtual-os|aggregator all_cairo|all_cairo_stwo"
+                .into(),
         );
     };
-    let mut config = RunMode::Proof {
+    let config = CairoRunConfig {
+        proof_mode: true,
+        trace_enabled: true,
+        relocate_trace: false,
+        fill_holes: true,
         layout: match layout.to_str() {
             Some("all_cairo") => LayoutName::all_cairo,
             Some("all_cairo_stwo") => LayoutName::all_cairo_stwo,
             _ => return Err("unrecognized proof layout".into()),
         },
-        dynamic_layout_params: None,
+
         disable_trace_padding: true,
         relocate_mem: false,
-    }
-    .create_config();
-    config.relocate_trace = false;
-    config.fill_holes = true;
+        ..Default::default()
+    };
     let program = Program::from_file(program, Some("main"))?;
     let runner = if kind.to_str() == Some("aggregator") {
         use starknet_os::hint_processor::aggregator_hint_processor::AggregatorHintProcessor;
         let witness = serde_json::from_reader(std::io::BufReader::new(File::open(task)?))?;
         let mut hints = AggregatorHintProcessor::new(&program, witness);
         cairo_run_program(&program, &config, &mut hints)?
-    } else if kind.to_str() == Some("os") {
+    } else if matches!(kind.to_str(), Some("os" | "virtual-os")) {
         let OsHints {
             os_hints_config,
             os_input:

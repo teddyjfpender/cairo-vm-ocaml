@@ -83,7 +83,7 @@ let proof_facts vm r =
 
 type contract = { entries : Felt.t ref; storage : Felt.t ref }
 
-let write_task vm r destination contracts state classes =
+let write_task ~has_proof_facts vm r destination contracts state classes =
   let initial = take r in
   let final = take r in
   let prev = take r in
@@ -99,7 +99,7 @@ let write_task vm r destination contracts state classes =
     fail "Aggregator requires an uncommitted full OS state diff";
   let l1_first,l1_last = messages vm r ~to_l1:true in
   let l2_first,l2_last = messages vm r ~to_l1:false in
-  let facts_first,facts_last = proof_facts vm r in
+  let facts = if has_proof_facts then Some (proof_facts vm r) else None in
   let state_start = !state and classes_start = !classes in
   let n_contracts = count r in
   for _ = 1 to n_contracts do
@@ -136,11 +136,15 @@ let write_task vm r destination contracts state classes =
   let roots = gen_arg vm [initial; final] in
   let header = gen_arg vm [roots; prev; next; prev_hash; next_hash; os_hash; config; kzg; full] in
   let updates = gen_arg vm [state_start; Felt.small n_contracts; classes_start; Felt.small n_classes] in
-  let first = gen_arg vm [l1_first; l2_first; facts_first] in
-  let last = gen_arg vm [l1_last; l2_last; facts_last] in
+  let first, last = match facts with
+    | None -> [l1_first; l2_first], [l1_last; l2_last]
+    | Some (start, finish) -> [l1_first; l2_first; start], [l1_last; l2_last; finish] in
+  let first = gen_arg vm first in
+  let last = gen_arg vm last in
   append vm destination [header; updates; first; last]
 
 let load vm c words =
+  let has_proof_facts = Os_da.has_tx_proof_facts c in
   let r = {words;index=0} in
   let tasks = count r in
   if tasks = 0 then fail "Aggregator needs at least one task";
@@ -154,7 +158,7 @@ let load vm c words =
     (match !program_hash with
      | Some previous when not (Felt.equal previous hash) -> fail "Aggregator program hashes differ"
      | _ -> program_hash := Some hash);
-    write_task vm r destination contracts state classes
+    write_task ~has_proof_facts vm r destination contracts state classes
   done;
   set_val vm c "os_program_hash" (Option.get !program_hash);
   set_val vm c "n_tasks" (Felt.small tasks)

@@ -35,6 +35,9 @@ jobs:
           python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/starknet-os.json" \
             --only genesis --only account --only deprecated-calls --only storage-2048
 
+      - name: Reproduce historical Apollo execution and proof artifacts
+        run: python3 test/fixtures/programs/apollo-0.20.0-rc.1/check.py --binary _build/default/bin/main.exe
+
       - name: Reproduce virtual OS and aggregator outputs
         run: |
           gzip -dc test/fixtures/programs/virtual-os.json.gz > "$RUNNER_TEMP/virtual-os.json"
