@@ -4,7 +4,8 @@ The archive owner selects Cairo 0 accounts, declares spanning at least two compi
 
 ```sh
 python3 bench/qualify_os_host.py handoff/manifest.json \
-  --trusted-sha256 "$MANIFEST_SHA256" --host /opt/oxcairo/oxcairo-os-host
+  --trusted-sha256 "$MANIFEST_SHA256" --host /opt/oxcairo/oxcairo-os-host \
+  > handoff/qualification.json
 ```
 
 The verifier checks each source file against the owner's inventory, compares the computed, header and anchored roots reported by the independent fold, and invokes the candidate once per witness. A passing receipt includes a full-archive SHA-256 shared by both implementations for every block. The fold and L1 observation happen upstream. Authenticating the manifest binds those observations to the run.
@@ -27,7 +28,7 @@ The receipt covers candidate execution on a prepared witness. Whole-job timing s
 
 On the dedicated Linux x86_64 runner, run `python3 bench/whole_os_job.py whole-job.json --output results.json`. Supply a schema 1 plan with `chain_id` set to `SN_MAIN`, the `hardware` description, `cache_policy`, the `qualification` artifact and its `qualified_manifest_sha256` (the handoff manifest digest reported inside the qualification). Each entry in `cases` has the qualified block `number` and its raw recorded `source` artifact. Include every qualified block. Use a fresh output path.
 
-The `commands` object contains `rust` and `oxcairo`. Each has an `executable` artifact and an `arguments` array. The harness replaces the whole argument tokens `{source}`, `{output}` and `{work}` with absolute paths. Each adapter must acquire and decompress the recorded input, compile classes and prepare the witness using the same configuration, execute its respective VM, validate the PIE and publish it. Include stage timings from the host's own instrumentation when attributing time. The harness verifies full archive digests and records elapsed wall time and GNU time's maximum resident set size for each job. Kernel page caches are shared across arms. Each arm receives a fresh job directory.
+The `commands` object contains `rust` and `oxcairo`. Each has an `executable` artifact and an `arguments` array. The harness replaces the whole argument tokens `{source}`, `{output}` and `{work}` with absolute paths. Each adapter must acquire and decompress the recorded input, compile classes and prepare the witness using the same configuration, execute its respective VM, validate the PIE and publish it. Include stage timings from the host's own instrumentation when attributing time. The harness verifies full archive digests and records elapsed wall time and GNU time’s maximum resident set size (KiB) for each job. On Linux this is the maximum for one process in the job, so concurrent memory use across the process tree may be higher. Kernel page caches are shared across arms. Each arm receives a fresh job directory.
 
 The default is five paired, seeded, randomized rounds over all blocks. The summary reports each block's median Rust and candidate times, the median of their speedup ratios, and the ratio of the sums of the per-block medians. All individual observations are retained, including slower candidate runs. The plan, qualification, command digests, hardware and cache policy identify the measurement.
 
