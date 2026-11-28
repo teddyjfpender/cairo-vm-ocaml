@@ -48,6 +48,7 @@ val program_document :
     debug maps may be validated concurrently with independent program fields. *)
 
 val with_program_document :
+  ?parallel:bool ->
   ?add_struct:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->
   ?word_offsets:int array option ref ->
   ?add_batch:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->

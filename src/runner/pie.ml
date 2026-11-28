@@ -4,9 +4,10 @@ open Vm
 
 (* ---- compact serde_json output ---- *)
 
-type json = Obj of (string * json) list | Arr of json list | Str of string | Num of string | Null
+type json = Obj of (string * json) list | Arr of json list | Str of string | Num of string | Null | Write of (Buffer.t -> unit)
 
 let rec emit b = function
+  | Write write -> write b
   | Null -> Buffer.add_string b "null"
   | Num s -> Buffer.add_string b s
   | Str s ->
@@ -55,7 +56,7 @@ let ord_rank = function
 
 let by_ord l = List.sort (fun (a, _) (b, _) -> compare (ord_rank a) (ord_rank b)) l
 
-let canonical z = Felt.to_z (Felt.of_z z)
+let canonical z = if Z.sign z >= 0 && Z.lt z Felt.p then z else Z.erem z Felt.p
 
 external encode_memory : Segment.seg array -> int array -> int -> Felt.pool -> int array ->
   int array -> bytes -> int = "cvm_pie_encode_byte" "cvm_pie_encode" [@@noalloc]
@@ -75,7 +76,14 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
   let output_attributes = Option.value output_attributes ~default:r.output_attributes in
   if r.proof then fail "Cairo PIE output cannot be used in proof mode";
   let vm = r.vm in
-  let seg_info i n = Obj [ ("index", int i); ("size", int n) ] in
+  let emit_segment b i n =
+    Buffer.add_string b "{\"index\":";
+    Buffer.add_string b (string_of_int i);
+    Buffer.add_string b ",\"size\":";
+    Buffer.add_string b (string_of_int n);
+    Buffer.add_char b '}'
+  in
+  let seg_info i n = Write (fun b -> emit_segment b i n) in
   let builtins = vm.builtins in
   let stop b = if b.stop_ptr < 0 then fail "No stop pointer found for builtin %s" (bname b.kind) else b.stop_ptr in
   let n_used = List.length r.prog_builtins in
@@ -88,16 +96,31 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
   check_ret ret_fp "return fp";
   check_ret ret_pc "return pc";
   let known = 0 :: 1 :: Felt.rseg ret_fp :: Felt.rseg ret_pc :: List.map (fun b -> b.base) builtins in
-  let extra = List.filter (fun s -> not (List.mem s known)) (List.init vm.nsegs Fun.id) in
-  (* finalized sizes win (a run from a PIE finalizes every segment) *)
-  let extra_infos = List.map (fun s -> (s, Resources.segment_size r s)) extra in
+  let is_extra = Array.make vm.nsegs true in
+  List.iter (fun s -> if s >= 0 && s < vm.nsegs then is_extra.(s) <- false) known;
   let extra_json, merged, offsets =
-    match (merge_extra_segments, extra_infos) with
-    | true, (first, _) :: _ ->
-        let offsets = Array.make vm.nsegs (-1) in
-        let size = List.fold_left (fun pos (seg, n) -> offsets.(seg) <- pos; pos+n) 0 extra_infos in
-        [seg_info first size], first, offsets
-    | _ -> List.map (fun (s, n) -> seg_info s n) extra_infos, -1, [||]
+    if merge_extra_segments then begin
+      let offsets = Array.make vm.nsegs (-1) in
+      let first = ref (-1) and size = ref 0 in
+      Array.iteri (fun s extra -> if extra then begin
+        if !first < 0 then first := s;
+        offsets.(s) <- !size;
+        size := !size + Resources.segment_size r s
+      end) is_extra;
+      (Arr (if !first < 0 then [] else [seg_info !first !size]), !first, offsets)
+    end else begin
+      let write b =
+        Buffer.add_char b '[';
+        let comma = ref false in
+        Array.iteri (fun s extra -> if extra then begin
+          if !comma then Buffer.add_char b ',';
+          comma := true;
+          emit_segment b s (Resources.segment_size r s)
+        end) is_extra;
+        Buffer.add_char b ']'
+      in
+      (Write write, -1, [||])
+    end
   in
   let ordered = List.filter_map (fun k -> List.find_opt (fun b -> b.kind = k) builtins) all_builtins in
   let metadata =
@@ -106,7 +129,12 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
         ( "program",
           Obj
             [
-              ("data", Arr (Array.to_list (Array.map (fun z -> Num (Z.to_string (canonical z))) r.prog.data)));
+              ("data", Write (fun b ->
+                Buffer.add_char b '[';
+                Array.iteri (fun i z ->
+                  if i > 0 then Buffer.add_char b ',';
+                  Buffer.add_string b (Z.to_string (canonical z))) r.prog.data;
+                Buffer.add_char b ']'));
               ("builtins", Arr (List.map (fun k -> Str (bname k)) r.prog_builtins));
               ("main", int main);
               ("prime", Num (Z.to_string Felt.p));
@@ -116,7 +144,7 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
         ("ret_fp_segment", seg_info (Felt.rseg ret_fp) 0);
         ("ret_pc_segment", seg_info (Felt.rseg ret_pc) 0);
         ("builtin_segments", Obj (List.map (fun b -> (bname b.kind, seg_info b.base (stop b))) ordered));
-        ("extra_segments", Arr extra_json);
+        ("extra_segments", extra_json);
       ]
   in
   let additional =
@@ -145,7 +173,7 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
     Obj
       [
         ("n_steps", int vm.steps);
-        ("n_memory_holes", int (Resources.memory_holes r));
+        ("n_memory_holes", int (Resources.pie_memory_holes r));
         ( "builtin_instance_counter",
           Obj (List.map (fun (k, b) -> (suffix k, int (Resources.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
       ]

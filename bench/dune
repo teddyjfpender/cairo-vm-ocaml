@@ -6,7 +6,7 @@
 (executable
  (name native_os_worker)
  (public_name oxcairo-os-worker)
- (modules native_os_worker)
+ (modules native_os_worker worker_request worker_service)
  (libraries cairovm unix))
 
 (executable
@@ -17,4 +17,9 @@
 (executable
  (name supplied_pie)
  (modules supplied_pie)
+ (libraries cairovm unix))
+
+(executable
+ (name witness_decode)
+ (modules witness_decode)
  (libraries cairovm unix))

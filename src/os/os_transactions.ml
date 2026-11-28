@@ -28,7 +28,9 @@ let register ~debug ~os_program ~source ~virtual_os ~calls:call_state ~block ~fe
   let calls = ref [] in
   let offsets = lazy (Os_resources.builtin_offsets os_program) in
   let resources = Os_resources.snapshot offsets and entering = ref None in
-  let next_tx () = Json_reader.from_offset source (U.to_int (pop "transaction" txs)) in
+  let next_tx () =
+    let item = pop "transaction" txs in
+    match source with Some raw -> Json_reader.from_offset raw (U.to_int item) | None -> item in
   let tx () = match !active with Some t -> t | None -> fail "Missing active OS transaction" in
   let tx_info () = match !info with Some i -> i | None -> fail "Missing active execution info" in
   let member key = U.member key (tx ()).body in
@@ -57,8 +59,9 @@ let register ~debug ~os_program ~source ~virtual_os ~calls:call_state ~block ~fe
   let start () =
     if !info <> None then fail "Execution info already active";
     let item = pop "transaction execution info" infos in
-    let i = if virtual_os then item else
-      Json_reader.from_offset ~projection:Os_calls.execution_projection source (U.to_int item) in
+    let i = match source with
+      | Some raw when not virtual_os -> Json_reader.from_offset ~projection:Os_calls.execution_projection raw (U.to_int item)
+      | _ -> item in
     info := Some i;
     let rec flatten call =
       call :: List.concat_map flatten (U.to_list (U.member "inner_calls" call)) in

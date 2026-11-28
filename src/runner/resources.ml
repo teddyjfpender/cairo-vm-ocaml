@@ -340,13 +340,13 @@ let segment_size r seg =
       | Some s -> if seg < Array.length s then s.(seg) else fail "Missing segment used sizes for segment %d" seg
       | None -> used_size r.vm seg)
 
-let memory_holes r =
+let count_holes r accessed =
   let holes = ref 0 in
   for seg = 0 to r.vm.nsegs - 1 do
     if not (is_builtin_seg r seg) then begin
       let a =
         (* only proof mode finalizes the zero segment; a run from a PIE sizes it without finalizing *)
-        if seg = r.zero_seg && not (r.proof && Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed_count r seg
+        if seg = r.zero_seg && not (r.proof && Hashtbl.mem r.seg_sizes seg) then r.zero_size else accessed seg
       in
       if a > 0 then begin
         let size = segment_size r seg in
@@ -356,6 +356,36 @@ let memory_holes r =
     end
   done;
   !holes
+
+let memory_holes r = count_holes r (accessed_count r)
+
+external parallel_access : seg -> int -> (int array * int array) -> (int * int * int array) array ->
+  seg -> int array -> int array -> int -> bool
+  = "cvm_pie_access_byte" "cvm_pie_access" [@@noalloc]
+
+let pie_memory_holes r =
+  let vm = r.vm and program_size = Array.length r.prog.data in
+  if vm.tlen < 250_000 || vm.steps <> vm.tlen || r.proof ||
+     Array.length r.acc.bits <> 0 || r.acc.cursor <> 0 ||
+     Hintrt.Felt_tbl.length r.acc.pending_temp <> 0 ||
+     vm.incomplete_blake <> [] || !Builtins_ext.accessed_log <> [] ||
+     program_size > 1_000_000 || vm.nsegs > 1_000_000 then memory_holes r
+  else
+    let sizes = Array.init vm.nsegs (fun seg ->
+        if is_builtin_seg r seg || seg = r.zero_seg then -1 else used_size vm seg) in
+    let pages = Hashtbl.fold (fun (seg,base) page acc -> (seg,base,page) :: acc)
+        vm.code_pages [] |> Array.of_list in
+    Array.sort (fun (a,b,_) (x,y,_) ->
+        let c = compare a x in if c = 0 then compare b y else c) pages;
+    (* Extended instructions are absent from the static instruction cache. *)
+    let extensions = Array.mapi (fun pc word ->
+        let bits = Z.numbits word in
+        if bits < 64 || bits > 65 || (pc < Array.length vm.icache && vm.icache.(pc) <> 0)
+        then 0 else try Cpu.decode_at vm 0 pc with Errors.Vm_error _ -> 0) r.prog.data in
+    let counts = Array.make vm.nsegs 0 in
+    if parallel_access vm.trace vm.tlen (vm.icache, extensions) pages vm.segs.(1)
+        sizes counts program_size then count_holes r (Array.get counts)
+    else memory_holes r
 
 let u32 x = x land 0xffffffff
 

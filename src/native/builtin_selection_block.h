@@ -5,6 +5,39 @@
 #define BATCH_STEPS 8192
 #define SELECT_FIRST UINT64_C(0x1c2b800080008000)
 
+/* The row kernels only handle segment-zero code and compact registers.
+   Leave wider traces, or a trace that needs growing, to the normal VM. */
+struct row_trace {
+  intnat *entries;
+  intnat used, capacity;
+};
+
+static inline int trace_room(struct row_trace *t, intnat largest_pc,
+                             intnat largest_reg, int count) {
+  return !t || (largest_pc < 65536 && largest_reg < (1 << 23) &&
+                t->used >= 0 && t->used <= t->capacity - count);
+}
+
+static inline void row_entry(struct row_trace *t, intnat pc, intnat ap, intnat fp) {
+  t->entries[t->used++] = ((uint64_t)pc << 47) | (ap << 24) | (fp << 1) | 1;
+}
+
+static void trace_selection_row(struct row_trace *t, intnat pc, intnat fp,
+                                int chosen, int implicit) {
+  if (implicit) {
+    row_entry(t, pc - 6, fp, fp);
+    row_entry(t, pc - 2, fp, fp);
+  }
+  const intnat ap = fp + 3;
+  for (int i = 0; i < 4; ++i) row_entry(t, pc + i, ap, fp);
+  if (chosen) {
+    row_entry(t, pc + 7, ap, fp);
+    row_entry(t, pc + 8, ap, fp);
+  } else row_entry(t, pc + 5, ap, fp);
+  static const int pc_delta[] = {9, 11, 13, 14, 15, 17};
+  for (int i = 0; i < 6; ++i) row_entry(t, pc + pc_delta[i], ap + i, fp);
+}
+
 /* The mask-free comparisons also reject a hint or stop marker on any interior
    instruction. Literal values live in program memory, not the decoded cache. */
 /* inner_select_builtins, word offsets relative to the hint:
@@ -90,7 +123,7 @@ static int select_builtin_block(intnat pc, value segs, value flags, value highs,
 }
 
 value cvm_selection_rows(value state, value cache, value segs, value flags, value highs, value pool,
-                         value nsegs_val, value watched) {
+                         value nsegs_val, value watched, value trace) {
   if (Wosize_val(state) < 17) return Val_int(0);
   intnat nsegs = Long_val(nsegs_val), pc = Long_val(Field(state, 0)),
          ap = Long_val(Field(state, 1)), fp = Long_val(Field(state, 2)),
@@ -116,6 +149,8 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
      registered hint, a conditional branch and ap += 3. Defer the hint write
      and scope update until the complete row can commit. */
   intnat initial_fp = fp, rows = 0;
+  struct row_trace buf = {CELLS(trace), Long_val(Field(state,4)), CAPACITY(trace)};
+  struct row_trace *t = Long_val(Field(state,14)) ? &buf : NULL;
   for (;;) {
     int chosen;
     if (!count) {
@@ -136,9 +171,11 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
       }
     }
     int implicit = count != 0;
+    if (!trace_room(t, pc+19, fp+10, 11+chosen+2*implicit)) break;
     int result = select_builtin_block(pc, segs, flags, highs, nsegs, stack, len,
                                       ap + (implicit ? 3 : 0), fp, pool, watched, chosen, implicit);
     if (!result) break;
+    if (t) trace_selection_row(t, pc, fp, chosen, implicit);
     if (implicit) {
       count += 2;
       hints++;
@@ -155,13 +192,20 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
      At zero rows remaining, the base case pushes its result and returns
      through exactly those frames. The caller's own return remains pending. */
   intnat next_pc = pc - 6;
-  if (rows && fits(ap, len) && count + rows + 2 <= BATCH_STEPS && stack[fp - 3] == small_code(0) &&
+  if (rows && fits(ap, len) && count + rows + 2 <= BATCH_STEPS &&
+      trace_room(t, pc+19, ap+1, rows+2) && stack[fp - 3] == small_code(0) &&
       pc + 19 < size && pc + 19 < CAPACITY(code) &&
       Field(cache, pc - 4) == Val_long(UINT64_C(0x1e0a7ffb7fff8000)) &&
       Field(cache, pc - 3) == Val_long(UINT64_C(0x184b7fff7fff7ffe)) &&
       Field(cache, pc + 19) == Val_long(UINT64_C(0x184b7fff7fff7ffe)) &&
       (!stack[ap] || same_value(pool, stack[ap], stack[fp - 5]))) {
     if (!stack[ap]) stack[ap] = stack[fp - 5];
+    if (t) {
+      row_entry(t, pc-6, ap, fp);
+      row_entry(t, pc-4, ap, fp);
+      row_entry(t, pc-3, ap+1, fp);
+      for (int i = 1; i < rows; ++i) row_entry(t, pc+19, ap+1, fp-10*i);
+    }
     ++ap;
     if (ap > high) high = ap;
     count += rows + 2;
@@ -175,12 +219,16 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
     Field(state, 3) = Val_long(high);
     Field(state, 15) = Val_long(remaining);
     Field(state, 16) = Val_long(hints);
+    if (t) {
+      Field(state, 4) = Val_long(t->used);
+      Field(state, 9) = Val_long(t->used-1);
+    }
   }
   return Val_int(count);
 }
 value cvm_selection_rows_byte(value *v, int argc) {
   (void)argc;
-  return cvm_selection_rows(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
+  return cvm_selection_rows(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
 }
 
 #define VALIDATE_FIRST UINT64_C(0x10f780017fff7ffd)
@@ -192,6 +240,18 @@ value cvm_selection_rows_byte(value *v, int argc) {
 static inline int validation_entry(value cache, intnat pc, intnat size) {
   return fits(pc, size) && pc + 4 < size && Field(cache, pc) == Val_long(VALIDATE_FIRST) &&
          Field(cache, pc + 4) == Val_long(PUSH_RANGE_CHECK);
+}
+
+static void trace_validation_row(struct row_trace *t, intnat pc, intnat ap, intnat fp) {
+  row_entry(t, pc, ap, fp);
+  for (int i = 0; i < 5; ++i) row_entry(t, pc+4+i, ap+i, fp);
+  const intnat nested_fp = ap+6;
+  row_entry(t, pc-6, nested_fp, nested_fp);
+  row_entry(t, pc-5, nested_fp+1, nested_fp);
+  row_entry(t, pc-4, nested_fp+2, nested_fp);
+  row_entry(t, pc-3, nested_fp+2, nested_fp);
+  row_entry(t, pc-1, nested_fp+3, nested_fp);
+  for (int i = 0; i < 5; ++i) row_entry(t, pc+10+2*i, ap+9+i, fp);
 }
 
 /* Repeated iterations of validate_builtins, including each call to validate_builtin.
@@ -213,7 +273,7 @@ validate_builtins_block(value cache, intnat pc, intnat cache_size, const intnat 
                         intnat program_length, value segs, value flags, value highs, intnat nsegs,
                         intnat *stack, intnat length, intnat ap, intnat fp, value pool,
                         value watched, const struct temporary_segments *temps, int available,
-                        intnat *next_pc, intnat *next_ap, intnat *next_fp) {
+                        intnat *next_pc, intnat *next_ap, intnat *next_fp, struct row_trace *t) {
   const intnat initial_fp = fp;
   if (pc < 6 || pc > cache_size - 19 || pc > program_length - 20 || fp < 7 || ap < fp ||
       ap > length - 15)
@@ -259,6 +319,7 @@ validate_builtins_block(value cache, intnat pc, intnat cache_size, const intnat 
   static const intnat empty[15] = {0};
   int count = 0;
   for (; count < rows; count++) {
+    if (!trace_room(t, pc+20, ap+15, 16)) break;
     intnat start = slots[1][count], finish = slots[2][count], width = slots[3][count], delta;
     if ((width & 3) != 1 || width <= small_code(0)) break;
     if ((start & 3) == 2 && (finish & 3) == 2 && start >= 0 && (start >> 42) == (finish >> 42))
@@ -300,6 +361,7 @@ validate_builtins_block(value cache, intnat pc, intnat cache_size, const intnat 
         if (!dst[k]) dst[k] = out[k];
     }
     if (!slots[0][count]) slots[0][count] = quotient;
+    if (t) trace_validation_row(t, pc, ap, fp);
     for (int k = 0; k < 4; k++) ptrs[k] += 4;
     ap += 15;
     fp = ap;
@@ -325,12 +387,19 @@ validate_builtins_block(value cache, intnat pc, intnat cache_size, const intnat 
   *next_fp = fp;
   /* Base path (test, push, return) plus count - 1 recursive returns. The
      caller's own return is the next pc and is charged by its normal step. */
-  if (fits(ap, length) && steps + count + 2 <= available && stack[fp - 3] == small_code(0) &&
+  if (fits(ap, length) && steps + count + 2 <= available &&
+      trace_room(t, pc+20, ap+1, count+2) && stack[fp - 3] == small_code(0) &&
       pc + 20 < cache_size && Field(cache, pc + 2) == Val_long(PUSH_RANGE_CHECK) &&
       Field(cache, pc + 3) == Val_long(CAIRO_RETURN) &&
       Field(cache, pc + 20) == Val_long(CAIRO_RETURN) &&
       (!stack[ap] || same_value(pool, stack[ap], stack[fp - 7]))) {
     if (!stack[ap]) stack[ap] = stack[fp - 7];
+    if (t) {
+      row_entry(t, pc, ap, fp);
+      row_entry(t, pc+2, ap, fp);
+      row_entry(t, pc+3, ap+1, fp);
+      for (int i = 1; i < count; ++i) row_entry(t, pc+20, ap+1, fp-15*i);
+    }
     ap++;
     steps += count + 2;
     *next_fp = initial_fp;

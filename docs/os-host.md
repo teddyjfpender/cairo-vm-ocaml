@@ -17,11 +17,13 @@ The default publication profile `os-host-standard` matches the serial Rust servi
 
 A consumer that applies its own final compression policy can request `"publication":"stored"`. The host emits an uncompressed ZIP with the five `rust-3.2` members in the same order and preserves separate extra segments. This avoids compressing an intermediate archive before the consumer validates and repackages it. Budget the output limit and temporary disk space for the uncompressed members, including 40 bytes per initialized memory cell and the ZIP headers. The response digest covers the complete stored archive.
 
+The guarded worker can compute that SHA-256 while writing the stored archive. It computes each member CRC before emitting the local ZIP header so every published byte is final. Builds without native SHA-256 and jobs that cannot start the digest thread compute the receipt synchronously. The file sync, rename and directory sync complete before the worker reports success.
+
 The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
 
 The deterministic host requires empty or absent encryption recipients for generation. A nonempty `os_hints_config.public_keys` receives exit 6 before VM stepping. The general native CLI supports encrypted generation with fresh randomness. Secure replay accepts an already produced archive.
 
-The program is the compiled main OS for the named revision. The witness is the JSON input of the sequencer OS hint processor. Preparing that witness from RPC, compiling contract classes and validating a block's state root require upstream components. Choose regular files owned by the service, keep input paths stable for the job, and give the service a private output directory on a local filesystem. These path fields are an interface for a trusted host application. A network service accepting untrusted requests must assign paths itself.
+The program is the compiled main OS for the named revision. The sequencer OS hint processor accepts JSON and versioned OXW1 binary witnesses. [Native witness format](witness-wire.md) Preparing that witness from RPC, compiling contract classes and validating a block's state root require upstream components. Choose regular files owned by the service, keep input paths stable for the job, and give the service a private output directory on a local filesystem. These path fields are an interface for a trusted host application. A network service accepting untrusted requests must assign paths itself.
 
 OxCairo recognizes the full and compact compiler JSON digests for Apollo revision `1860b9850b5c51858c50c0f5038933e49f932eef` and revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. For an independently qualified build, set the **operator environment** variable `OXCAIRO_OS_PROFILE` to a trusted JSON file with `revision` (40 lowercase hex digits) and `program_sha256` (64 lowercase hex digits). Record the compiler, source, program hash and qualification receipts with that profile. The worker hashes its private compiler snapshot before execution. Adding a digest authorizes those bytes for execution and carries no parity certification.
 
@@ -83,3 +85,62 @@ jq '.program = "/srv/os/compiled-os.packed"' /srv/jobs/request.json | oxcairo-os
 ```
 
 Regenerate the packed file and its profile from the verified JSON when upgrading OxCairo or changing the compiled OS. Confirm the complete archive against the expected Rust digest for a known witness before switching production requests.
+
+## Generate multiple PIEs in a resident worker
+
+The native `oxcairo-os-host worker-v1` interface accepts a stream of generation
+jobs. Start one worker per serial queue. At startup the worker verifies the
+SHA-256 of the exact program bytes it will parse, prepares the OS program image,
+and emits a JSON line with `status: "ready"` and `program_sha256`. Use a digest
+from the operator's qualified revision manifest. For a packed program, pin the
+digest produced by the trusted packing procedure above. The operator selects
+the program and digest on the command line. Requests cannot change either.
+The installed host directly executes its sibling `oxcairo-os-worker pie-v1`
+for this protocol. The warm path requires no Python interpreter.
+
+```sh
+oxcairo-os-host worker-v1 /srv/os/compiled-os.json \
+  --sha256 794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67
+```
+
+Send one UTF-8 JSON object per line, terminated by a newline, and read one reply
+per line in the same order. The worker accepts absolute, service-assigned paths
+in a private local directory.
+
+```json
+{"schema":1,"witness":"/srv/jobs/block-input.json","output":"/srv/results/block.zip","publication":"stored","limits":{"steps":50000000,"wall_ms":60000}}
+```
+
+Each job inherits the prepared image and initialized runtime in a fresh
+copy-on-write process. Mutable VM state, class-cache insertions, descriptors
+opened by the job, and resource limits have job lifetime. A request incurs one
+fork and zero program parses or executable launches. The parent retains the
+same program across successful jobs and typed refusals. Parallel callers can
+run multiple workers, with the same per-output lock as the one-shot interface.
+
+Limits use the same keys, defaults, operator ceilings and rejection names as
+the one-shot interface. The wall clock covers the job through the pre-rename
+check. The worker hashes and syncs its completed file before publication, then
+syncs the destination directory. Memory accounting includes the inherited
+runtime and program. Linux applies an address-space cap, and macOS samples
+resident memory. Set the memory budget for both the template and the job.
+`publication` supports `stored`, `rust-3.2`, and the default
+`os-host-standard`, as described above.
+The worker also accepts `fast-1` for level-one deflate with separate extra
+segments. Its uncompressed contents match the stored profile. Record the
+chosen codec and linked compression library when comparing archive digests.
+
+Success includes `status: "ok"`, `output`, `bytes`, and `sha256`. A rejected
+job returns `status: "rejected"`, `code`, and `detail`. Submit another job on
+the same stream after a rejection. EOF at a record boundary exits successfully.
+A malformed complete job receives a refusal. A record exceeding 64 KiB, EOF in
+a partial record, or a stalled partial record terminates the stream after its
+refusal. Between records the worker can remain idle indefinitely.
+
+On worker loss, restart it with the same pin and retry the in-flight request.
+The operating system terminates its private job process when the supervisor
+exits. Only the supervisor publishes to the destination. After interruption,
+the next request for that output cleans its own stale stage under the output
+lock. If the destination was already renamed, retrying the same deterministic
+job republishes the complete result. The SHA-256 receipt identifies the archive
+for the selected profile.

@@ -1,5 +1,13 @@
 exception Randomized_encryption
 
+type input
+val read_witness : ?resident:bool -> ?virtual_os:bool -> string -> input
+(** Read one JSON or OXW1 witness. Resident readers can reuse bounded immutable
+    class metadata. Each result belongs to its own job. *)
+
+val initialize_input : ?entropy_source:(unit -> string) -> ?on_da:(Felt.t array -> unit) -> ?image:Program_image.t -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> input -> Runner.config -> Program.t -> Runner.t
+(** Initialize a fresh runner from a decoded witness. *)
+
 (** Initialize a runner with the sequencer stateless OS hint processor. *)
 val initialize : ?entropy_source:(unit -> string) -> ?on_da:(Felt.t array -> unit) -> ?virtual_os:bool -> ?image:Program_image.t -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> path:string -> Runner.config -> Program.t -> Runner.t
 

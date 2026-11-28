@@ -364,7 +364,7 @@ external cpu_batch_temporary : int array -> int array -> seg array -> flag array
   = "cvm_cpu_batch_temporary_byte" "cvm_cpu_batch_temporary" [@@noalloc]
 
 external selection_rows : int array -> int array -> seg array -> flag array -> int array ->
-  pool -> int -> Bytes.t array -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
+  pool -> int -> Bytes.t array -> seg -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
 
 let register_runtime_hints vm ~segment ~pc handlers =
   if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
@@ -430,18 +430,18 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
            matcher independently verify the Cairo frame and bytecode. *)
         let recurred =
           match vm.selection with
-          | Some descriptor when hinted && not vm.trace_on && Array.length hints.(pc) = 1 &&
+          | Some descriptor when hinted && Array.length hints.(pc) = 1 &&
                                  hints.(pc).(0) == descriptor.action ->
               vm.selection <- None;
               registers.(15) <- vm.selection_remaining;
               registers.(16) <- 0;
-              let count = selection_rows registers cache vm.segs vm.seg_flag vm.hi pool vm.nsegs vm.watched in
+              let count = selection_rows registers cache vm.segs vm.seg_flag vm.hi pool vm.nsegs vm.watched vm.trace in
               if registers.(15) <> vm.selection_remaining then descriptor.publish registers.(15);
               hint_steps := !hint_steps + registers.(16);
               count
           | _ ->
               match vm.squash with
-              | Some plan when hinted && not vm.trace_on && Array.length hints.(pc) = 1 &&
+              | Some plan when hinted && Array.length hints.(pc) = 1 &&
                                 hints.(pc).(0) == plan.begin_row && pc + 11 < nh &&
                                 Array.length hints.(pc + 11) = 1 &&
                                 (stop_seg <> 0 || stop_pc < pc || stop_pc > pc + 12) ->

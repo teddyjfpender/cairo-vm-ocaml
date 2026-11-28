@@ -1,4 +1,25 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''':'
+# The one-shot v1 supervisor below can also be invoked by its own interpreter.
+# This shell preamble dispatches the native protocol before starting it.
+if [ "${1-}" = worker-v1 ]; then
+    shift
+    self=$0
+    case $self in */*) ;; *) self=$(command -v "$self") ;; esac
+    while :; do
+        case $self in */*) dir=${self%/*} ;; *) dir=. ;; esac
+        worker=$dir/oxcairo-os-worker
+        if [ -x "$worker" ]; then exec "$worker" pie-v1 "$@"; fi
+        # An operator may put just the host symlink in another bin directory.
+        [ -L "$self" ] || break
+        target=$(/usr/bin/readlink "$self") || break
+        case $target in /*) self=$target ;; *) self=$dir/$target ;; esac
+    done
+    printf '%s\n' '{"schema":1,"status":"rejected","code":"io_error","detail":"missing sibling oxcairo-os-worker"}'
+    exit 27
+fi
+exec /usr/bin/env python3 "$0" "$@"
+':'''
 """Supervise one native OS job. The command's JSON protocol is defined in docs/os-host.md."""
 
 from contextlib import ExitStack, closing, contextmanager, suppress

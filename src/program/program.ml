@@ -345,14 +345,14 @@ let load_projection source word_offsets reference_offsets ids root =
   load_with_identifiers ?word_offsets:(spans word_offsets)
     ?reference_offsets:(spans reference_offsets) ids root
 
-let load_bytes contents =
+let load_bytes ?(parallel=true) contents =
   if String.starts_with ~prefix:Packed_program.magic contents then
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
     let word_offsets = ref None and reference_offsets = ref None in
     let consume ids root = load_projection contents !word_offsets !reference_offsets ids root in
-    Json_reader.with_program_document ~word_offsets ~add_struct ~add_batch:add_identifier_batch
+    Json_reader.with_program_document ~parallel ~word_offsets ~add_struct ~add_batch:add_identifier_batch
       ~reference_offsets ~add_identifier ~consume contents
 
 external read_sections : Unix.file_descr -> int array -> string option = "cvm_pread_program_sections"

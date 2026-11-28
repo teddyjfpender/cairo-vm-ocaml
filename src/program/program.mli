@@ -16,3 +16,7 @@ val load_file : string -> t
 
 val pack : t -> string
 (** Encode previously parsed compiler data for use by [load_file]. *)
+
+val load_bytes : ?parallel:bool -> string -> t
+(** Load the supplied immutable snapshot. A process that forks job workers
+    must use [parallel:false] to keep its template single-domain. *)
