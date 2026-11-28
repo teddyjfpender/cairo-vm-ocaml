@@ -25,6 +25,8 @@ jobs:
           eval "$(opam env --switch "$OXCAML_SWITCH")"
           dune build --profile release
           dune runtest --profile release
+      - name: Check corpus receipt and paired-job accounting
+        run: python3 test/os_corpus.py
       - name: Compare complete pinned PIE, trace and memory bytes
         run: python3 test/exact_pie/check.py _build/default/bin/main.exe _build/default/test/exact_pie/replay_encrypted.exe
       - name: Exercise the installed release products
