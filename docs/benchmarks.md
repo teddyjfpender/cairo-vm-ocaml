@@ -11,6 +11,12 @@ On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revisi
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Profile-guided native build
+
+On a Clang-based OxCaml switch, run `python3 scripts/build_pgo.py OS_PROGRAM.json` to train the native kernels on four saved sequencer witnesses and build `_build/pgo/cairo-vm-cli`. Training runs serially by default. The script uses the compiler's LLVM instrumentation and requires a compatible `llvm-profdata`. Both build trees are temporary. The ordinary Dune release profile works with GCC or Clang.
+
+On the M4 Max, eighteen alternating pairs compared this build with the ordinary release binary at `faa291a`. The median improvement was 8.0% on 4,096 storage invokes and 6.3% on the 32-repeat mixed workload. Both were held out of training. The Poseidon benchmark was 1.0% slower. Fifteen main OS witnesses, four virtual OS witnesses and nine aggregator configurations matched the pinned Rust PIE member digests with the profiled build. [Paired wall times](../bench/results/native-pgo-m4-max.csv).
+
 ## Native aggregator and virtual OS on Apple M4 Max
 
 The aggregator consumed consecutive block outputs produced by the pinned Rust OS. The virtual OS ran one account transaction with repeated Keccak, elliptic-curve and SHA-512 calls. Both used the pinned sequencer's Rust 3.2.0 VM. Each output-only result is the median of seven alternating Rust/OCaml wall-time ratios. Each PIE result uses three pairs and checks all five decompressed members. The PIE timings include archive compression.
