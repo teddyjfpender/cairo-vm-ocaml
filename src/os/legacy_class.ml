@@ -1,4 +1,4 @@
-(* Cairo 0 hashes commit to CPython's json.dumps layout, including decimal
+(* Cairo 0 hashes commit to the pinned sequencer's PythonJsonFormatter layout, including decimal
    hint-PC ordering and the attributes omitted by older compiler releases. *)
 open Errors
 open Hintrt
@@ -6,24 +6,36 @@ module U = Yojson.Safe.Util
 
 let python_string buf s =
   Buffer.add_char buf '"';
-  let escape u = Printf.bprintf buf "\\u%04x" u in
-  let rec loop i =
-    if i < String.length s then begin
-      let scalar = String.get_utf_8_uchar s i in
-      if not (Uchar.utf_decode_is_valid scalar) then fail "Invalid UTF-8 in class definition";
-      let u = Uchar.to_int (Uchar.utf_decode_uchar scalar) in
-      (match u with
-       | 34 -> Buffer.add_string buf "\\\"" | 92 -> Buffer.add_string buf "\\\\"
-       | 8 -> Buffer.add_string buf "\\b" | 9 -> Buffer.add_string buf "\\t"
-       | 10 -> Buffer.add_string buf "\\n" | 12 -> Buffer.add_string buf "\\f"
-       | 13 -> Buffer.add_string buf "\\r"
-       | u when u < 32 -> escape u
-       | u when u < 128 -> Buffer.add_char buf (Char.chr u)
-       | u when u <= 65535 -> escape u
-       | u -> let v = u - 65536 in escape (0xd800 + (v lsr 10)); escape (0xdc00 + (v land 1023)));
-      loop (i + Uchar.utf_decode_length scalar)
-    end in
-  loop 0;
+  let length = String.length s in
+  let rec plain start i =
+    if i = length then Buffer.add_substring buf s start (i - start)
+    else match s.[i] with
+      | ' '..'!' | '#'..'[' | ']'..'\127' -> plain start (i + 1)
+      | ch ->
+          Buffer.add_substring buf s start (i - start);
+          let next = match ch with
+            | '"' -> Buffer.add_string buf "\\\""; i + 1
+            | '\\' -> Buffer.add_string buf "\\\\"; i + 1
+            | '\b' -> Buffer.add_string buf "\\b"; i + 1
+            | '\t' -> Buffer.add_string buf "\\t"; i + 1
+            | '\n' -> Buffer.add_string buf "\\n"; i + 1
+            | '\012' -> Buffer.add_string buf "\\f"; i + 1
+            | '\r' -> Buffer.add_string buf "\\r"; i + 1
+            | '\000'..'\031' -> Printf.bprintf buf "\\u%04x" (Char.code ch); i + 1
+            | _ ->
+                let scalar = String.get_utf_8_uchar s i in
+                if not (Uchar.utf_decode_is_valid scalar) then fail "Invalid UTF-8 in class definition";
+                (* The pinned sequencer pads non-ASCII UTF-16 units with spaces. *)
+                let escape u = Printf.bprintf buf "\\u%4x" u in
+                let u = Uchar.to_int (Uchar.utf_decode_uchar scalar) in
+                if u <= 65535 then escape u else begin
+                  let v = u - 65536 in
+                  escape (0xd800 + (v lsr 10)); escape (0xdc00 + (v land 1023))
+                end;
+                i + Uchar.utf_decode_length scalar in
+          plain next next
+  in
+  plain 0 0;
   Buffer.add_char buf '"'
 
 let hinted_hash cls =
@@ -43,7 +55,8 @@ let hinted_hash cls =
   let rec write path = function
     | `Assoc fields ->
         Buffer.add_char buf '{';
-        let order (a,_) (b,_) = if path = ["hints";"program"] then compare (int_of_string a) (int_of_string b)
+        let numeric = path = ["hints";"program"] in
+        let order (a,_) (b,_) = if numeric then compare (int_of_string a) (int_of_string b)
           else String.compare a b in
         seq (fun (k,v) -> python_string buf k; Buffer.add_string buf ": "; write (k :: path) v) (List.sort order fields);
         Buffer.add_char buf '}'
