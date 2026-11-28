@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run as the image's unprivileged opam user in a fresh container.
 set -euo pipefail
-export LC_ALL=C TZ=UTC
+export LC_ALL=C TZ=UTC OXC_TARGET_CPU=x86-64
+unset OXC_OPENSSL OXC_LIBDEFLATE
 export OPAMROOT=/home/opam/release-opam OPAMSWITCH=release OPAMJOBS=3 OPAMYES=1
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH=$(git -c safe.directory=/checkout -C /checkout log -1 --format=%ct)

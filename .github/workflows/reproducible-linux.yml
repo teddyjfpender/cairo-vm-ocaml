@@ -5,6 +5,9 @@ on:
       - '.github/workflows/reproducible-linux.yml'
       - 'scripts/reproducible/**'
       - 'scripts/package_release.py'
+      - 'scripts/native_flags.ml'
+      - 'src/native/dune'
+      - '.github/workflows/release.yml'
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -43,8 +46,6 @@ jobs:
   compare:
     needs: build
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -56,12 +57,22 @@ jobs:
           diff -r packages/linux-package-1 packages/linux-package-2
           cd packages/linux-package-1
           sha256sum -c *.sha256
+  publish:
+    needs: compare
+    if: inputs.publish && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-package-1
+          path: package
       - name: Publish the verified binaries and provenance
-        if: inputs.publish && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
-          cd packages/linux-package-1
+          cd package
           test -s "oxcairo-$TAG-linux-x86_64.tar.gz"
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" ./*
