@@ -18,6 +18,24 @@ apt_opts=(-o Dir::Etc::sourcelist=/tmp/oxcairo-packages.list -o Dir::Etc::source
 sudo apt-get "${apt_opts[@]}" update
 sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends autoconf automake libgmp-dev zlib1g-dev
 export OPAMNODEPEXTS=1
+# Install the exact compiler, package manager and target standard library used for the
+# static ZIP backend. No host rustup or prebuilt compressor enters either replica.
+rust_prefix=/home/opam/pinned-rust
+install_component() {
+  local component=$1 expected=$2 filename="$1-$RUST_VERSION-x86_64-unknown-linux-gnu"
+  curl --fail --location --silent --show-error --retry 3 \
+    "https://static.rust-lang.org/dist/$filename.tar.xz" -o "/tmp/$filename.tar.xz"
+  echo "$expected  /tmp/$filename.tar.xz" | sha256sum --check
+  tar -xJf "/tmp/$filename.tar.xz" -C /tmp
+  "/tmp/$filename/install.sh" --prefix="$rust_prefix" --disable-ldconfig
+  rm -rf "/tmp/$filename" "/tmp/$filename.tar.xz"
+}
+install_component rustc "$RUSTC_SHA256"
+install_component cargo "$CARGO_SHA256"
+install_component rust-std "$RUST_STD_SHA256"
+export PATH="$rust_prefix/bin:$PATH" CARGO_HOME=/home/opam/release-cargo
+export OXC_PIE_ARCHIVE
+OXC_PIE_ARCHIVE=$(python3 scripts/build_pie_archive.py /home/opam/pie-archive)
 unset OPAMSWITCH
 opam init --bare --no-setup --disable-sandboxing default "git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY"
 opam repository add ox "git+https://github.com/oxcaml/opam-repository.git#$OX_REPOSITORY" --dont-select
@@ -37,7 +55,8 @@ opam install dune.3.25.0 zarith.1.14+ox yojson.2.2.2+ox
 opam list --installed --columns=name,version --short | awk '{print $1 "." $2}' | sort > /tmp/resolved.lock
 diff -u scripts/reproducible/opam-packages.lock /tmp/resolved.lock
 eval "$(opam env)"
-dune build --profile release -j 3 bin/main.exe bench/native_os_worker.exe bindings/c/oxcairo.so
+dune build --profile release -j 3 bin/main.exe bench/native_os_worker.exe bindings/c/oxcairo.so test/exact_pie/replay_encrypted.exe
+python3 test/exact_pie/check.py _build/default/bin/main.exe _build/default/test/exact_pie/replay_encrypted.exe
 tag="v$(sed -n 's/^version: "\(.*\)"/\1/p' cairo-vm-ocaml.opam)"
 python3 scripts/package_release.py "$tag" linux-x86_64 _build/default/bin/main.exe --worker _build/default/bench/native_os_worker.exe --library _build/default/bindings/c/oxcairo.so --output-dir /out
 archive=/out/oxcairo-$tag-linux-x86_64.tar.gz
