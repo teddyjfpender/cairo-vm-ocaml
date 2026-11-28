@@ -1,5 +1,9 @@
 # Benchmarks
 
+## Version 0.3
+
+Warm guarded publication of stored PIEs reached 2.03–2.17× the Rust reference on two captured mainnet blocks and 3.66–4.10× on generated workloads. The timer starts with a prepared witness. Node blocktime also depends on work outside this interval. [Workloads, compression and timing boundaries](release-0.3.md)
+
 ## Version 0.2
 
 The release comparison measures cold native block execution, persistent workers, secure production PIE replay, and runs that write trace and memory files. It identifies which measurements use the stock Rust CLI, the stock sequencer or its memory-bounded diagnostic. Performance varies with block size, syscall mix and output mode. The 10× target remains open across native workloads. [0.2 measurements and raw pairs](release-0.2.md)

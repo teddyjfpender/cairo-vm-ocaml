@@ -24,4 +24,4 @@ Two optional encodings reduce the cost of repeated class input:
 
 The CLI conversion emits both encodings. The decoder accepts inline maps and ordinary bytecode arrays as well. If a host starts from JSON, account for conversion when measuring its service. If it already owns typed values, account for serialization during witness assembly.
 
-See the [independent Rust producer and measurements](../bench/reference/witness-wire/README.md) and [CBOR specification](https://www.rfc-editor.org/rfc/rfc8949.html).
+See the [independent Rust producer and measurements](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/v0.3.0/bench/reference/witness-wire/README.md) and [CBOR specification](https://www.rfc-editor.org/rfc/rfc8949.html).

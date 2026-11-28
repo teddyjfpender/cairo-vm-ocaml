@@ -6,17 +6,16 @@
 
 Published archives and their adjacent SHA-256 files appear on
 [GitHub Releases](https://github.com/teddyjfpender/cairo-vm-ocaml/releases).
-For a locally built 0.2.0 candidate, use the archive and checksum under `dist/`.
-On Apple Silicon the 0.2.0 binaries link to Homebrew GMP at
-`/opt/homebrew/opt/gmp/lib/libgmp.10.dylib`. Install it with `brew install gmp`.
-From the directory containing the downloaded files, run:
+Select macos-arm64 for Apple Silicon or linux-x86_64 for Ubuntu x86-64. On macOS, install the Homebrew dependencies with `brew install gmp libdeflate openssl@3`. From the directory containing the Apple Silicon archive and its checksum, run the following commands.
 
 ```sh
-shasum -a 256 -c oxcairo-v0.2.0-macos-arm64.tar.gz.sha256
-tar -xzf oxcairo-v0.2.0-macos-arm64.tar.gz
-export PATH="$PWD/oxcairo-v0.2.0-macos-arm64:$PATH"
+shasum -a 256 -c oxcairo-v0.3.0-macos-arm64.tar.gz.sha256
+tar -xzf oxcairo-v0.3.0-macos-arm64.tar.gz
+export PATH="$PWD/oxcairo-v0.3.0-macos-arm64:$PATH"
 cairo-vm-cli --version
 ```
+
+On Ubuntu, substitute `linux-x86_64` for `macos-arm64` in the file and directory names.
 
 The version string identifies OxCairo alongside the Rust CLI version it targets.
 Use absolute executable paths when comparing two installations.
@@ -138,6 +137,8 @@ bounded by the PIE's step count, and with the default secure run the PIE it woul
 match the input.
 
 ## Use it as a library
+
+For a runnable first program, follow the [VM walkthrough](vm-walkthrough.md). The [PIE walkthrough](pie-walkthrough.md) shows how a prepared OS witness becomes an archive.
 
 Add `(libraries cairo-vm-ocaml)` to a dune stanza:
 
