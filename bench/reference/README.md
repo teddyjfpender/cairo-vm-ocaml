@@ -58,3 +58,11 @@ Two committed witnesses cover 8,192 transfers to 16 recipients and 4,096 transfe
 The CASM arithmetic vectors call the same `execute_core_hint_base` interpreter used by the pinned OS. Copy `casm_hint_vectors.rs` to `starknet_os/examples/` and run `cargo run -p starknet_os --example casm_hint_vectors --features deserialize,testing` to reproduce `test/casm_hints/vectors.json`. The OCaml tests replay each serialized hint sequence and compare every resulting stack and range-check word.
 
 For steady-state timings on a profile-guided build, pass `--worker-output PATH` to `scripts/build_pgo.py`. The CLI and worker then link the native kernel built from the same training profile. Both workers reread the witness and initialize a new VM on every request.
+
+The same related runner accepts a single cold request and can write a PIE. The native comparison harness can time public output alone, PIE output alone, or both. It checks every public word on every pair and compares the decompressed archive members when requested. An optional RSS limit samples each benchmark child and terminates that child when the limit is exceeded.
+
+```sh
+python3 bench/compare_native_os.py --kind virtual-os --mode both --pairs 5 \
+  --max-rss-mib 2048 --rust /path/to/related_workers --ocaml /path/to/cairo-vm-cli \
+  --program /path/to/virtual_os_bytes test/fixtures/os/virtual-multicall-64.json.gz
+```
