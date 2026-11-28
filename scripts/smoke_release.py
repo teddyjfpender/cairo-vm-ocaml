@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import subprocess
 import sys
@@ -38,6 +39,20 @@ def main():
         for script in ("os_host.py", "os_host_recovery.py"):
             subprocess.run([sys.executable, str(fixtures.parent / script), str(package / "oxcairo-os-host"),
                             str(program), str(witness)], check=True)
+        apollo = fixtures / "programs/apollo-0.20.0-rc.1"
+        make_witness = runpy.run_path(str(apollo / "check.py"))["make_witness"]
+        genesis = json.loads((apollo / "cases.json").read_bytes())["genesis"]
+        compiled = work / "apollo-os.json"
+        compiled.write_bytes(gzip.decompress((apollo / "os.json.gz").read_bytes()))
+        historical = work / "apollo-genesis.json"
+        historical.write_bytes(make_witness("genesis", genesis))
+        job = dict(schema=1, revision="1860b9850b5c51858c50c0f5038933e49f932eef", program=str(compiled),
+                   witness=str(historical), output=str(work / "standard.zip"))
+        result = subprocess.check_output([package / "oxcairo-os-host", "v1"], input=json.dumps(job).encode())
+        # Pinned sequencer os_reference WITNESS.json EXPECTED.zip --merge-extra-segments
+        expected_zip = "b78c75c541cdd948d1d7603d41103aa3f6ceb8ae505630a4f3cbe3e791f47bd7"
+        if json.loads(result)["sha256"] != expected_zip or hashlib.sha256(Path(job["output"]).read_bytes()).hexdigest() != expected_zip:
+            raise SystemExit("installed Apollo host output differs from the complete merged Rust archive")
         env = {"HOME": directory, "PATH": "", "LC_ALL": "C"}
         pie = work / "genesis.zip"
         output = subprocess.check_output(
