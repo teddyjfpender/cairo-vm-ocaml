@@ -5,7 +5,6 @@ base-threads.base
 base-unix.base
 conf-autoconf.1
 conf-gmp.5
-conf-pkg-config.5
 conf-rsync.1
 conf-which.1
 dune.3.25.0

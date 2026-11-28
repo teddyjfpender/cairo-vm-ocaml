@@ -10,11 +10,29 @@ mkdir /home/opam/source
 git -c safe.directory=/checkout -C /checkout archive HEAD | tar -xf - -C /home/opam/source
 cd /home/opam/source
 source scripts/reproducible/sources.env
+# The base image fixes the initial dpkg state. The signed snapshot fixes all extra packages.
+for suite in noble noble-updates noble-security; do
+  echo "deb https://snapshot.ubuntu.com/ubuntu/$UBUNTU_SNAPSHOT/ $suite main universe"
+done > /tmp/oxcairo-packages.list
+apt_opts=(-o Dir::Etc::sourcelist=/tmp/oxcairo-packages.list -o Dir::Etc::sourceparts=- -o Acquire::Check-Valid-Until=false)
+sudo apt-get "${apt_opts[@]}" update
+sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends autoconf automake libgmp-dev zlib1g-dev
+export OPAMNODEPEXTS=1
 unset OPAMSWITCH
 opam init --bare --no-setup --disable-sandboxing default "git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY"
 opam repository add ox "git+https://github.com/oxcaml/opam-repository.git#$OX_REPOSITORY" --dont-select
 opam switch create release --repositories=ox,default --packages=ocaml-variants.5.2.0+ox
 export OPAMSWITCH=release
+# The pinned overlay names a mutable git branch for Zarith. Retain its build metadata
+# and replace only that URL with the verified archive of the selected source revision.
+repo=/home/opam/release-lock
+mkdir -p "$repo/packages/zarith/zarith.1.14+ox"
+echo 'opam-version: "2.0"' > "$repo/repo"
+opam show --raw zarith.1.14+ox | sed \
+  "s|src: \"git+https://github.com/avsm/zarith.git#oxcaml\"|src: \"https://codeload.github.com/avsm/zarith/tar.gz/$ZARITH_COMMIT\" checksum: \"sha256=$ZARITH_ARCHIVE_SHA256\"|" \
+  > "$repo/packages/zarith/zarith.1.14+ox/opam"
+grep -Fq "$ZARITH_ARCHIVE_SHA256" "$repo/packages/zarith/zarith.1.14+ox/opam"
+opam repository add locked-source "$repo"
 opam install dune.3.25.0 zarith.1.14+ox yojson.2.2.2+ox
 opam list --installed --columns=name,version --short | awk '{print $1 "." $2}' | sort > /tmp/resolved.lock
 diff -u scripts/reproducible/opam-packages.lock /tmp/resolved.lock
