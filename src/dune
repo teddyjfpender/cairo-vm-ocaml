@@ -9,5 +9,5 @@
  (c_library_flags (-lz (:include native/native_link_flags.sexp)))
  (foreign_stubs
   (language c)
-  (names output_decimal bls_msm secp_curve hex_felt felt_stubs cpu_kernel pie_archive pie_deflate pie_stream pie_stubs trace_access json_skip program_read relocation blake_compress)
+  (names os_worker_limits output_decimal bls_msm secp_curve hex_felt felt_stubs cpu_kernel pie_archive pie_deflate pie_stream pie_stubs trace_access json_skip program_read relocation blake_compress)
   (flags (:standard -O3 (:include native/native_flags.sexp) -I/opt/homebrew/include -I/usr/local/include))))

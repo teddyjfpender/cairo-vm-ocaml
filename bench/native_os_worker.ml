@@ -2,7 +2,7 @@
    the witness from disk and executes a fresh VM, including finalization. *)
 open Cairovm
 
-let () =
+let legacy () =
   Os_hints.configure_batch_gc ();
   let program = Program.load_file Sys.argv.(1) and path = Sys.argv.(2) in
   let options = Array.to_list Sys.argv |> List.filteri (fun i _ -> i >= 3) in
@@ -32,3 +32,7 @@ let () =
     execute path;
     print_endline "DONE"
   done with End_of_file -> ()
+
+let () =
+  if Array.length Sys.argv > 1 && Sys.argv.(1) = "pie-v1" then Worker_service.main ()
+  else legacy ()

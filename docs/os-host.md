@@ -83,3 +83,57 @@ jq '.program = "/srv/os/compiled-os.packed"' /srv/jobs/request.json | oxcairo-os
 ```
 
 Regenerate the packed file and its profile from the verified JSON when upgrading OxCairo or changing the compiled OS. Confirm the complete archive against the expected Rust digest for a known witness before switching production requests.
+
+## Generate multiple PIEs in a resident worker
+
+The native `oxcairo-os-worker pie-v1` interface accepts a stream of generation
+jobs. Start one worker per serial queue. At startup the worker verifies the
+SHA-256 of the exact program bytes it will parse, prepares the OS program image,
+and emits a JSON line with `status: "ready"` and `program_sha256`. Use a digest
+from the operator's qualified revision manifest. For a packed program, pin the
+digest produced by the trusted packing procedure above. The operator selects
+the program and digest on the command line. Requests cannot change either.
+
+```sh
+oxcairo-os-worker pie-v1 /srv/os/compiled-os.json \
+  --sha256 794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67
+```
+
+Send one UTF-8 JSON object per line, terminated by a newline, and read one reply
+per line in the same order. The worker accepts absolute, service-assigned paths
+in a private local directory.
+
+```json
+{"schema":1,"witness":"/srv/jobs/block-input.json","output":"/srv/results/block.zip","publication":"stored","limits":{"steps":50000000,"wall_ms":60000}}
+```
+
+Each job inherits the prepared image and initialized runtime in a fresh
+copy-on-write process. Mutable VM state, class-cache insertions, descriptors
+opened by the job, and resource limits have job lifetime. A request incurs one
+fork and zero program parses or executable launches. The parent retains the
+same program across successful jobs and typed refusals. Parallel callers can
+run multiple workers, with the same per-output lock as the one-shot interface.
+
+Limits use the same keys, defaults, operator ceilings and rejection names as
+the one-shot interface. The wall clock covers the job through the pre-rename
+check. The worker hashes and syncs its completed file before publication, then
+syncs the destination directory. Memory accounting includes the inherited
+runtime and program. Linux applies an address-space cap, and macOS samples
+resident memory. Set the memory budget for both the template and the job.
+`publication` supports `stored`, `rust-3.2`, and the default
+`os-host-standard`, as described above.
+
+Success includes `status: "ok"`, `output`, `bytes`, and `sha256`. A rejected
+job returns `status: "rejected"`, `code`, and `detail`. Submit another job on
+the same stream after a rejection. EOF at a record boundary exits successfully.
+A malformed complete job receives a refusal. A record exceeding 64 KiB, EOF in
+a partial record, or a stalled partial record terminates the stream after its
+refusal. Between records the worker can remain idle indefinitely.
+
+On worker loss, restart it with the same pin and retry the in-flight request.
+The operating system terminates its private job process when the supervisor
+exits. Only the supervisor publishes to the destination. After interruption,
+the next request for that output cleans its own stale stage under the output
+lock. If the destination was already renamed, retrying the same deterministic
+job republishes the complete result. The SHA-256 receipt identifies the archive
+for the selected profile.

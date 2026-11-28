@@ -305,7 +305,7 @@ external validate_debug_range :
   string -> int array -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_debug_range" [@@noalloc]
 
-let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offsets ~add_identifier ~consume src =
+let with_program_document ?(parallel=true) ?add_struct ?word_offsets ?add_batch ?reference_offsets ~add_identifier ~consume src =
   let read ?debug_span () =
     Option.iter (fun saved -> saved := None) reference_offsets;
     Option.iter (fun saved -> saved := None) word_offsets;
@@ -318,7 +318,7 @@ let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offset
     identifiers, root in
   let full () = let ids, root = read () in consume ids root in
   let bounds = [|0; 0|] in
-  if String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
+  if not parallel || String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
      not (find_debug_span src bounds) then full ()
   else begin
     let first = bounds.(0) and last = bounds.(1) in
