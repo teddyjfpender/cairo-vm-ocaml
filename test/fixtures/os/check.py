@@ -17,13 +17,16 @@ def main():
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
     merged = ("storage-2048", "storage-4096", "syscalls-scaled-32", "storage-8192",
-              "syscalls-scaled-64", "sequential-4096", "scattered-4096")
+              "syscalls-scaled-64", "sequential-4096", "scattered-4096",
+              "deploy-l1-calldata-2048", "deploy-l1-blob-2048")
     cases = ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
                  "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
                   *merged)
     if args.virtual_os:
         cases = ("virtual-message", "virtual-execution-info", "virtual-multicall-16", "virtual-multicall-64")
     mode = "--virtual_os_hints" if args.virtual_os else "--os_hints"
+    public = json.loads((fixture / "deployment-public-output.json").read_text())
+    prime = 2**251 + 17 * 2**192 + 1
     for name in cases:
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
@@ -36,7 +39,17 @@ def main():
                             "--layout", "all_cairo", "--cairo_pie_output", pie]
             if name in merged:
                 command.append("--merge_extra_segments")
-            subprocess.run(command, check=True)
+            if name in public:
+                result = subprocess.run([*command, "--print_output"], check=True, capture_output=True)
+                lines = result.stdout.splitlines()
+                if not lines or lines[0] != b"Program Output:":
+                    raise SystemExit(f"{name}: missing public output")
+                words = [int(line) % prime for line in lines[1:] if line.strip()]
+                digest = hashlib.sha256(b"".join(x.to_bytes(32, "little") for x in words))
+                if {"felts": len(words), "sha256": digest.hexdigest()} != public[name]:
+                    raise SystemExit(f"{name}: public output differs from Rust")
+            else:
+                subprocess.run(command, check=True)
             with zipfile.ZipFile(pie) as z:
                 hashes = {}
                 for member in z.namelist():

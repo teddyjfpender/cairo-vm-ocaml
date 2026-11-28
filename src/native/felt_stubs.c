@@ -520,32 +520,66 @@ static void jac_double(jac *r, const jac *p) {
   memcpy(r->x, x3, 32); memcpy(r->y, y3, 32); memcpy(r->z, z3, 32);
 }
 
-/* r = p + q (q affine) */
+/* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
+   (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
+ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
+  /* add s*p = (s, e, e, e + s*P3) mod 2^256, e the sign extension of s */
+  u64 s = 1 - (x[3] >> 59), e = (u64)((i64)s >> 63);
+  unsigned long long c;
+  ADC(x[0], x[0], s, 0, c); ADC(x[1], x[1], e, c, c); ADC(x[2], x[2], e, c, c);
+  x[3] += e + s * P[3] + c;
+}
+
+/* The mixed-add accumulator stores each coordinate below 2p. Normalize
+   once before inversion, or before using the canonical doubling formula. */
+static inline void canonicalize_point(jac *point) {
+  if (geq_p(point->x)) sub4(point->x, point->x, P);
+  if (geq_p(point->y)) sub4(point->y, point->y, P);
+  if (geq_p(point->z)) sub4(point->z, point->z, P);
+}
+
+/* A difference biased by 2p lies in [0,4p). Since p = P[3]*2^192+1,
+   its multiples in this interval have two zero middle limbs. */
+static inline int zero_mod_4p(const u64 x[4]) {
+  return (x[1] | x[2]) == 0 && x[0] < 4 && x[3] == x[0] * P[3];
+}
+
 static void jac_add_aff(jac *r, const jac *p, const aff *q) {
   if (is_zero(p->z)) {
     memcpy(r->x, q->x, 32); memcpy(r->y, q->y, 32); memcpy(r->z, ONE_M, 32);
     return;
   }
-  u64 z1z1[4], u2[4], s2[4], h[4], hh[4], i[4], j[4], rr[4], v[4], t[4], x3[4], y3[4], z3[4];
-  mont_sqr(z1z1, p->z);
-  mont_mul(u2, q->x, z1z1);
-  mont_mul(s2, q->y, p->z); mont_mul(s2, s2, z1z1);
-  msub(h, u2, p->x);
-  msub(rr, s2, p->y);
-  if (is_zero(h)) {
-    if (is_zero(rr)) { jac_double(r, p); return; }
-    memset(r, 0, sizeof *r); return; /* infinity */
+  static const u64 two_p[4] = {2, 0, 0, UINT64_C(0x1000000000000022)};
+  static const u64 six_p[4] = {6, 0, 0, UINT64_C(0x3000000000000066)};
+  u64 zz[4], u[4], v[4], h[4], dy[4], hh[4], hhh[4], xhh[4], t[4];
+  jac out;
+  lazy_sqr(zz, p->z);
+  lazy_mul(u, q->x, zz);
+  lazy_mul(v, p->z, zz); lazy_mul(v, v, q->y);
+  add4(h, u, two_p); sub4(h, h, p->x);
+  add4(dy, v, two_p); sub4(dy, dy, p->y);
+  if (zero_mod_4p(h)) {
+    if (zero_mod_4p(dy)) {
+      jac canonical = *p;
+      canonicalize_point(&canonical);
+      jac_double(r, &canonical);
+    } else memset(r, 0, sizeof *r);
+    return;
   }
-  madd(rr, rr, rr);
-  mont_sqr(hh, h);
-  madd(i, hh, hh); madd(i, i, i);
-  mont_mul(j, h, i);
-  mont_mul(v, p->x, i);
-  mont_sqr(x3, rr); msub(x3, x3, j); msub(x3, x3, v); msub(x3, x3, v);
-  msub(t, v, x3); mont_mul(y3, rr, t);
-  mont_mul(t, p->y, j); madd(t, t, t); msub(y3, y3, t);
-  madd(z3, p->z, h); mont_sqr(z3, z3); msub(z3, z3, z1z1); msub(z3, z3, hh);
-  memcpy(r->x, x3, 32); memcpy(r->y, y3, 32); memcpy(r->z, z3, 32);
+  /* h and dy are below 4p. Every Montgomery product below therefore
+     has inputs whose product is at most 16p², giving an output < 2p.
+     Bias subtractions before folding X and Y back into [0,2p). */
+  lazy_sqr(hh, h); lazy_mul(hhh, h, hh); lazy_mul(xhh, p->x, hh);
+  lazy_sqr(out.x, dy);
+  add4(out.x, out.x, six_p); sub4(out.x, out.x, hhh);
+  sub4(out.x, out.x, xhh); sub4(out.x, out.x, xhh);
+  reduce_lazy(out.x);
+  add4(t, xhh, two_p); sub4(t, t, out.x);
+  lazy_mul(out.y, dy, t); lazy_mul(t, p->y, hhh);
+  add4(out.y, out.y, two_p); sub4(out.y, out.y, t);
+  reduce_lazy(out.y);
+  lazy_mul(out.z, p->z, h);
+  *r = out;
 }
 
 static void jac_to_aff(aff *r, const jac *p) {
@@ -586,6 +620,7 @@ static void pedersen_point(jac *acc, const u64 a[4], const u64 b[4]) {
     previous.valid = 1;
   }
   ped_accum(acc, ped_b, ped_b_high[0], b);
+  canonicalize_point(acc);
 }
 
 static void pedersen(u64 out[4], const u64 a[4], const u64 b[4]) {
@@ -769,16 +804,6 @@ static void poseidon_init(void) {
   /* Partial-round constants carry the 4p offset of the next c below. */
   for (int i = 12; i < 95; i++) add4(PRC[i], PRC[i], P4);
   prc_init = 1;
-}
-
-/* Congruent value in [0, 2^251 + p) for x < 2^256 - p: subtract
-   (floor(x / 2^251) - 1) * p, which overestimates x / p by less than one. */
-ALWAYS_INLINE void reduce_lazy(u64 x[4]) {
-  /* add s*p = (s, e, e, e + s*P3) mod 2^256, e the sign extension of s */
-  u64 s = 1 - (x[3] >> 59), e = (u64)((i64)s >> 63);
-  unsigned long long c;
-  ADC(x[0], x[0], s, 0, c); ADC(x[1], x[1], e, c, c); ADC(x[2], x[2], e, c, c);
-  x[3] += e + s * P[3] + c;
 }
 
 /* Below 9p (R > 31.99p), the cube is below 2p. */

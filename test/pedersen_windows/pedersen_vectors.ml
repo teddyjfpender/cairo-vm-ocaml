@@ -33,3 +33,17 @@ let () =
     "0x6a401dd57da3a93a3e25abffc0f7b273c6264dba78b3a63a89ac1201180abad";
   check "0x10000000000000000000000000000000000000000000000000000000000000d" "0x61"
     "0x508924e68e1273cbeed84bd4c562f0fe91a3aad265d114742ca5c83f7a8096b"
+
+(* Compare a dependent chain against cairo-lang's independent Pedersen
+   implementation. Alternate high and low field elements across all limbs. *)
+let () =
+  let p = Z.(add (shift_left one 251) (add (shift_left (of_int 17) 192) one)) in
+  let x = ref Felt.zero in
+  for i = 0 to 255 do
+    let bit = (i * 67) mod 252 and small = i * 65537 in
+    let y = Z.(erem (add (shift_left one bit) (of_int small)) p) in
+    let y = if i mod 2 = 0 then y else Z.(sub (pred p) y) in
+    x := Felt.pedersen !x (Felt.of_z y)
+  done;
+  assert (Z.equal (Felt.to_z !x)
+    (Z.of_string "0x7459297c2898494cb4b0192e17f7f50662dcae04ee6de87dbc7d8270d62e50e"))

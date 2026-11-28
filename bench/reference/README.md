@@ -19,3 +19,11 @@ target/release/examples/os_verified INPUT.json merged-pie.zip
 ```
 
 At 4,096 repeated storage invokes and 32 mixed syscall repetitions, the streamed archive matched the stock writer on all five decompressed members. At 8,192 invokes and 64 repetitions, the stock process exceeded the local 4 GiB RSS allowance. The saved digests for those two larger cases consequently use the streamed Rust reference. Archive compressed bytes and ZIP metadata are outside the comparison.
+
+## Deployment and L1-handler witnesses
+
+The two largest deployment fixtures each contain four consecutive blocks, one Sierra declaration, 2,048 fresh contract deployments, 2,048 contract calls that write distinct storage keys, and 2,048 successful L1 handlers. The upstream Blockifier and committer produced the execution and Patricia witnesses. Calldata and blob availability use separate OS inputs. The public output is hashed as a sequence of canonical little-endian 32-byte field elements. The archive receipts cover all five uncompressed members.
+
+To regenerate the transactions, append the contents of `deployment_witness.rs` to `crates/starknet_os_flow_tests/src/tests.rs` in the pinned checkout. In the test manager, serialize `self.os_hints` with `serde_json::to_writer` after the committer populates the block inputs and immediately before OS execution. Run `tests::test_oxcairo_wide_deploy_and_l1` with `OXCAIRO_DEPLOYS=2048`. Set `OXCAIRO_BLOB=1` for the blob case. Convert the chain name in `os_hints_config.chain_info.chain_id` to its ASCII bytes encoded as a hexadecimal felt before passing the witness to either VM.
+
+The stock API exceeded the 3.3 GiB process allowance on the two 6,145-transaction inputs. Their public outputs and archive hashes use the memory-bounded Rust reference above. Smaller cases through 3,073 transactions also have stock API timings. Empty RSS cells in the timing file mean the child exited between samples.

@@ -1,0 +1,10 @@
+{
+  "deploy-l1-blob-2048": {
+    "felts": 14358,
+    "sha256": "a212d3ad8510bea2b57e677c1acf9281839e42efefbd5ef34ad9b928c0d752a0"
+  },
+  "deploy-l1-calldata-2048": {
+    "felts": 20414,
+    "sha256": "3989ffd81ac4590ea623383f253a45d88b6da9e5ed94e4300866649f4d3a9be4"
+  }
+}
