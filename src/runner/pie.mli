@@ -2,7 +2,7 @@
     CairoRunner::get_cairo_pie). Members match cairo-vm's; ZIP compression is configurable. *)
 
 val write :
-  ?compression_level:int ->
+  ?profile:Pie_zip.profile -> ?compression_level:int ->
   ?output_pages:(int * (int * int)) list ->
   ?output_attributes:(string * int list) list ->
   ?pedersen_extra:int list ->

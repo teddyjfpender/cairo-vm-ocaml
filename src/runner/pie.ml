@@ -69,7 +69,7 @@ let memory_member (r : Runner.t) merged offsets emit =
     if n > 0 then emit chunk n
   done
 
-let write ?(compression_level=0) ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
+let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
     ~merge_extra_segments path =
   let output_pages = Option.value output_pages ~default:r.output_pages in
   let output_attributes = Option.value output_attributes ~default:r.output_attributes in
@@ -150,7 +150,7 @@ let write ?(compression_level=0) ?output_pages ?output_attributes ?(pedersen_ext
           Obj (List.map (fun (k, b) -> (suffix k, int (Resources.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
       ]
   in
-  Pie_zip.write ~level:compression_level path
+  Pie_zip.write ?profile ~level:compression_level path
     [
       ("version.json", text_member (to_string (Obj [ ("cairo_pie", Str "1.1") ])));
       ("metadata.json", text_member (to_string metadata));

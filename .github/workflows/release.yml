@@ -53,6 +53,11 @@ jobs:
         with: { ref: "${{ env.TAG }}" }
 
       - uses: ./.github/actions/oxcaml
+      - name: Build pinned PIE container backend
+        run: |
+          archive=$(python3 scripts/build_pie_archive.py "$RUNNER_TEMP/pinned-pie")
+          echo "OXC_PIE_ARCHIVE=$archive" >> "$GITHUB_ENV"
+
 
       - name: Install optional macOS backends
         if: runner.os == 'macOS'
