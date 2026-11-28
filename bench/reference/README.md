@@ -56,3 +56,5 @@ Append `erc20_witness.rs` to the pinned flow tests and run `test_oxcairo_erc20_t
 Two committed witnesses cover 8,192 transfers to 16 recipients and 4,096 transfers to 4,096 recipients. The complete OS executions took 64,202,029 and 42,013,031 Cairo steps. Each fixture includes the sequencer's transaction execution records and state witnesses. The offline checker compares its five decompressed PIE members and digest of every public output word against the streaming Rust reference.
 
 The CASM arithmetic vectors call the same `execute_core_hint_base` interpreter used by the pinned OS. Copy `casm_hint_vectors.rs` to `starknet_os/examples/` and run `cargo run -p starknet_os --example casm_hint_vectors --features deserialize,testing` to reproduce `test/casm_hints/vectors.json`. The OCaml tests replay each serialized hint sequence and compare every resulting stack and range-check word.
+
+For steady-state timings on a profile-guided build, pass `--worker-output PATH` to `scripts/build_pgo.py`. The CLI and worker then link the native kernel built from the same training profile. Both workers reread the witness and initialize a new VM on every request.
