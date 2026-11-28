@@ -4,7 +4,7 @@ open Segment
 open Builtin
 
 external rows : int array -> int array -> seg array -> flag array -> int array -> Felt.pool ->
-  int -> Bytes.t array -> int list -> int -> Felt.t array -> seg array -> int -> int =
+  int -> Bytes.t array -> int list -> int -> Felt.t array -> seg array -> int -> seg -> int =
   "cvm_squash_rows_byte" "cvm_squash_rows" [@@noalloc]
 
 let program =
@@ -39,14 +39,17 @@ let make ~n ~slots ~temporary =
   write vm 1 24 Felt.zero;
   vm,indices
 
-let verify ?(slots=180) ?(n=17) ?(temporary=false) tweak =
+let verify ?(slots=180) ?(n=17) ?(temporary=false) ?(tracing=false) ?(capacity=8200) tweak =
   let vm,indices=make ~n ~slots ~temporary and reference,_=make ~n ~slots ~temporary in
   tweak vm;tweak reference;
   let initial=List.hd indices and rest=List.tl indices in
   let regs=Array.make 17 0 in
   regs.(0)<-vm.pc;regs.(1)<-vm.ap;regs.(2)<-vm.fp;regs.(3)<-vm.hi.(1);regs.(15)<-initial;
+  regs.(14)<-Bool.to_int tracing;
+  vm.trace<-seg_make (if tracing then capacity else 0);
+  reference.trace<-seg_make (if tracing then 8200 else 0);
   let steps=rows regs vm.icache vm.segs vm.seg_flag vm.hi Felt.pool vm.nsegs
-      vm.watched rest initial vm.rules vm.tsegs vm.ntsegs in
+      vm.watched rest initial vm.rules vm.tsegs vm.ntsegs vm.trace in
   let current=ref initial and pending=ref rest in
   for i=0 to steps-1 do
     if i>0 && reference.pc=0 then begin
@@ -55,8 +58,13 @@ let verify ?(slots=180) ?(n=17) ?(temporary=false) tweak =
     end;
     if reference.pc=11 then
       write reference 1 (reference.ap-3) (if !pending=[] then Felt.zero else Felt.one);
+    if tracing then Cpu.record_trace reference 0 reference.pc reference.ap reference.fp;
     Cpu.step_instr reference (reference.icache.(reference.pc) land lnot Cpu.hint_bit)
   done;
+  if tracing then begin
+    assert(regs.(4)=reference.tlen && regs.(9)=reference.last_trace);
+    for i=0 to reference.tlen-1 do assert(sget vm.trace i=sget reference.trace i) done
+  end;
   vm.hi.(1)<-regs.(3);
   assert(steps<=8192 && regs.(0)=reference.pc && regs.(1)=reference.ap &&
          regs.(2)=reference.fp && regs.(15)= !current && vm.hi=reference.hi &&
@@ -71,6 +79,10 @@ let () =
   let no _=() in
   List.iter (fun temporary->
       assert(verify ~temporary no=17*9);
+      assert(verify ~tracing:true ~temporary no=17*9);
+      List.iter (fun capacity ->
+        assert(verify ~tracing:true ~capacity ~temporary no = capacity / 9 * 9))
+        [0; 1; 8; 9; 10; 17; 18];
       assert(verify ~n:950 ~slots:7000 ~temporary no=910*9);
       for slots=25 to 87 do ignore(verify ~slots ~temporary no) done) [false;true];
   assert(verify (fun vm->sset vm.segs.(1) 15 Felt.empty)=0);

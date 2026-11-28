@@ -56,3 +56,4 @@ val range_accessed : Runner.t -> Felt.t -> int -> bool
 
 val relocate_memory : Runner.t -> unit
 (** Relocate temporary segments and transfer accesses from earlier trace scans. *)
+val pie_memory_holes : Runner.t -> int

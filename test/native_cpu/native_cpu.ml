@@ -310,7 +310,7 @@ let () =
   assert (vm.pc = 4 && vm.steps = 2);
   assert (Array.length vm.icache = 0 || vm.icache.(0) = 0)
 external select_rows : int array -> int array -> seg array -> flag array -> int array ->
-  Felt.pool -> int -> Bytes.t array -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
+  Felt.pool -> int -> Bytes.t array -> seg -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
 
 let () =
   let raw = [| "0x20780017fff7ffd";"4";"0x480a7ffb7fff8000";"0x208b7fff7fff7ffe";
@@ -341,18 +341,26 @@ let () =
     write vm 1 vm.fp (if c then Felt.one else Felt.zero);
     if c then decr remaining in
   let cases = ref 0 and multi = ref 0 in
-  let verify ?(rows=6) size initial tweak =
+  let verify ?(rows=6) ?(tracing=false) size initial tweak =
     let vm=state ~rows size and refvm=state ~rows size in
     let remaining=ref initial in hint vm remaining; let remref=ref initial in hint refvm remref;
     tweak vm; tweak refvm;
     let regs=Array.make 17 0 in
     regs.(0)<-vm.pc; regs.(1)<-vm.ap; regs.(2)<-vm.fp; regs.(3)<-vm.hi.(1); regs.(15)<- !remaining;
-    let steps=select_rows regs vm.icache vm.segs vm.seg_flag vm.hi Felt.pool vm.nsegs vm.watched in
+    regs.(14)<-Bool.to_int tracing;
+    vm.trace<-seg_make (if tracing then 8200 else 0);
+    refvm.trace<-seg_make (if tracing then 8200 else 0);
+    let steps=select_rows regs vm.icache vm.segs vm.seg_flag vm.hi Felt.pool vm.nsegs vm.watched vm.trace in
     assert(steps<=8192);
     for i=0 to steps-1 do
       if i>0 && refvm.pc=6 then hint refvm remref;
+      if tracing then record_trace refvm 0 refvm.pc refvm.ap refvm.fp;
       step_instr refvm (refvm.icache.(refvm.pc) land lnot hint_bit)
     done;
+    if tracing then begin
+      assert(regs.(4)=refvm.tlen && regs.(9)=refvm.last_trace);
+      for i=0 to refvm.tlen-1 do assert(sget vm.trace i=sget refvm.trace i) done
+    end;
     assert(regs.(15)= !remref && regs.(0)=refvm.pc && regs.(1)=refvm.ap &&
            regs.(2)=refvm.fp && regs.(3)=refvm.hi.(1));
     vm.hi.(1)<-regs.(3);
@@ -404,6 +412,7 @@ let () =
     List.iter (check_run extra 26) [0;1;2;10;12;13;25;55;77;8191;8192;10000]) [false;true];
   (* Sweep the cutoffs for the loop body and its optional unwind. *)
   for rows=582 to 636 do ignore(verify ~rows 7000 0 no) done;
+  List.iter (fun rows->ignore(verify ~tracing:true ~rows 7000 3 no)) [1;6;582;636];
   List.iter (check_run ~rows:660 false 26) [8190;8191;8192;8193;8194;16384];
   let check_reference outer_cast =
     let open Program in
@@ -459,7 +468,7 @@ let () =
       write vm 3 i (value i); write vm 4 i (value (i+i*3)); write vm 5 i (Felt.small 3)
     done; vm in
   let tests=ref 0 in
-  let verify ?(base=0) size n tweak =
+  let verify ?(base=0) ?(tracing=false) size n tweak =
     let vm=state size n and reference=state size n in
     if base<>0 then begin
       (* Direct callers can supply a cache page beginning at a nonzero code
@@ -474,15 +483,22 @@ let () =
     end;
     tweak vm;tweak reference;
     let regs=[|vm.pc; vm.ap; vm.fp; vm.hi.(1);0;!Felt.pool_n;0;0;0;0;0;0;0;0;0|] in
-    regs.(11)<-base;
+    regs.(11)<-base; regs.(14)<-Bool.to_int tracing;
+    vm.trace<-seg_make (if tracing then 8200 else 0);
+    reference.trace<-seg_make (if tracing then 8200 else 0);
     let count=batch_watched regs vm.icache vm.segs vm.seg_flag vm.hi vm.trace Felt.pool vm.nsegs vm.watched [||] in
     assert(count<=8192);
     for i=0 to count-1 do
+      if tracing then record_trace reference 0 reference.pc reference.ap reference.fp;
       let d=reference.icache.(reference.pc) in
       if i>0 then assert(d land hint_bit=0);
       step_instr reference (d land lnot hint_bit)
     done;
     vm.hi.(1)<-regs.(3);
+    if tracing then begin
+      assert(regs.(4)=reference.tlen && regs.(9)=reference.last_trace);
+      for i=0 to reference.tlen-1 do assert(sget vm.trace i=sget reference.trace i) done
+    end;
     assert(regs.(0)=reference.pc && regs.(1)=reference.ap && regs.(2)=reference.fp && vm.hi=reference.hi);
     Array.iteri (fun k seg ->
       Bytes.iteri (fun i bit ->
@@ -517,4 +533,5 @@ let () =
      exercise the independent cutoff for the base case and recursive returns. *)
   for rows=478 to 516 do ignore(verify 8000 rows no) done;
   assert(verify 8000 512 no=8192);
+  List.iter (fun n->ignore(verify ~tracing:true 8000 n no)) [1;8;480;512];
   Printf.printf "checked %d validation states against scalar interpreter\n" !tests

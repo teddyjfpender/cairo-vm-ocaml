@@ -6,7 +6,7 @@ module U = Yojson.Safe.Util
 let segment vm = Felt.reloc (Vm.add_segment vm) 0
 let at ptr offset = Vm.reloc_add_felt ptr (Felt.small offset)
 
-let load ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
+let load ?(binary=false) ?(encoded=false) ~source ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let compiled = segment vm in
   let entry_points = U.member "entry_points_by_type" j in
   let load_entries kind =
@@ -25,9 +25,16 @@ let load ~watch ~rng ~syscall vm ctx ~felt ~class_hash ~fact ~builtin_costs j =
   let external_ = load_entries "EXTERNAL" in
   let l1 = load_entries "L1_HANDLER" in
   let constructor = load_entries "CONSTRUCTOR" in
-  let words = List.map felt (U.to_list (U.member "bytecode" j)) in
-  let code = Hintrt.gen_arg vm words in
-  let length = List.length words in
+  let bytecode = U.member "bytecode" j in
+  let words = match source, bytecode with
+    | Some src, `List [`Int first; `Int last] ->
+        Os_input.decode_words src (first, last)
+    | None, `Variant ("OXW1.words", Some (`String raw)) when binary -> Witness_words.decode raw
+    | None, `String raw when encoded -> Os_input.decode_words raw (0, String.length raw)
+    | _ -> Array.of_list (List.map felt (U.to_list bytecode)) in
+  let code = segment vm in
+  Array.iteri (Vm.write_checked vm (Felt.rseg code)) words;
+  let length = Array.length words in
   if watch then Vm.watch_segment vm (Felt.rseg code) length;
   let name = "starkware.starknet.core.os.contract_class.compiled_class_struct.COMPILED_CLASS_VERSION" in
   let version = match Hashtbl.find_opt ctx.Hintrt.prog.Program.identifiers name with

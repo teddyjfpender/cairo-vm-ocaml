@@ -10,12 +10,6 @@ let json_error fmt = Printf.ksprintf (fun m -> raise (Yojson.Json_error m)) fmt
 external string_end : string -> int -> int = "cvm_json_string_end" [@@noalloc]
 external skip_value : string -> int -> int = "cvm_json_skip" [@@noalloc]
 
-(* Entries contain only fully parsed immutable JSON. Each reader domain owns
-   its table. At most eight keys of at most one MiB are retained. *)
-type cache = { entries : (string * J.t) option array; mutable next : int }
-external matches_at : string -> int -> string -> bool = "cvm_json_matches_at" [@@noalloc]
-let create_cache () = { entries = Array.make 8 None; next = 0 }
-
 type projection =
   | Json
   | Program
@@ -26,11 +20,28 @@ type projection =
   | Elements of projection
   | Cached of cache
   | Presence (* Validate the value, retaining only whether it is null. *)
+  | Span
   | Encoded
   | Offset (* Validate the entire value and retain its offset in the source. *)
 
 (* Intern common schema keys and skip unused fields while still validating
    their JSON. Object keys in identifier, member and hint maps remain dynamic. *)
+and cache = {
+  entries : (string * J.t) option array;
+  max_entry : int;
+  mutable next : int;
+  projection : projection;
+}
+
+external matches_at : string -> int -> string -> bool = "cvm_json_matches_at" [@@noalloc]
+
+let create_cache ?(entries=8) ?(max_entry=1_048_576) ?encoded_field () =
+  if entries < 1 || max_entry < 1 then invalid_arg "JSON cache size";
+  let projection = match encoded_field with
+    | None -> Json
+    | Some key -> Fields [key, Encoded] in
+  {entries=Array.make entries None; max_entry; next=0; projection}
+
 let identifier =
   Only ["type",Json; "value",Json; "pc",Json; "destination",Json;
         "members",Values (Only ["offset",Json; "cairo_type",Json])]
@@ -136,9 +147,9 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
         let start = !pos in
         let rec lookup i =
           if i = Array.length cache.entries then begin
-            let tree = value Json in
+            let tree = value cache.projection in
             let size = !pos - start in
-            if size <= 1_048_576 then begin
+            if size <= cache.max_entry then begin
               cache.entries.(cache.next) <- Some (String.sub src start size, tree);
               cache.next <- (cache.next + 1) mod Array.length cache.entries
             end;
@@ -154,6 +165,9 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
         if token = 'n' then `Null else `Bool true
     | Offset, _ ->
         let start = !pos in pos := skip start; `Int start
+    | Span, _ ->
+        let first = !pos in pos := skip first;
+        `List [`Int first; `Int !pos]
     | Encoded, _ ->
         let start = !pos in pos := skip start;
         `String (String.sub src start (!pos-start))
@@ -291,7 +305,7 @@ external validate_debug_range :
   string -> int array -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_debug_range" [@@noalloc]
 
-let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offsets ~add_identifier ~consume src =
+let with_program_document ?(parallel=true) ?add_struct ?word_offsets ?add_batch ?reference_offsets ~add_identifier ~consume src =
   let read ?debug_span () =
     Option.iter (fun saved -> saved := None) reference_offsets;
     Option.iter (fun saved -> saved := None) word_offsets;
@@ -304,7 +318,7 @@ let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offset
     identifiers, root in
   let full () = let ids, root = read () in consume ids root in
   let bounds = [|0; 0|] in
-  if String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
+  if not parallel || String.length src < 4_000_000 || Domain.recommended_domain_count () < 2 ||
      not (find_debug_span src bounds) then full ()
   else begin
     let first = bounds.(0) and last = bounds.(1) in

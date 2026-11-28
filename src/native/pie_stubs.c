@@ -80,9 +80,17 @@ value cvm_crc32_bytes(value b) {
   return Val_long((intnat)c);
 }
 
+#ifdef OXC_HAVE_LIBDEFLATE
+#include <libdeflate.h>
+#endif
+
 /* Update a stored ZIP member's running checksum for one output chunk. */
 value cvm_pie_crc_update(value crc, value bytes, value len) {
+#ifdef OXC_HAVE_LIBDEFLATE
+  return Val_long(libdeflate_crc32(Long_val(crc), Bytes_val(bytes), Long_val(len)));
+#else
   return Val_long(crc32_z(Long_val(crc), (const Bytef *)Bytes_val(bytes), Long_val(len)));
+#endif
 }
 
 /* Validate every serialized address before allocating VM storage. Group

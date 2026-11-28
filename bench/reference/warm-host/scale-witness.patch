@@ -1,0 +1,91 @@
+diff --git a/crates/starknet_os/src/io/os_input.rs b/crates/starknet_os/src/io/os_input.rs
+index c97274a5d..4e70e3387 100644
+--- a/crates/starknet_os/src/io/os_input.rs
++++ b/crates/starknet_os/src/io/os_input.rs
+@@ -17,7 +17,7 @@ use crate::commitment_infos::CommitmentInfo;
+ #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+ #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
+ #[cfg_attr(any(test, feature = "testing"), derive(Default))]
+-#[derive(Debug)]
++#[derive(Debug, serde::Serialize)]
+ pub struct OsHints {
+     pub os_input: StarknetOsInput,
+     pub os_hints_config: OsHintsConfig,
+@@ -37,7 +37,7 @@ impl OsHints {
+ #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+ #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
+ #[cfg_attr(any(test, feature = "testing"), derive(Default))]
+-#[derive(Debug)]
++#[derive(Debug, serde::Serialize)]
+ pub struct StarknetOsInput {
+     pub os_block_inputs: Vec<OsBlockInput>,
+     pub deprecated_compiled_classes: BTreeMap<ClassHash, ContractClass>,
+@@ -48,7 +48,7 @@ pub struct StarknetOsInput {
+ #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+ #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
+ #[cfg_attr(any(test, feature = "testing"), derive(Default))]
+-#[derive(Debug)]
++#[derive(Debug, serde::Serialize)]
+ pub struct OsBlockInput {
+     pub contract_state_commitment_info: CommitmentInfo,
+     pub address_to_storage_commitment_info: HashMap<ContractAddress, CommitmentInfo>,
+@@ -59,6 +59,7 @@ pub struct OsBlockInput {
+     pub transactions: Vec<Transaction>,
+     pub tx_execution_infos: Vec<CentralTransactionExecutionInfo>,
+     // A mapping from Cairo 1 declared class hashes to the hashes of the contract class components.
++    #[serde(serialize_with = "serialize_component_hashes")]
+     pub declared_class_hash_to_component_hashes: HashMap<ClassHash, ContractClassComponentHashes>,
+     pub block_info: BlockInfo,
+     // When set, the OS recomputes the block hash from this exact version string instead of
+@@ -82,7 +83,7 @@ pub struct OsBlockInput {
+ #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
+ #[cfg_attr(feature = "deserialize", serde(deny_unknown_fields))]
+ #[cfg_attr(any(test, feature = "testing"), derive(Default))]
+-#[derive(Debug)]
++#[derive(Debug, serde::Serialize)]
+ pub struct OsHintsConfig {
+     pub debug_mode: bool,
+     pub full_output: bool,
+@@ -102,3 +103,17 @@ pub enum OsInputError {
+     #[error("Invalid length of state readers: {0}. Should match size of block inputs: {1}")]
+     InvalidLengthOfStateReaders(usize, usize),
+ }
++fn serialize_component_hashes<S: serde::Serializer>(
++    hashes: &HashMap<ClassHash, ContractClassComponentHashes>, serializer: S,
++) -> Result<S::Ok, S::Error> {
++    use serde::Serialize;
++    let out: BTreeMap<_, _> = hashes.iter().map(|(k, v)| (k, serde_json::json!({
++        "contract_class_version": v.contract_class_version,
++        "external_functions_hash": v.external_functions_hash.0,
++        "l1_handlers_hash": v.l1_handlers_hash.0,
++        "constructors_hash": v.constructors_hash.0,
++        "abi_hash": v.abi_hash,
++        "sierra_program_hash": v.sierra_program_hash
++    }))).collect();
++    out.serialize(serializer)
++}
+diff --git a/crates/starknet_os_flow_tests/src/tests.rs b/crates/starknet_os_flow_tests/src/tests.rs
+index 89b01ae72..bad655ecb 100644
+--- a/crates/starknet_os_flow_tests/src/tests.rs
++++ b/crates/starknet_os_flow_tests/src/tests.rs
+@@ -3287,3 +3287,20 @@ async fn test_proof_facts_versions_and_program_hashes() {
+ 
+     test_builder.build_and_run().await.perform_default_validations();
+ }
++
++#[tokio::test]
++async fn test_export_scale_witness() {
++    let n: usize = std::env::var("SCALE_TX").unwrap().parse().unwrap();
++    let blocks: usize = std::env::var("SCALE_BLOCKS").unwrap().parse().unwrap();
++    let (mut b, []) = TestBuilder::create_standard_with_config([], TestBuilderConfig { use_kzg_da: true, ..Default::default() }).await;
++    for i in 0..n {
++        let address = ContractAddress::try_from(Felt::from(0x12340000_u64 + (i % 64) as u64)).unwrap();
++        b.add_fund_address_tx(address, 1_000_000 + i as u128);
++    }
++    b.divide_transactions_into_n_blocks(blocks);
++    let job = b.build().await;
++    let file = std::fs::File::create_new(std::env::var_os("SCALE_OUTPUT").unwrap()).unwrap();
++    let mut writer = std::io::BufWriter::new(file);
++    serde_json::to_writer(&mut writer, &job.os_hints).unwrap();
++    std::io::Write::flush(&mut writer).unwrap();
++}

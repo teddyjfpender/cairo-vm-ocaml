@@ -3,7 +3,7 @@
 value cvm_squash_rows(value regs, value cache, value segs, value flags,
                       value highs, value pool, value nsegs_val, value watched,
                       value remaining, value current_val, value rules,
-                      value temp_segments, value ntemp) {
+                      value temp_segments, value ntemp, value trace) {
   struct temporary_segments temps = {rules, temp_segments, Val_unit,
                                      Long_val(ntemp)};
   if (Wosize_val(regs) < 17)
@@ -78,9 +78,11 @@ value cvm_squash_rows(value regs, value cache, value segs, value flags,
     rmaps = Bytes_val(m);
     rw = caml_string_length(m);
   }
+  struct row_trace buf = {CELLS(trace), Long_val(Field(regs, 4)), CAPACITY(trace)};
+  struct row_trace *tr = Long_val(Field(regs, 14)) ? &buf : NULL;
   static const intnat empty[7] = {0};
   while (again && rows < 8192 / 9 && ap <= len - 7 && fits(ro, rlen) &&
-         ro < OFFSET_MASK) {
+         ro < OFFSET_MASK && trace_room(tr, pc + 11, ap + 6, 9)) {
     intnat new_index = current, dm;
     value rest = remaining;
     if (!rows) {
@@ -131,6 +133,12 @@ value cvm_squash_rows(value regs, value cache, value segs, value flags,
         if (!stack[ap + i])
           stack[ap + i] = out[i];
     }
+    if (tr) {
+      static const char pcs[] = {0, 1, 3, 5, 6, 7, 8, 9, 11};
+      static const char aps[] = {0, 1, 2, 3, 4, 4, 5, 5, 6};
+      for (unsigned i = 0; i < sizeof(pcs); ++i)
+        row_entry(tr, pc + pcs[i], ap + aps[i], fp);
+    }
     if (!rcells[ro])
       rcells[ro] = delta;
     if (at < dw)
@@ -155,6 +163,10 @@ value cvm_squash_rows(value regs, value cache, value segs, value flags,
       Field(regs, 3) = Val_long(ap);
     if (ro > Long_val(Field(highs, rs)))
       Field(highs, rs) = Val_long(ro);
+    if (tr) {
+      Field(regs, 4) = Val_long(tr->used);
+      Field(regs, 9) = Val_long(tr->used - 1);
+    }
     Field(regs, 15) = Val_long(current);
   }
   return Val_int(rows * 9);
@@ -163,5 +175,5 @@ value cvm_squash_rows_byte(value *args, int argc) {
   (void)argc;
   return cvm_squash_rows(args[0], args[1], args[2], args[3], args[4], args[5],
                          args[6], args[7], args[8], args[9], args[10], args[11],
-                         args[12]);
+                         args[12], args[13]);
 }

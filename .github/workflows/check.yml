@@ -17,6 +17,7 @@ jobs:
       - uses: ./.github/actions/oxcaml
       - name: Build pinned PIE container backend
         run: |
+          cargo test --locked --release --manifest-path native/pie-archive/Cargo.toml --target-dir "$RUNNER_TEMP/pinned-pie/target"
           archive=$(python3 scripts/build_pie_archive.py "$RUNNER_TEMP/pinned-pie")
           echo "OXC_PIE_ARCHIVE=$archive" >> "$GITHUB_ENV"
 

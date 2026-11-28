@@ -8,9 +8,6 @@ val string_end : string -> int -> int
 val skip_value : string -> int -> int
 
 type cache
-val create_cache : unit -> cache
-(** Bounded storage for immutable JSON objects. Use one cache per domain. *)
-
 type projection =
   | Json
   | Program
@@ -21,8 +18,14 @@ type projection =
   | Elements of projection
   | Cached of cache (** Reuse a previously parsed object on exact source-byte equality. *)
   | Presence (* Validate the value, retaining only whether it is null. *)
+  | Span (* Validate the value and retain its source bounds. *)
   | Encoded
   | Offset
+
+val create_cache : ?entries:int -> ?max_entry:int -> ?encoded_field:string -> unit -> cache
+(** Bounded exact-source cache for immutable objects. An [encoded_field]
+    retains that field as its own validated JSON string, independent of the
+    source document. Use one cache per reader domain. *)
 
 val identifier : projection
 val tracking : projection
@@ -45,6 +48,7 @@ val program_document :
     debug maps may be validated concurrently with independent program fields. *)
 
 val with_program_document :
+  ?parallel:bool ->
   ?add_struct:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->
   ?word_offsets:int array option ref ->
   ?add_batch:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->

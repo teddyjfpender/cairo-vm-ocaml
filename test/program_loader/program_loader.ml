@@ -109,6 +109,30 @@ let () =
   let p = {data=[|huge; Z.zero; huge; Z.one|]; builtins=["output"]; main=Some 0;
            start=None; end_=Some 1; hints=[0,[h;h]]; identifiers=ids;
            references=[|{r_expr=e; r_group=3; r_offset=min_int}; {r_expr=e; r_group=1; r_offset=max_int}|]} in
+  let constant v = { (Hashtbl.find ids "__main__.main") with i_type="const"; i_value=Some v } in
+  let entries = ("z_other.inner.shared", constant (Z.of_int 99)) :: List.init 64 (fun i ->
+      Printf.sprintf "scope_%02d.shared" i, constant (Z.of_int i)) in
+  let build entries =
+    let identifiers = Hashtbl.create ~random:true 1 in
+    List.iter (fun (name, id) -> Hashtbl.add identifiers name id) entries;
+    {p with identifiers}
+  in
+  let ordered = build entries and reversed = build (List.rev entries) in
+  assert (pack ordered = pack reversed);
+  let runtime = Hintrt.new_scopes () in
+  let lookup program scopes name =
+    let ctx = Hintrt.make_ctx program runtime {h with scopes} in
+    Hintrt.const_z ctx name
+  in
+  with_json (pack ordered) (fun path ->
+      List.iter (fun prog ->
+          assert (Z.equal (lookup prog [] "shared") Z.zero);
+          assert (Z.equal (lookup prog [] "inner.shared") (Z.of_int 99));
+          assert (Z.equal (lookup prog ["scope_17"] "shared") (Z.of_int 17)))
+        [ordered; reversed; load_file path]);
+  let other = build ["z_other.shared", constant Z.one] in
+  assert (Z.equal (lookup other [] "shared") Z.one);
+  assert (Z.equal (lookup ordered [] "shared") Z.zero);
   let packed = pack p in
   with_json packed (fun path ->
       let q = load_file path in
@@ -346,3 +370,27 @@ let () =
               ignore (Unix.write_substring fd " " 0 1))));
           assert (stream_bounds fd size bounds);
           assert (not (stream_debug fd bounds (fun () -> Unix.ftruncate fd (size / 3))))))
+
+let () =
+  let open Json_reader in
+  let cache = create_cache ~entries:2 ~max_entry:128 ~encoded_field:"bytecode" () in
+  let parse = from_string ~projection:(Fields ["class", Cached cache]) in
+  let cls source = Yojson.Safe.Util.member "class" (parse source) in
+  let first = cls {|{"class":{"bytecode":[15,"0\u0078ff"]}}|} in
+  let hit = cls {|{"unrelated":12345,"class":{"bytecode":[15,"0\u0078ff"]}}|} in
+  assert (first == hit);
+  let decode value =
+    let raw = Yojson.Safe.Util.member "bytecode" value |> Yojson.Safe.Util.to_string in
+    Os_input.decode_words raw (0, String.length raw) |> Array.map Felt.to_z in
+  assert (decode first = [|Z.of_int 15; Z.of_int 255|]);
+  let changed = cls {|{"class":{"bytecode":[16]}}|} in
+  assert (decode changed = [|Z.of_int 16|]);
+  ignore (cls {|{"class":{"bytecode":[]}}|});
+  assert (decode first = [|Z.of_int 15; Z.of_int 255|]);
+  assert (cls {|{"class":{"bytecode":[15,"0\u0078ff"]}}|} != first);
+  (match cls {|{"class":{"bytecode":[15,]}}|} with
+   | exception Yojson.Json_error _ -> ()
+   | _ -> failwith "invalid class bytecode JSON accepted");
+  match decode (cls {|{"class":{"bytecode":"[15]"}}|}) with
+  | exception Yojson.Safe.Util.Type_error _ -> ()
+  | _ -> failwith "stringified bytecode array accepted"

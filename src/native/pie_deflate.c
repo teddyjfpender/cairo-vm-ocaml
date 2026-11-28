@@ -3,16 +3,19 @@
 #include <caml/mlvalues.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <string.h>
 #include <zlib.h>
 
-enum { MAX_BLOCKS = 4 };
+enum { MAX_BLOCKS = 8 };
 
 struct block {
   const Bytef *src;
   Bytef *dst;
   unsigned size, capacity, written;
   int level;
+  bool production, last;
   uLong crc;
 };
 
@@ -20,6 +23,17 @@ struct block {
 
 static void *compress_block(void *arg) {
   struct block *b = arg;
+  if (b->production) {
+#ifdef OXC_HAVE_PINNED_ARCHIVE
+    extern ptrdiff_t ox_pie_deflate_range(const unsigned char *, size_t, bool, unsigned char *, size_t);
+    ptrdiff_t count = ox_pie_deflate_range(b->src, b->size, b->last, b->dst, b->capacity);
+    if (count > 0) {
+      b->written = (unsigned)count;
+      b->crc = crc32(0, b->src, b->size);
+    }
+#endif
+    return NULL;
+  }
 #ifdef OXC_HAVE_LIBDEFLATE
   if (compress_fast(b)) return NULL;
 #endif
@@ -43,7 +57,8 @@ static void *compress_block(void *arg) {
    raw bytes are shared. Each output fits its own fixed-size destination. */
 value cvm_pie_deflate(value input, value size, value output, value lengths, value settings, value prior_crc) {
   intnat n = Long_val(size);
-  if (Wosize_val(settings) != 3 || !Wosize_val(lengths)) return Val_long(-1);
+  bool production = Wosize_val(settings) == 4;
+  if ((!production && Wosize_val(settings) != 3) || !Wosize_val(lengths)) return Val_long(-1);
   intnat width = Long_val(Field(settings, 0)), stride = Long_val(Field(settings, 1));
   intnat level = Long_val(Field(settings, 2));
   if (n < 1 || (uintnat)n > caml_string_length(input) ||
@@ -60,7 +75,8 @@ value cvm_pie_deflate(value input, value size, value output, value lengths, valu
     blocks[i] = (struct block){ .src = (Bytef *)Bytes_val(input) + i * width,
       .dst = (Bytef *)Bytes_val(output) + i * stride,
       .size = (unsigned)(remain < width ? remain : width), .capacity = (unsigned)stride,
-      .level = (int)level };
+      .level = (int)level, .production = production,
+      .last = production && Long_val(Field(settings, 3)) && i + 1 == count };
     if (i + 1 < count)
       launched[i] = pthread_create(&threads[i], NULL, compress_block, &blocks[i]) == 0;
   }

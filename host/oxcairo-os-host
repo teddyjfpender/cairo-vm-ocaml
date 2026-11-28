@@ -1,8 +1,28 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''':'
+# The one-shot v1 supervisor below can also be invoked by its own interpreter.
+# This shell preamble dispatches the native protocol before starting it.
+if [ "${1-}" = worker-v1 ]; then
+    shift
+    self=$0
+    case $self in */*) ;; *) self=$(command -v "$self") ;; esac
+    while :; do
+        case $self in */*) dir=${self%/*} ;; *) dir=. ;; esac
+        worker=$dir/oxcairo-os-worker
+        if [ -x "$worker" ]; then exec "$worker" pie-v1 "$@"; fi
+        # An operator may put just the host symlink in another bin directory.
+        [ -L "$self" ] || break
+        target=$(/usr/bin/readlink "$self") || break
+        case $target in /*) self=$target ;; *) self=$dir/$target ;; esac
+    done
+    printf '%s\n' '{"schema":1,"status":"rejected","code":"io_error","detail":"missing sibling oxcairo-os-worker"}'
+    exit 27
+fi
+exec /usr/bin/env python3 "$0" "$@"
+':'''
 """Supervise one native OS job. The command's JSON protocol is defined in docs/os-host.md."""
 
-from contextlib import contextmanager, suppress
-import ctypes
+from contextlib import ExitStack, closing, contextmanager, suppress
 import errno
 import fcntl
 import hashlib
@@ -107,7 +127,7 @@ def request():
     if not required <= obj.keys() <= required | {"limits", "operation", "publication"}:
         raise ValueError("missing or unknown request field")
     publication = obj.setdefault("publication", "os-host-standard")
-    if publication not in ("os-host-standard", "rust-3.2"):
+    if publication not in ("os-host-standard", "os-host-production", "rust-3.2", "stored"):
         raise ValueError("unsupported publication profile")
     if type(obj["schema"]) is not int or obj["schema"] != 1:
         raise ValueError("expected schema 1")
@@ -165,10 +185,34 @@ def copy_program(source, dest, hashes):
     if digest.hexdigest() not in hashes:
         raise Refusal("program_mismatch", "compiler SHA-256 does not match the requested revision")
 
+@contextmanager
+def process_waiter(proc):
+    """Wait for child exit or the next resource check without sleep polling."""
+    with ExitStack() as resources:
+        if sys.platform == "darwin":
+            try:
+                queue = resources.enter_context(closing(select.kqueue()))
+                event = select.kevent(proc.pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD, fflags=select.KQ_NOTE_EXIT)
+                queue.control([event], 0, 0)
+            except OSError:
+                # An exited child or a descriptor limit can prevent registration.
+                pass
+            else:
+                def wait(timeout):
+                    if queue.control([], 1, timeout):
+                        return proc.wait()
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+
+                yield wait
+                return
+        yield proc.wait
+
 def child(stage, parent):
     job = json.load(sys.stdin)
     lim = job["limits"]
     if sys.platform.startswith("linux"):
+        import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent:
             raise Refusal("interrupted", "unable to bind job to supervisor")
@@ -203,14 +247,20 @@ def child(stage, parent):
         env["MALLOC_ARENA_MAX"] = "2"
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
-            "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
-    if job["publication"] == "os-host-standard":
+            "--cairo_pie_output", str(stage / "out")]
+    if job["publication"] == "stored":
+        argv.extend(["--pie_profile", "fast", "--pie_compression_level", "0"])
+    elif job["publication"] == "os-host-production":
+        argv.extend(["--pie_profile", "os-host-production"])
+    else:
+        argv.extend(["--pie_profile", "rust-3.2"])
+    if job["publication"] in ("os-host-standard", "os-host-production"):
         argv.append("--merge_extra_segments")
     if sys.platform != "darwin":
         os.execve(exe, argv, env)
     # macOS lacks Linux's parent-death signal. Keep a parent for the native
     # process so an interrupted supervisor cannot strand a VM holding the lock.
-    with subprocess.Popen(argv, env=env) as vm:
+    with subprocess.Popen(argv, env=env) as vm, process_waiter(vm) as wait:
         try:
             while vm.poll() is None:
                 if os.getppid() != parent:
@@ -220,7 +270,7 @@ def child(stage, parent):
                 if usage and int(usage) * 1024 > lim["memory_bytes"]:
                     raise Refusal("memory_limit", "job exceeded resident memory limit")
                 try:
-                    vm.wait(timeout=0.03)
+                    wait(timeout=0.03)
                 except subprocess.TimeoutExpired:
                     pass
         finally:
@@ -251,9 +301,9 @@ def check_exit(rc, log):
 
 def supervise(job, stage, lock, deadline):
     lim = job["limits"]
-    command = [sys.executable, str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
+    command = [sys.executable, "-S", str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
     with (stage / "error").open("w+b") as log, subprocess.Popen(command, stdin=subprocess.PIPE,
-           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc:
+           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc, process_waiter(proc) as wait:
         try:
             proc.stdin.write(json.dumps(job).encode())
             proc.stdin.close()
@@ -262,7 +312,7 @@ def supervise(job, stage, lock, deadline):
                 if remaining <= 0:
                     raise Refusal("wall_limit", "job exceeded wall-clock limit")
                 try:
-                    proc.wait(timeout=min(remaining, 0.05))
+                    wait(timeout=min(remaining, 0.05))
                 except subprocess.TimeoutExpired:
                     pass
         finally:

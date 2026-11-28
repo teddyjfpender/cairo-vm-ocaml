@@ -48,11 +48,48 @@ def main():
         historical.write_bytes(make_witness("genesis", genesis))
         job = dict(schema=1, revision="1860b9850b5c51858c50c0f5038933e49f932eef", program=str(compiled),
                    witness=str(historical), output=str(work / "standard.zip"))
-        result = subprocess.check_output([package / "oxcairo-os-host", "v1"], input=json.dumps(job).encode())
+        subprocess.run([sys.executable, str(fixtures.parent / "os_witness_refusals.py"),
+                        str(package / "oxcairo-os-host"), str(compiled), str(historical)], check=True)
+        packed = work / "apollo-os.packed"
+        subprocess.run([package / "cairo-vm-cli", compiled, "--pack_program", packed],
+                       check=True, env={**os.environ, "OCAMLRUNPARAM": "R"})
+        packed_sha = "885b2c190ce2e6b16bdbb732b5404b51ce6481798080fb06fc5d0aa5e17d8773"
+        if hashlib.sha256(packed.read_bytes()).hexdigest() != packed_sha:
+            raise SystemExit("installed CLI packed Apollo program differs from the canonical artifact")
+        profile = work / "apollo-packed-profile.json"
+        profile.write_text(json.dumps({"revision": job["revision"], "program_sha256": packed_sha}))
+        packed_job = dict(job, program=str(packed), output=str(work / "packed.zip"))
         # Pinned sequencer os_reference WITNESS.json EXPECTED.zip --merge-extra-segments
         expected_zip = "b78c75c541cdd948d1d7603d41103aa3f6ceb8ae505630a4f3cbe3e791f47bd7"
-        if json.loads(result)["sha256"] != expected_zip or hashlib.sha256(Path(job["output"]).read_bytes()).hexdigest() != expected_zip:
-            raise SystemExit("installed Apollo host output differs from the complete merged Rust archive")
+        for request, environment in [(job, None), (packed_job, {**os.environ, "OXCAIRO_OS_PROFILE": str(profile)})]:
+            result = subprocess.check_output([package / "oxcairo-os-host", "v1"],
+                                             input=json.dumps(request).encode(), env=environment)
+            actual = hashlib.sha256(Path(request["output"]).read_bytes()).hexdigest()
+            if json.loads(result)["sha256"] != expected_zip or actual != expected_zip:
+                raise SystemExit("installed Apollo host output differs from the complete merged Rust archive")
+        # Independent production publisher goldens on public stock-Rust PIEs.
+        # Apollo genesis fits one range. The account fixture crosses a four-range batch.
+        account = work / "account.json"
+        account.write_bytes(gzip.decompress((fixtures / "os/account.json.gz").read_bytes()))
+        for revision, image, hints, expected_hash in (
+            (job["revision"], compiled, historical, "3834cc9c97797b03b4df8a047d89b03d73c2716501915e1419e591b8aefb9551"),
+            ("ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45", program, account, "b5b1ab081e167255c2280ecb91de23c7f6720af56cf73b42b0846904dc9f938a"),
+        ):
+            production = work / "production.zip"
+            request = dict(schema=1, revision=revision, program=str(image), witness=str(hints),
+                           output=str(production), publication="os-host-production")
+            raw = subprocess.check_output([package / "oxcairo-os-host", "v1"], input=json.dumps(request).encode())
+            if json.loads(raw)["sha256"] != expected_hash or hashlib.sha256(production.read_bytes()).hexdigest() != expected_hash:
+                raise SystemExit("complete production ZIP differs from the independent reference")
+            with zipfile.ZipFile(production) as archive_file:
+                if archive_file.testzip() is not None:
+                    raise SystemExit("production ZIP failed member validation")
+            previous = production.read_bytes()
+            request["limits"] = {"output_bytes": 64}
+            refused = subprocess.run([package / "oxcairo-os-host", "v1"], input=json.dumps(request).encode(),
+                                     capture_output=True)
+            if refused.returncode != 23 or json.loads(refused.stdout)["code"] != "output_limit" or production.read_bytes() != previous:
+                raise SystemExit("production output limit did not preserve the prior archive")
         env = {"HOME": directory, "PATH": "", "LC_ALL": "C"}
         pie = work / "genesis.zip"
         output = subprocess.check_output(

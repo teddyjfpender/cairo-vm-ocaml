@@ -35,9 +35,11 @@ intnat cvm_parse_hex(value pool, value text, intnat slot) {
 
 /* The fallback reader accepts escaped strings, integers, and other field
    spellings. This fast path handles arrays of quoted canonical hex words. */
-value cvm_hex_array_count(value text) {
-  const unsigned char *p = (const unsigned char *)String_val(text);
-  size_t size = caml_string_length(text), count = 1;
+value cvm_hex_array_count(value text, value bounds) {
+  size_t first = Long_val(Field(bounds, 0)), last = Long_val(Field(bounds, 1));
+  if (first > last || last > caml_string_length(text)) return Val_long(0);
+  const unsigned char *p = (const unsigned char *)String_val(text) + first;
+  size_t size = last - first, count = 1;
   if (size == 0 || p[0] != '[') return Val_long(0);
   for (size_t i = 0; i < size; ++i) count += p[i] == ',';
   return Val_long(count);
@@ -47,9 +49,11 @@ static inline int json_space(unsigned char c) {
   return c == ' ' || c == '\t' || c == '\r' || c == '\n';
 }
 
-value cvm_hex_array_parse(value pool, value text, value out, value start) {
-  const unsigned char *p = (const unsigned char *)String_val(text);
-  const unsigned char *end = p + caml_string_length(text);
+value cvm_hex_array_parse(value pool, value text, value out, value start, value bounds) {
+  size_t first = Long_val(Field(bounds, 0)), last = Long_val(Field(bounds, 1));
+  if (first > last || last > caml_string_length(text)) return Val_long(-1);
+  const unsigned char *base = (const unsigned char *)String_val(text);
+  const unsigned char *p = base + first, *end = base + last;
   size_t n = Wosize_val(out), capacity = Caml_ba_array_val(pool)->dim[0] / 32;
   intnat slot = Long_val(start);
   if (slot < 0 || (uintnat)slot > capacity || p == end || *p++ != '[') return Val_long(-1);

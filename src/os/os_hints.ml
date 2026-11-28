@@ -16,9 +16,17 @@ exception Randomized_encryption
 
 let felt = Os_input.felt
 
-type input = { document : Yojson.Safe.t; source : string; virtual_os : bool; prepared : Legacy_class.Prepared.t option }
+type input = {
+  document : Yojson.Safe.t;
+  source : string option;
+  virtual_os : bool;
+  bytecode_spans : bool;
+  prepared : Legacy_class.Prepared.t option;
+}
 
-let classes_cache = Domain.DLS.new_key Json_reader.create_cache
+let classes_cache = Domain.DLS.new_key (fun () ->
+  let casm = Json_reader.create_cache ~entries:12 ~max_entry:2_097_152 ~encoded_field:"bytecode" () in
+  casm, Json_reader.create_cache ())
 
 let read_input ?cache ?(prepare=false) ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
@@ -27,12 +35,17 @@ let read_input ?cache ?(prepare=false) ~virtual_os path =
   let info = if virtual_os then Os_calls.execution_projection else Offset in
   let block_fields = Fields ["transactions", Elements Offset; "tx_execution_infos", Elements info] in
   let fields = ["os_block_inputs", Elements block_fields] in
+  (* Resident entries own their bytecode because the surrounding witness can
+     change between jobs. Cold bytecode points into this request only. *)
   let fields = match cache with
-    | None -> fields
-    | Some c -> ("compiled_classes", Values (Cached c)) :: ("deprecated_compiled_classes", Values (Cached c)) :: fields in
+    | None -> ("compiled_classes", Values (Fields ["bytecode", Span])) :: fields
+    | Some (classes, legacy) ->
+        ("compiled_classes", Values (Cached classes)) ::
+        ("deprecated_compiled_classes", Values (Cached legacy)) :: fields in
   let projection = Fields ["os_input", Fields fields] in
-  let source = In_channel.with_open_bin path In_channel.input_all in
-  let hints = Json_reader.from_string ~projection source in
+  let source, hints = match Witness_wire.read_file ~resident:(Option.is_some cache) path with
+    | Json raw -> Some raw, Json_reader.from_string ~projection raw
+    | Binary doc -> None, doc in
   if virtual_os then begin
     let blocks = U.to_list (U.member "os_block_inputs" (U.member "os_input" hints)) in
     List.iter (fun block ->
@@ -41,9 +54,9 @@ let read_input ?cache ?(prepare=false) ~virtual_os path =
   let prepared = if prepare then
       Legacy_class.Prepared.start (U.member "deprecated_compiled_classes" (U.member "os_input" hints))
     else None in
-  {document=hints; source; virtual_os; prepared}
+  {document=hints; source; virtual_os; bytecode_spans=(Option.is_some source && Option.is_none cache); prepared}
 
-let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; prepared} =
+let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os; bytecode_spans; prepared} =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   (match U.member "public_keys" config with
@@ -54,6 +67,7 @@ let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {doc
       let hashes = List.map (fun b -> felt (U.member "new_block_hash" b)) blocks in
       let salt = match U.member "rng_seed_salt" config with `Null -> Felt.zero | v -> felt v in
       Os_rng.create (Os_block_hash.hash_many (hashes @ [salt]))) in
+  let bytecode_source = if bytecode_spans then source else None in
   let classes = U.to_assoc (U.member "compiled_classes" input)
       |> List.map (fun (hash, cls) -> Z.of_string hash, cls)
       |> List.sort (fun (a, _) (b, _) -> Z.compare a b) in
@@ -111,7 +125,7 @@ let register ?entropy_source ?on_da ~os_program ~watch ~accessed ~set_pages {doc
       let syscall = Os_syscalls.bind calls ~block ~secp c in
       List.iteri (fun i (hash, cls) ->
           let class_hash = Felt.of_z hash in
-          let tree = Casm_class.load ~watch ~rng ~syscall vm c ~felt ~class_hash
+          let tree = Casm_class.load ~binary:(Option.is_none source) ~encoded:(Option.is_some source && not bytecode_spans) ~source:bytecode_source ~watch ~rng ~syscall vm c ~felt ~class_hash
             ~fact:(Casm_class.at facts (2*i)) ~builtin_costs:(get_ptr vm c "builtin_costs") cls in
           Felt_tbl.replace structures class_hash tree) classes);
   reg "ChainIdAndFeeTokenAddress" (fun c vm ->
@@ -159,9 +173,12 @@ let initialize_input ?entropy_source ?on_da ?image ?layout_def ?(record_trace=tr
   runner := Some r;
   r
 
+let read_witness ?(resident=false) ?(virtual_os=false) path =
+  let cache = if resident then Some (Domain.DLS.get classes_cache) else None in
+  read_input ?cache ~virtual_os path
+
 let initialize ?entropy_source ?on_da ?(virtual_os=false) ?image ?layout_def ?record_trace ~proof ~path cfg prog =
-  let cache = Option.map (fun _ -> Domain.DLS.get classes_cache) image in
-  let hints = read_input ?cache ~virtual_os path in
+  let hints = read_witness ~resident:(Option.is_some image) ~virtual_os path in
   initialize_input ?entropy_source ?on_da ?image ?layout_def ?record_trace ~proof hints cfg prog
 
 let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path cfg program_path =
