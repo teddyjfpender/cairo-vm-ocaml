@@ -1,0 +1,23 @@
+{
+  "baseline_runtime": "f6e37bd34ba7ccf821725c5e1d5bd8180ad3bb55",
+  "candidate_runtime": "89f3c0a9ea1142ed2acde617ec97a6d23f04805c",
+  "sequencer": "ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45",
+  "program_sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+  "binary_sha256": {
+    "before": {
+      "cairo-vm-cli": "d43739476b94c952e050a76002f2475c2603ac9238bf6449dce362f08918fe6c",
+      "native-worker": "da5deae80a2fc86f66e0b2bf49a1f99982820a2043640cdd9e1a99eae7b77afd"
+    },
+    "after": {
+      "cairo-vm-cli": "6edbf9cc0732b20e3865508e53ce31d4e3250284604d80e4d07a140e7c9d5930",
+      "native-worker": "57935b21c9b9fd63954cf5477be3ddc9ba04de787a3d78ed8eacbeb28a24d866"
+    }
+  },
+  "unicode": {
+    "construction": "Concatenate every Unicode scalar value in ascending order, omitting U+D800 through U+DFFF. Serialize the resulting UTF-8 string as one quoted JSON string.",
+    "scalar_count": 1112064,
+    "input_bytes": 4382592,
+    "output_bytes": 12963344,
+    "output_sha256": "906b9a46edf22395b9eb06ac53081e8edfebae129b01978410ae0c22faa1c178"
+  }
+}
