@@ -20,6 +20,8 @@ For a failing instruction, compare the error class and step ordinal, registers, 
 | Proof mode | Compare proof-mode execution artifacts, including padded trace, memory, public input and private input. A proof verification receipt additionally identifies the Stwo prover and verifier and binds their success to those inputs. |
 | Lean | The independent formal model qualifies the explicitly enumerated hint-free fixtures within its model and fuel limits. Ordinary SNOS hint execution is compared against the pinned Rust host. |
 
+Packed programs order identifier names by their bytes. The decoder also reads version 1 artifacts produced by earlier releases. Hints resolve constants in their accessible scopes first. If an unscoped suffix matches multiple qualified constants, OxCairo chooses the lexicographically first qualified name. Rust's suffix lookup iterates a hash map, so parity for an ambiguous suffix requires that its matching constants agree in value.
+
 Native OS execution uses the pinned compiled program and witness. Witness preparation can require upstream class compilation, Blockifier re-execution, state reads and commitment proofs. The isolated host clears the Rust delegation environment. Running the host or replaying a PIE requires the packaged runtime dependencies. See [the host protocol](os-host.md) and [the parity gate](parity.md).
 
 ## Artifacts and failures

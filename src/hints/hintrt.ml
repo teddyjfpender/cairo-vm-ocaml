@@ -343,16 +343,16 @@ let resolve_constant ctx name =
   | Some _ as value -> value
   | None -> (
       let suffix = "." ^ name in
-      (* Preserve identifier iteration order when several scopes define the same suffix. *)
-      let exception Found of Z.t in
-      try
-        Hashtbl.iter (fun k (id : P.ident) ->
-            if id.i_type = "const" && String.length k > String.length suffix
-               && String.ends_with ~suffix k then
-              Option.iter (fun v -> raise_notrace (Found v)) id.i_value)
-          ctx.prog.P.identifiers;
-        None
-      with Found v -> Some v)
+      (* The Rust suffix search has no specified priority across namespaces.
+         Use the first qualified name in bytewise order for the unscoped case. *)
+      Hashtbl.fold (fun key (id : P.ident) best ->
+          if id.i_type <> "const" || String.length key <= String.length suffix
+             || not (String.ends_with ~suffix key) then best
+          else match id.i_value, best with
+          | Some v, None -> Some (key, v)
+          | Some v, Some (prior, _) when String.compare key prior < 0 -> Some (key, v)
+          | _ -> best)
+        ctx.prog.P.identifiers None |> Option.map snd)
 
 (* The identifier table and accessible scopes are fixed for a compiled hint.
    Cache misses too: optional constants can otherwise scan every identifier
