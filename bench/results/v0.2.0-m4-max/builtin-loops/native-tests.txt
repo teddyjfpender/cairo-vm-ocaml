@@ -1,0 +1,2 @@
+checked 364 selection states, 264 fused multiple hints
+checked 525 validation states against scalar interpreter
