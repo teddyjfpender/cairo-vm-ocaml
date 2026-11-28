@@ -122,6 +122,9 @@ runtime and program. Linux applies an address-space cap, and macOS samples
 resident memory. Set the memory budget for both the template and the job.
 `publication` supports `stored`, `rust-3.2`, and the default
 `os-host-standard`, as described above.
+The worker also accepts `fast-1` for level-one deflate with separate extra
+segments. Its uncompressed contents match the stored profile. Record the
+chosen codec and linked compression library when comparing archive digests.
 
 Success includes `status: "ok"`, `output`, `bytes`, and `sha256`. A rejected
 job returns `status: "rejected"`, `code`, and `detail`. Submit another job on

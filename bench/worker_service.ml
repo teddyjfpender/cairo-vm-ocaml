@@ -97,8 +97,10 @@ let child job program image archive digest_path supervisor =
   let r = Os_hints.initialize ~image ~proof:false ~record_trace:true ~path:job.witness cfg program in
   Runner.run_until_end ~max_steps:l.steps r;
   Finalize.end_run r ~secure:true ~allow_missing:false;
-  let profile = if job.profile = Stored then Pie_zip.Fast else Pie_zip.Rust_3_2 in
-  Pie.write ~profile ~compression_level:0 ~merge_extra_segments:(job.profile=Standard)
+  let profile,level = match job.profile with
+    | Stored -> Pie_zip.Fast,0 | Fast_one -> Pie_zip.Fast,1
+    | Rust | Standard -> Pie_zip.Rust_3_2,0 in
+  Pie.write ~profile ~compression_level:level ~merge_extra_segments:(job.profile=Standard)
     ~main:(Runner.entry_pc cfg program) ~secure:true r archive;
   let digest = with_fd (Unix.openfile archive [O_RDONLY;O_CLOEXEC] 0) (fun fd ->
     if (Unix.fstat fd).st_size > l.output_bytes then refuse 23 "output limit";

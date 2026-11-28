@@ -33,8 +33,8 @@ let () =
   assert (bad=Unix.WEXITED 4);
   let _,status=serve pin (fun ready send ->
     assert (field "status" ready="ready" && field "program_sha256" ready=pin);
-    let job ?(input=witness) ?(out=output) ?(limits=[]) () =
-      send (J.to_string (`Assoc ["schema",`Int 1;"publication",`String "stored";
+    let job ?(input=witness) ?(out=output) ?(limits=[]) ?(publication="stored") () =
+      send (J.to_string (`Assoc ["schema",`Int 1;"publication",`String publication;
           "witness",`String input;"output",`String out;"limits",`Assoc limits])) in
     let first=job () in
     assert (field "status" first="ok");
@@ -69,6 +69,9 @@ let () =
     Sys.remove program;
     assert (field "sha256" (job ())=digest && sha output=digest);
     let p=Pie_file.read output in
+    let compressed=job ~publication:"fast-1" () in
+    assert (field "status" compressed="ok" && field "sha256" compressed<>digest);
+    assert (p=Pie_file.read output);
     assert (hex (Sha256.digest (Bytes.unsafe_to_string p.memory))=
       "99bfd976086c845ace970e064b0fcbcd16cd2c16772f325c0bbdd2ebe757845a")) in
   assert (status=Unix.WEXITED 0)
