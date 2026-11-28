@@ -1,0 +1,3 @@
+(test
+ (name casm_words)
+ (libraries cairovm))

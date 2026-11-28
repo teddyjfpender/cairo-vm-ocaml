@@ -4,8 +4,8 @@ open Errors
 type t = { length : int; contents : contents }
 and contents = Words of Felt.t array * int | Children of t list
 
-let of_json words lengths =
-  let data = Array.of_list words and next = ref 0 in
+let of_json data lengths =
+  let next = ref 0 in
   let rec parse = function
     | `List items ->
         let start = !next in
