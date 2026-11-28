@@ -329,6 +329,19 @@ intnat cvm_bits(value pool, intnat a) {
 }
 value cvm_bits_byte(value pool, value a) { return Val_long(cvm_bits(pool, Long_val(a))); }
 
+/* Encode the canonical integer as two or eight big-endian u32s. The long
+   form sets bit 255. All output words are immediate OCaml integers. */
+value cvm_blake_u32_words(value pool, value code, value words) {
+  if (Wosize_val(words) < 8) return Val_int(0);
+  u64 x[4];
+  load(pool, Long_val(code), x);
+  int count = (x[1] | x[2] | x[3] | (x[0] >> 63)) ? 8 : 2;
+  if (count == 8) x[3] |= UINT64_C(1) << 63;
+  for (int i = 0; i < count; ++i)
+    Field(words,count-1-i) = Val_long((uint32_t)(x[i/2] >> ((i & 1) * 32)));
+  return Val_int(count);
+}
+
 /* compare canonical values: -1, 0, 1 */
 intnat cvm_cmp(value pool, intnat a, intnat b) {
   u64 x[4], y[4];

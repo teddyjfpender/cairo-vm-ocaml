@@ -80,6 +80,7 @@ static intnat inverse_operand(value pool, intnat kind, intnat dst, intnat known,
 }
 
 #include "poseidon_batch.h"
+#include "u32_pair_block.h"
 
 #define POSE_JOBS 128
 #define POSE_COPIES 2048
@@ -169,6 +170,33 @@ value batch(value state, value cache, value segs, value flags, value highs,
     /* Unbias all three offsets together for signed 16-bit address arithmetic. */
     uint64_t offsets = d ^ UINT64_C(0x800080008000);
     const unsigned shape = (d >> 48) & 0xfff;
+    if (!queue && code_seg == 0 && code_base == 0 && shape == 0xe00 &&
+        completed <= BATCH_STEPS - 7 && pc + 1 < cache_size &&
+        Field(cache, pc + 1) == Val_long(UINT64_C(0x1e1d7fff80008000)) &&
+        (!tracing || (used <= trace_length - 9 && pc < 65536 - 7 &&
+                      ap < (1 << 23) - 5 && fp < (1 << 23))) &&
+        u32_pair_block(cache, pc, program, program_length, segs, flags, highs,
+                       nsegs, stack, length, ap, fp, pool, slots, &slot, watched)) {
+      if (tracing) {
+        /* Seven original instructions, with one immediate at pc+5. The
+           ordinary completion below records the final instruction. */
+        static const unsigned char ap_delta[] = {0, 1, 2, 2, 3, 4};
+        for (int i = 0; i < 6; ++i) {
+          uint64_t original_pc = pc + i + (i == 5);
+          entries[used++] = (original_pc << 47) | ((ap + ap_delta[i]) << 24) | (fp << 1) | 1;
+        }
+        pc += 7;
+        ap += 5;
+        next_pc = pc + 1;
+        next_ap = ap;
+      } else {
+        next_pc = pc + 8;
+        next_ap = ap + 5;
+      }
+      if (next_ap > high) high = next_ap;
+      completed += 6;
+      goto complete;
+    }
     /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
        for the otherwise unused op0, which must still be assigned. */
     if ((shape == 0xe0a || shape == 0xe0e || shape == 0xe06) && (uint16_t)d == 0x8000) {
