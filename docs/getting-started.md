@@ -23,7 +23,7 @@ Use absolute executable paths when comparing two installations.
 
 ### Reproduce the Ubuntu x86-64 archive
 
-The Linux packaging workflow starts two fresh containers on separate Ubuntu 24.04 runners. The amd64 image digest fixes the system packages, the two Git revisions fix the opam repositories, and the build compares the installed switch against the complete package lock. Native stubs target baseline x86-64. Each replica exercises its extracted CLI, prepared worker and C library against the genesis reference before the workflow compares the archives, checksums and JSON provenance byte for byte. Tagged publication requires that comparison to succeed.
+The Linux packaging workflow starts two fresh containers on separate Ubuntu 24.04 runners. The amd64 image digest and signed Ubuntu archive snapshot fix system packages. Two Git revisions fix the opam repositories, a separate revision and archive digest pin Zarith, and the build compares the installed switch against the complete package lock. Native stubs target baseline x86-64. Each builder verifies the Rust compiler, Cargo and standard-library archive digests before compiling the static PIE compressor from its crate lock. It tests five complete reference archives with one and two workers. Each replica exercises its extracted CLI, prepared worker and C library against the genesis reference before the workflow compares the archives, checksums and JSON provenance byte for byte. Tagged publication requires that comparison to succeed.
 
 To build the same portable archive locally, use Docker with an x86-64 Linux host and check out the exact source revision in a standard Git clone. Run from its root:
 
