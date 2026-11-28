@@ -138,11 +138,21 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--binary", type=Path, help="installed native CLI")
+    group.add_argument("--prepare", type=Path, help="write programs and witnesses into a new directory")
     group.add_argument("--reference-dir", type=Path, help="pinned sequencer's built examples")
     parser.add_argument("--stock-cli", type=Path, help="cairo-vm 3.2.0 CLI for standard hints with --reference-dir")
     args = parser.parse_args()
     cases = json.loads((HERE / "cases.json").read_bytes())
     manifest = json.loads((HERE / "manifest.json").read_bytes())
+    if args.prepare:
+        args.prepare.mkdir(parents=True)
+        for name, case in cases.items():
+            (args.prepare / (name + ".json")).write_bytes(make_witness(name, case))
+        for family in MODE:
+            for suffix in (".json", ".proof.json"):
+                encoded = HERE / (family + suffix + ".gz")
+                (args.prepare / (family + suffix)).write_bytes(gzip.decompress(encoded.read_bytes()))
+        raise SystemExit(0)
     with tempfile.TemporaryDirectory() as tmp:
         if args.binary or args.stock_cli:
             check_standard_hints((args.binary or args.stock_cli).resolve(), manifest, Path(tmp))

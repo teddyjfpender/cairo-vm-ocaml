@@ -33,3 +33,35 @@ For every witness, the checker compares stdout, relocated trace and memory, all 
 The account fixture also checks that enabling Rust's optional gas diagnostics rejects a later-protocol prediction. Two additional later-protocol witnesses, a virtual L1 message and a nested revert, failed the historical reference's syscall gas assertion when their header versions were translated. They are outside the successful historical corpus.
 
 The separate `standard-hints.cairo` fixture compiles public Cairo standard-library allocation, copy, fill, division and comparison routines. The checker recovers executed program counters from the relocated trace and verifies that all 14 distinct hint bodies execute. Recompile with `cairo-compile standard-hints.cairo --no_debug_info --output standard-hints.json` and compare `cairo-vm-cli standard-hints.json --layout all_cairo --trace_file trace.bin --memory_file memory.bin` using stock cairo-vm 3.2.0.
+
+## Verified Stwo proofs
+
+The upstream Stwo verifier accepted three freshly produced proofs. Genesis uses the direct proof-mode OS. Virtual execution info and the single-block aggregator run their complete execution PIEs as tasks in `cairo-program-runner-lib` 1.3.1's simple bootloader. The OCaml and independent Rust snapshots produced identical adapted prover inputs in all three successful runs. [Per-proof digests and archive identity](stwo-verified.json) · [Pinned prover, verifier, adapters and parameters](../../../../bench/reference/stwo/README.md)
+
+Use the repository's `bench/reference/stwo/os-params.json` for all three. The direct virtual execution-info run under `all_cairo_stwo` fails in both VMs on the missing builtin pointer at address `1:632`. The direct aggregator produced identical Rust and OCaml adapted inputs, then the prover rejected a field value during conversion to u128. These outcomes refer to the direct Stwo cases. Both families pass the ordinary `all_cairo` proof-artifact comparisons above.
+
+With the adapter and binaries from the linked setup on PATH, run the following from the OxCairo checkout. Set `BOOTLOADER` to the absolute path of `simple_bootloader_compiled.json`.
+
+```sh
+python3 "$fixtures/check.py" --prepare historical-inputs
+cd historical-inputs
+stwo_snapshot os.proof.json genesis.snapshot --os genesis.json
+ocaml_snapshot genesis.snapshot genesis.input
+RAYON_NUM_THREADS=1 prove --prover_input_path genesis.input --proof_path genesis.proof.json --params_json ../bench/reference/stwo/os-params.json
+verify --proof_path genesis.proof.json
+
+for family in virtual_os aggregator; do
+  case "$family" in
+    virtual_os) name=virtual-execution-info; flag=--virtual_os_hints ;;
+    aggregator) name=single-block; flag=--aggregator_input ;;
+  esac
+  cairo-vm-cli "$family.json" --layout all_cairo "$flag" "$name.json" --merge_extra_segments --cairo_pie_output "$name.zip"
+  python3 -c 'import json,pathlib,sys; print(json.dumps({"tasks":[{"type":"CairoPiePath","path":str(pathlib.Path(sys.argv[1]).resolve()),"program_hash_function":"blake"}],"single_page":False}))' "$name.zip" > "$name.task.json"
+  stwo_snapshot "$BOOTLOADER" "$name.snapshot" --bootloader "$name.task.json"
+  ocaml_snapshot "$name.snapshot" "$name.input"
+  RAYON_NUM_THREADS=1 prove --prover_input_path "$name.input" --proof_path "$name.proof.json" --params_json ../bench/reference/stwo/os-params.json
+  verify --proof_path "$name.proof.json"
+done
+```
+
+Here `stwo_snapshot` is the release build of `bench/stwo_snapshot.exe`. For an independent input comparison, substitute `raw_os_snapshot os.proof.json genesis.json rust.snapshot os all_cairo_stwo` for the direct exporter or `boot_snapshot "$BOOTLOADER" "$name.task.json" rust.snapshot` for each task exporter, adapt the resulting Rust snapshot, and compare the entire input file before proving.
