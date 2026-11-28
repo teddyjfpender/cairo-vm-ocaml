@@ -195,14 +195,24 @@ let main () =
       | Some s -> limits defaults (parse s) in
     Unix.putenv "OXCAIRO_HOST_DETERMINISTIC" "1";
     Os_hints.configure_batch_gc ();
-    (* OxCaml reserves a Linux address range for every potential domain.
-       Apply a bounded nursery configuration once, before loading the pin. *)
-    (if Sys.file_exists "/proc/self/statm" && Sys.getenv_opt "OCAMLRUNPARAM" = None &&
-        Sys.getenv_opt "CAMLRUNPARAM" = None then begin
-       let domains = max 1 (min 4 (ceiling.memory / (128 lsl 20))) in
-       let words = min (4 lsl 20) (ceiling.memory / 256) in
-       Unix.putenv "OCAMLRUNPARAM" (Printf.sprintf "d=%d,s=%d,o=250" domains words);
-       Unix.execv Sys.executable_name Sys.argv
+    (* Both the felt pool and the runtime's per-domain address ranges are
+       reserved before main. Configure the template before forking jobs so
+       Linux charges only bounded reservations against each child's RLIMIT_AS. *)
+    (if Sys.file_exists "/proc/self/statm" then begin
+       let pool_budget = match Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" with
+         | Some s -> min (int_of_string s) ceiling.memory
+         | None -> ceiling.memory in
+       let budget = string_of_int pool_budget in
+       let set_budget = Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" <> Some budget in
+       let set_runtime = Sys.getenv_opt "OCAMLRUNPARAM" = None &&
+                         Sys.getenv_opt "CAMLRUNPARAM" = None in
+       if set_budget then Unix.putenv "OXCAIRO_HOST_MEMORY_BYTES" budget;
+       if set_runtime then begin
+         let domains = max 1 (min 4 (ceiling.memory / (128 lsl 20))) in
+         let words = min (4 lsl 20) (ceiling.memory / 256) in
+         Unix.putenv "OCAMLRUNPARAM" (Printf.sprintf "d=%d,s=%d,o=250" domains words)
+       end;
+       if set_budget || set_runtime then Unix.execv Sys.executable_name Sys.argv
      end);
     let prepared = load Sys.argv.(2) expected in
     Gc.full_major ();
