@@ -9,6 +9,7 @@ All timings here use the PGO executable at `d884acc` on the 36 GiB M4 Max. The b
 | Fresh process, full compiler JSON | 350 | 39.04 s | 4.97 s | 7.85× | 2.18× | 19/70 |
 | Fresh process, full compiler JSON, lower host load | 350 | 28.07 s | 2.84 s | 9.89× | 2.68× | 19/70 |
 | Fresh process, packed compiler | 210 | 36.27 s | 2.87 s | 12.65× | 3.76× | 19/70 |
+| Fresh process, packed compiler, lower host load | 210 | 28.22 s | 1.76 s | 16.07× | 4.48× | 19/70 |
 | Persistent workers, same input after warmup | 350 | 6.02 s | 1.03 s | 5.83× | 5.30× | 0/70 |
 | Persistent workers, shuffled distinct inputs | 350 | 8.97 s | 1.48 s | 6.06× | 5.80× | 3/70 |
 
@@ -37,6 +38,11 @@ Each worker request starts a new secure VM. The shuffled mode keeps a single pro
 | 2048 STRK transfers, 2048 recipients | stock | 8.992 s | 0.479 s | 18.71× |
 | 4096 STRK transfers, 16 recipients | verified | 5.820 s | 0.506 s | 11.48× |
 | 4096 STRK transfers, 4096 recipients | verified | 17.299 s | 0.949 s | 18.19× |
+| 8192 STRK transfers, 16 recipients | verified | 10.465 s | 1.000 s | 10.40× |
+| 384 transactions, 256 reverted | stock | 1.564 s | 0.087 s | 17.98× |
+| 1536 transactions, 1024 reverted | stock | 2.494 s | 0.188 s | 13.28× |
+| 4608 transactions, 3072 reverted | verified | 4.611 s | 0.445 s | 10.37× |
+| 9216 transactions, 6144 reverted | verified | 7.902 s | 0.833 s | 9.47× |
 
 The stock Rust rows use the upstream sequencer entry point. The checked runner executes the same hint processor, return checks and auto-deductions and omits unrequested relocated output objects. These contract workloads use sequencer-generated witnesses. The historical production data below consists of previously executed PIEs.
 

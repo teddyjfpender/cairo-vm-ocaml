@@ -19,11 +19,5 @@
     "one_time_pack_seconds": 0.0649
   },
   "production_artifact_baseline": "Full receipts in ../pie-artifacts.json",
-  "checkpoint": "43598c9",
-  "prepared_class_comparison": {
-    "baseline": "5ad5da4",
-    "change_landed_as": "576f9ae",
-    "measured_candidate": "Private ordinary build on 5ad5da4 with equivalent exact-byte JSON change, prior to integration with loader",
-    "scope": "Same complete-key Pedersen cache on both sides. Candidate adds immutable class JSON reuse. Ordinary release builds, no PGO. Five shuffled traversals of 70 independently qualified witnesses."
-  }
+  "checkpoint": "43598c9"
 }
