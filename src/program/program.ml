@@ -313,26 +313,44 @@ let load_json j =
 
 external read_program : Unix.file_descr -> int -> string option = "cvm_pread_program"
 
-let load_file path =
-  let contents = In_channel.with_open_bin path (fun ic ->
-      let fd = Unix.descr_of_in_channel ic in
-      let stat = Unix.fstat fd in
-      if stat.st_kind <> Unix.S_REG || stat.st_size < 4_000_000 ||
-         stat.st_size > Sys.max_string_length || Domain.recommended_domain_count () < 2
-      then In_channel.input_all ic
-      else match read_program fd stat.st_size with
-        | Some contents -> contents
-        | None -> In_channel.input_all ic) in
+let load_projection source word_offsets reference_offsets ids root =
+  let spans offsets = Option.map (fun rows -> source, rows) offsets in
+  load_with_identifiers ?word_offsets:(spans word_offsets)
+    ?reference_offsets:(spans reference_offsets) ids root
+
+let load_bytes contents =
   if String.starts_with ~prefix:Packed_program.magic contents then
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))
   else
     let word_offsets = ref None and reference_offsets = ref None in
-    let consume ids root =
-      let offsets = Option.map (fun spans -> contents, spans) !reference_offsets in
-      let words = Option.map (fun spans -> contents, spans) !word_offsets in
-      load_with_identifiers ?word_offsets:words ?reference_offsets:offsets ids root in
-    Json_reader.with_program_document ~word_offsets ~add_struct ~add_batch:add_identifier_batch ~reference_offsets ~add_identifier ~consume contents
+    let consume ids root = load_projection contents !word_offsets !reference_offsets ids root in
+    Json_reader.with_program_document ~word_offsets ~add_struct ~add_batch:add_identifier_batch
+      ~reference_offsets ~add_identifier ~consume contents
+
+external read_sections : Unix.file_descr -> int array -> string option = "cvm_pread_program_sections"
+external find_file_span : Unix.file_descr -> int -> int array -> bool = "cvm_file_span" [@@noalloc]
+
+let load_file path =
+  In_channel.with_open_bin path (fun ic ->
+      let fd = Unix.descr_of_in_channel ic in
+      let stat = Unix.fstat fd in
+      let size = stat.st_size and cpus = Domain.recommended_domain_count () in
+      let streaming_read () = load_bytes (In_channel.input_all ic) in
+      if stat.st_kind <> Unix.S_REG || size < 4_000_000 || size > Sys.max_string_length || cpus < 2
+      then streaming_read ()
+      else
+        let full () = match read_program fd size with
+          | Some source -> load_bytes source
+          | None -> streaming_read () in
+        let bounds = Array.make 7 0 in
+        if size < 32 lsl 20 || cpus < 4 || not (find_file_span fd size bounds) then full ()
+        else
+          let read () = read_sections fd [|size; 0; bounds.(0); bounds.(1); size - bounds.(1)|] in
+          match Json_reader.with_program_slices ~add_identifier ~add_batch:add_identifier_batch
+                  ~add_struct ~consume:load_projection ~bounds ~fd read with
+          | Some program -> program
+          | None -> full ())
 
 let pack program =
   try Packed_program.encode program

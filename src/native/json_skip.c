@@ -102,9 +102,7 @@ static const unsigned char *number_end(const unsigned char *p, const unsigned ch
 }
 
 /* Return the first byte after the value, or a negative error offset. */
-CAMLprim value cvm_json_skip(value input, value index) {
-  const unsigned char *base = (const unsigned char *)String_val(input);
-  const unsigned char *end = base + caml_string_length(input);
+static value skip_bytes(const unsigned char *base, const unsigned char *end, value index) {
   intnat start = Long_val(index);
   if (start < 0 || (uintnat)start >= (uintnat)(end-base)) return Val_long(-1);
   const unsigned char *p = base + start, *next;
@@ -160,6 +158,11 @@ invalid:
 done:
   if (stack != local) free(stack);
   return Val_long(result);
+}
+
+CAMLprim value cvm_json_skip(value input, value index) {
+  const unsigned char *base = (const unsigned char *)String_val(input);
+  return skip_bytes(base, base + caml_string_length(input), index);
 }
 
 /* Resolve an object key against the canonical names in an Only projection.
@@ -258,3 +261,5 @@ CAMLprim value cvm_json_matches_at(value source, value offset, value key) {
   return Val_bool(at <= length && size <= length - at &&
                   !memcmp(String_val(source) + at, String_val(key), size));
 }
+
+#include "json_stream.h"

@@ -56,3 +56,13 @@ val with_program_document :
     Program.load_file can additionally consume canonical identifier and struct rows,
     bytecode word offsets and reference offsets. The ordinary projections handle other valid shapes;
     a speculative retry clears the previously collected offsets. *)
+
+val with_program_slices :
+  add_identifier:((string, 'a) Hashtbl.t -> string -> J.t -> unit) ->
+  add_batch:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->
+  add_struct:((string, 'a) Hashtbl.t -> string -> int array -> int -> unit) ->
+  consume:(string -> int array option -> int array option -> (string, 'a) Hashtbl.t -> J.t -> 'b) ->
+  bounds:int array -> fd:Unix.file_descr -> (unit -> string option) -> 'b option
+(** Parse the root while native workers validate the removed debug value.
+    [bounds] comes from [cvm_file_span] on this descriptor. Return [None] if
+    a proposed endpoint, tile, compact root or descriptor stamp fails. *)

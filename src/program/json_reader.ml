@@ -206,7 +206,7 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
                      seen_debug := true;
                      ignore (peek ());
                      (match debug_span with
-                      | Some (first, last) when first = !pos -> pos := last
+                      | Some (first, last, matched) when first = !pos -> matched := true; pos := last
                       | _ ->
                           if not (validate_schema src pos Program_metadata.debug Program_metadata.instruction) then
                             Program_metadata.validate k Program_metadata.debug (value Debug_info));
@@ -326,7 +326,7 @@ let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offset
     | None -> full ()
     | Some worker ->
         Fun.protect ~finally:(fun () -> Semaphore.Binary.release release; Domain.join worker) (fun () ->
-            let tentative = try Ok (read ~debug_span:(first,last) ())
+            let tentative = try Ok (read ~debug_span:(first,last,ref false) ())
               with e -> Error (e, Printexc.get_raw_backtrace ()) in
             Semaphore.Binary.acquire ready;
             if not (Atomic.get verified) then full () else
@@ -334,6 +334,33 @@ let with_program_document ?add_struct ?word_offsets ?add_batch ?reference_offset
             | Ok (ids,root) -> consume ids root
             | Error (e,bt) -> Printexc.raise_with_backtrace e bt)
   end
+
+external stream_debug : Unix.file_descr -> int array -> (unit -> unit) -> bool
+  = "cvm_stream_debug"
+
+let with_program_slices ~add_identifier ~add_batch ~add_struct ~consume ~bounds ~fd read =
+  let first = bounds.(0) in
+  let matched = ref false and ids = Hashtbl.create 1024 and tentative = ref None in
+  let word_offsets = ref None and reference_offsets = ref None in
+  let parse () =
+    match read () with
+    | None -> ()
+    | Some source ->
+        (* The surrounding root must confirm that the removed bytes were
+           precisely the value of its debug_info field. Otherwise retry the
+           complete source, which preserves ordinary parsing diagnostics. *)
+        try
+          let root = parse_value ~add_struct:(add_struct ids) ~word_offsets
+              ~identifier_batch:(add_batch ids) ~reference_offsets
+              ~identifiers:(add_identifier ids) ~debug_span:(first, first, matched)
+              ~projection:Program ~start:0 ~whole:true source in
+          tentative := Some (source, root)
+        with Yojson.Json_error _ | Yojson.Safe.Util.Type_error _ | Failure _ | Invalid_argument _ -> () in
+  let valid = stream_debug fd bounds parse in
+  match !tentative with
+  | Some (source, root) when !matched && valid ->
+      Some (consume source !word_offsets !reference_offsets ids root)
+  | _ -> None
 
 let program_document ~add_identifier src =
   with_program_document ~add_identifier ~consume:(fun ids root -> ids,root) src

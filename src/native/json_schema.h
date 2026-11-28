@@ -60,7 +60,7 @@ static int schema_skip_cached(struct schema_reader *s, const unsigned char *key,
     }
     s->p = p + 1;
   } else {
-    intnat pos = Long_val(cvm_json_skip(s->source, Val_long(first - s->base)));
+    intnat pos = Long_val(skip_bytes(s->base, s->end, Val_long(first - s->base)));
     if (pos < 0 || (uintnat)pos > (size_t)(s->end-s->base)) return 0;
     s->p = s->base + pos;
   }

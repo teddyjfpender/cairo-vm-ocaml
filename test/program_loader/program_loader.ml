@@ -310,3 +310,39 @@ let () =
           with_json source (fun path -> assert (Program.pack (Program.load_file path) = expected)))
         [""; {|"x":{"cairo_type":"felt","offset":1},"x":{"cairo_type":"S*","offset":3}|}; members])
     [{|"0x123"|}; {|"0x123"|}]
+
+(* Exercise the native tile reader independently of fallback. *)
+external stream_bounds : Unix.file_descr -> int -> int array -> bool =
+  "cvm_file_span" [@@noalloc]
+external stream_debug : Unix.file_descr -> int array -> (unit -> unit) -> bool =
+  "cvm_stream_debug"
+
+let () =
+  let path = Filename.temp_file "compiler-tiles" ".json" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () ->
+      let location = {|{"end_col":1,"end_line":2,"input_file":{"filename":"a"},"start_col":1,"start_line":2}|} in
+      let instruction = Printf.sprintf
+          {|{"accessible_scopes":["%s"],"flow_tracking_data":{},"hints":[],"inst":%s}|}
+          (String.make 2000 'x') location in
+      Out_channel.with_open_bin path (fun oc ->
+          output_string oc "{\n  \"debug_info\": {\n    \"file_contents\": {},\n    \"instruction_locations\": {";
+          for i = 0 to 8191 do
+            if i <> 0 then output_char oc ',';
+            Printf.fprintf oc "\n      \"%d\": %s" i instruction
+          done;
+          output_string oc "\n    }\n  },\n  \"hints\": {}\n}");
+      Unix.utimes path 1_000. 1_000.;
+      let fd = Unix.openfile path [Unix.O_RDWR] 0 in
+      Fun.protect ~finally:(fun () -> Unix.close fd) (fun () ->
+          let size = (Unix.fstat fd).st_size and bounds = Array.make 7 0 in
+          assert (stream_bounds fd size bounds);
+          assert (stream_debug fd bounds Gc.full_major);
+          (match stream_debug fd bounds (fun () -> raise Exit) with
+           | exception Exit -> () | _ -> failwith "lost callback exception");
+          (* The key and bytes still parse after this equal-size rewrite.
+             A file stamp change must invalidate the speculative result. *)
+          assert (not (stream_debug fd bounds (fun () ->
+              ignore (Unix.lseek fd (size - 2) Unix.SEEK_SET);
+              ignore (Unix.write_substring fd " " 0 1))));
+          assert (stream_bounds fd size bounds);
+          assert (not (stream_debug fd bounds (fun () -> Unix.ftruncate fd (size / 3))))))
