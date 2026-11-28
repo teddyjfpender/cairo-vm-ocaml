@@ -65,3 +65,21 @@ Six fresh, rotating three-way rounds repeated the source comparison. Each format
 | 16,149,540 | 15.95 ms | 45.50 ms | **7.52 ms** |
 
 The direct encoder took about 47% of JSON encoding time on both blocks. Every binary result matched the retained OxCaml frame byte for byte. The fixture-source JSON parse medians were 18.6–18.9 ms for the smaller block and 43.3–43.9 ms for the larger one. Parsing is excluded from every encoding interval. These changes improve source serialization; the guarded worker still receives the same wire bytes. [Raw encoding receipts](direct-source.jsonl)
+## Materialized witness through published PIE
+
+A three-arm campaign measured one uninterrupted interval from an already materialized witness tree through source serialization, handoff and the worker's completion reply. Both JSON arms used the same native writer, and the binary arm used the direct OXW1 writer. All generated a fresh source file per request. The Rust reference used its production VM settings and retained its preloaded program. The guarded OxCairo supervisor retained its prepared program and enforced its per-job controls.
+
+| First → second mainnet block | Rust, JSON | Guarded OxCairo, JSON | Guarded OxCairo, direct OXW1 | Paired Rust / direct OXW1 |
+| --- | ---: | ---: | ---: | ---: |
+| 16,000,001 → same | 142.56 ms | 78.15 ms | **73.71 ms** | **1.93×** |
+| 16,149,540 → same | 345.87 ms | 186.18 ms | **170.07 ms** | **2.08×** |
+| 16,000,001 → 16,149,540 | 346.96 ms | 182.62 ms | **172.24 ms** | **2.05×** |
+| 16,149,540 → 16,000,001 | 148.19 ms | 77.54 ms | **75.51 ms** | **1.96×** |
+
+Cells report second-job medians over six rounds, rotating all six engine/format orders. Ratios are medians of same-round pairs. Every timer covered serialization from the same native logical value, source file close, submission and the whole worker reply. The source serialization portion took approximately 2.9 / 6.1–6.2 ms for OXW1 and 5.5 / 12.5–12.8 ms for JSON on the smaller/larger jobs.
+
+The Rust reference SHA-256 was `70b95939e3c9b8529851a5cf432c9a86f7acb587d9b8ca5768b2f18ecdf94d37`. The guarded worker identity is listed above. Rust replied after stored archive flush and close. OxCairo replied after isolation, limits, archive hashing, file fsync, atomic publication and directory fsync. Program startup and fixture hydration happened before the measured interval. Native node witness assembly remains outside this measurement.
+
+Every job compared all five canonical PIE members after timing. Memory bytes and parsed JSON with arbitrary-precision numbers matched across all 144 jobs. All 96 guarded ZIPs also matched their retained reference bytes exactly. [First/second timings and subintervals](materialized-jobs.jsonl)
+
+The `time-materialized` native driver accepts arm (`rust-json`, `ox-json`, `ox-direct`), worker, packed program, pinned digest, two fixture source paths, output path and corresponding reference ZIP paths. Host-side source assembly can replace its fixture hydration when a native node handoff is available.

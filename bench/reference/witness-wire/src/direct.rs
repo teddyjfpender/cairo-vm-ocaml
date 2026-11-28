@@ -214,10 +214,12 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-            assert_eq!(
-                &out[1..],
-                super::super::encode(&cbor4ii::core::Value::Bytes(input)).unwrap()
-            );
+            assert_eq!(&out[1..], {
+                use cbor4ii::core::{enc::Encode, utils::BufWriter, Value};
+                let mut b = BufWriter::new(Vec::new());
+                Value::Bytes(input).encode(&mut b).unwrap();
+                b.into_inner()
+            });
         }
     }
 

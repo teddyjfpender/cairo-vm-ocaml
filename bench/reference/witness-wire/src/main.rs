@@ -1,6 +1,5 @@
 //! Independent OXW1 producer for integral reference fixtures.
 //! A native host can build the same ordered values from its witness directly.
-mod direct;
 use cbor4ii::core::{enc::Encode, utils::BufWriter, Value};
 use serde_json::Value as Json;
 use std::{
@@ -8,6 +7,7 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter as FileWriter, Write},
 };
+use witness_interop::direct;
 
 const MAX_BYTES: usize = 256 << 20;
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
