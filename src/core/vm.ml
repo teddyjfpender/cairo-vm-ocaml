@@ -59,6 +59,9 @@ and selection = {
   publish : int -> unit;
 }
 
+(* A supervised job has a hard virtual-memory budget on Linux. Grow its
+   execution segment and trace on demand instead of reserving gigabytes. *)
+let bounded_host = Option.is_some (Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES")
 let create ~trace =
   {
     segs = Array.make 16 empty_seg;
@@ -82,7 +85,7 @@ let create ~trace =
     (* lazily committed; the two extra words are record_trace's headroom, so
        a power-of-two run of packed entries (a padded proof run) fits without
        doubling at every size *)
-    trace = (if trace then seg_make ((1 lsl 26) + 2) else empty_seg);
+    trace = (if trace then seg_make ((if bounded_host then 65536 else 1 lsl 26) + 2) else empty_seg);
     tlen = 0;
     incomplete_blake = [];
     last_trace = 0;
@@ -127,7 +130,7 @@ let add_segment vm =
     vm.hi <- grow vm.hi 0;
     vm.seg_builtin <- grow vm.seg_builtin None
   end;
-  vm.segs.(n) <- seg_make (if n = 1 then 1 lsl 27 else 16);
+  vm.segs.(n) <- seg_make (if n <> 1 then 16 else if bounded_host then 65536 else 1 lsl 27);
   vm.nsegs <- n + 1;
   n
 

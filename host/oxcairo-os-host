@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""Supervise one native OS job. The command's JSON protocol is defined in docs/os-host.md."""
+
+from contextlib import contextmanager, suppress
+import ctypes
+import errno
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import resource
+import select
+import signal
+import stat
+import subprocess
+import sys
+import time
+
+REVISION = "ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45"
+PINS = {REVISION: {
+    "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+    "e830720f26ce863ba027e8c73a6ab29a9a1e58edd5127fca80e0eed732067b28",
+}, "1860b9850b5c51858c50c0f5038933e49f932eef": {
+    "794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67",
+    "7cd38280aea304b1fc8a55f9f4666828818cfe8a9f7181539472512e011cee10",
+}}
+CODES = {"invalid_request": 2, "unknown_revision": 3, "program_mismatch": 4,
+         "invalid_input": 5, "unsupported_randomized_encryption": 6, "step_limit": 20, "memory_limit": 21, "wall_limit": 22,
+         "output_limit": 23, "file_limit": 24, "storage_limit": 25, "busy": 26,
+         "io_error": 27, "interrupted": 28, "internal_fault": 70}
+DEFAULTS = {"steps": 100_000_000, "memory_bytes": 4 << 30, "wall_ms": 120_000,
+            "output_bytes": 1 << 30, "open_files": 128}
+class Refusal(Exception):
+    def __init__(self, kind, detail):
+        super().__init__(detail)
+        self.kind = kind
+
+def trusted_pins():
+    path = os.environ.get("OXCAIRO_OS_PROFILE")
+    pins = {revision: set(hashes) for revision, hashes in PINS.items()}
+    if path:
+        with open(path, "rb") as file:
+            raw = file.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("operator OS profile is too large")
+        profile = json.loads(raw, object_pairs_hook=unique)
+        if not isinstance(profile, dict) or profile.keys() != {"revision", "program_sha256"}:
+            raise ValueError("invalid operator OS profile")
+        revision = profile["revision"]
+        digest = profile["program_sha256"]
+        if not isinstance(revision, str) or not re.fullmatch("[0-9a-f]{40}", revision):
+            raise ValueError("invalid profile revision")
+        if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+            raise ValueError("invalid profile digest")
+        pins.setdefault(revision, set()).add(digest)
+    return pins
+
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate request field")
+        result[key] = value
+    return result
+
+def operator_limits():
+    ceiling = DEFAULTS.copy()
+    configured = os.environ.get("OXCAIRO_HOST_LIMITS")
+    if configured is not None:
+        overrides = json.loads(configured, object_pairs_hook=unique)
+        if not isinstance(overrides, dict) or overrides.keys() - ceiling.keys():
+            raise ValueError("invalid operator limit configuration")
+        for key, value in overrides.items():
+            if type(value) is not int or not 1 <= value <= (1 << 62) - 1:
+                raise ValueError("invalid operator ceiling for " + key)
+        ceiling.update(overrides)
+    return ceiling
+
+
+def request():
+    ceiling = operator_limits()
+    deadline = time.monotonic() + min(ceiling["wall_ms"], DEFAULTS["wall_ms"]) / 1000
+    raw = bytearray()
+    fd = sys.stdin.fileno()
+    while len(raw) <= 65536:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise Refusal("wall_limit", "request input deadline exceeded")
+        chunk = os.read(fd, 65537 - len(raw))
+        if not chunk:
+            break
+        raw.extend(chunk)
+    if len(raw) > 65536:
+        raise Refusal("invalid_request", "maximum request size is 65536 bytes")
+    obj = json.loads(raw, object_pairs_hook=unique)
+    if not isinstance(obj, dict) or obj.get("operation", "generate") not in ("generate", "replay"):
+        raise ValueError("expected a generate or replay request")
+    operation = obj.get("operation", "generate")
+    inputs = ("program", "witness") if operation == "generate" else ("pie",)
+    required = {"schema", "output", *inputs}
+    if operation == "generate":
+        required.add("revision")
+    if not required <= obj.keys() <= required | {"limits", "operation", "publication"}:
+        raise ValueError("missing or unknown request field")
+    publication = obj.setdefault("publication", "os-host-standard")
+    if publication not in ("os-host-standard", "rust-3.2"):
+        raise ValueError("unsupported publication profile")
+    if type(obj["schema"]) is not int or obj["schema"] != 1:
+        raise ValueError("expected schema 1")
+    for k in required - {"schema"}:
+        if not isinstance(obj[k], str) or not obj[k] or "\0" in obj[k]:
+            raise ValueError("expected nonempty string for " + k)
+    if operation == "generate":
+        pins = trusted_pins()
+        if obj["revision"] not in pins:
+            raise Refusal("unknown_revision", "unsupported OS revision")
+        obj["hashes"] = sorted(pins[obj["revision"]])
+    obj["inputs"] = inputs
+    supplied = obj.get("limits", {})
+    if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
+        raise ValueError("unknown limit")
+    limits = {key: min(value, ceiling[key]) for key, value in DEFAULTS.items()} | supplied
+    for k, value in limits.items():
+        if type(value) is not int or value < 1 or value > ceiling[k]:
+            raise ValueError("invalid " + k)
+    if limits["open_files"] < 8:
+        raise Refusal("file_limit", "job requires at least 8 descriptors")
+    if limits["memory_bytes"] < 32 << 20:
+        raise Refusal("memory_limit", "job requires at least 32 MiB")
+    for k in (*inputs, "output"):
+        obj[k] = str(Path(obj[k]).absolute())
+    obj["limits"] = limits
+    return obj
+
+def os_error_kind(exc):
+    if exc.errno in (errno.ENOMEM,):
+        return "memory_limit"
+    if exc.errno in (errno.EMFILE, errno.ENFILE):
+        return "file_limit"
+    if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+        return "storage_limit"
+    if exc.errno == errno.EFBIG:
+        return "output_limit"
+    return "io_error"
+
+def set_limit(kind, value):
+    _, hard = resource.getrlimit(kind)
+    if hard != resource.RLIM_INFINITY:
+        value = min(value, hard)
+    resource.setrlimit(kind, (value, value))
+
+def copy_program(source, dest, hashes):
+    digest = hashlib.sha256()
+    flags = os.O_RDONLY | os.O_NONBLOCK
+    with os.fdopen(os.open(source, flags), "rb") as src, dest.open("xb") as out:
+        if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+            raise Refusal("invalid_input", "program must be a regular file")
+        while chunk := src.read(1024 * 1024):
+            digest.update(chunk)
+            out.write(chunk)
+    if digest.hexdigest() not in hashes:
+        raise Refusal("program_mismatch", "compiler SHA-256 does not match the requested revision")
+
+def child(stage, parent):
+    job = json.load(sys.stdin)
+    lim = job["limits"]
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != parent:
+            raise Refusal("interrupted", "unable to bind job to supervisor")
+        set_limit(resource.RLIMIT_AS, lim["memory_bytes"])
+    set_limit(resource.RLIMIT_NOFILE, lim["open_files"])
+    set_limit(resource.RLIMIT_CPU, max(1, math.ceil(lim["wall_ms"] / 1000) + 1))
+    for name in job["inputs"]:
+        if not stat.S_ISREG(os.stat(job[name]).st_mode):
+            raise Refusal("invalid_input", name + " must be a regular file")
+    if "pie" in job:
+        arguments = [job["pie"], "--run_from_cairo_pie"]
+    else:
+        program = stage / "program"
+        compiler_max = 128 << 20
+        if os.stat(job["program"]).st_size > compiler_max:
+            raise Refusal("program_mismatch", "compiler file exceeds supported size")
+        _, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+        soft = compiler_max if hard == resource.RLIM_INFINITY else min(compiler_max, hard)
+        resource.setrlimit(resource.RLIMIT_FSIZE, (soft, hard))
+        copy_program(job["program"], program, job["hashes"])
+        arguments = [str(program), "--os_hints", job["witness"]]
+    set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
+    signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
+    env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_DETERMINISTIC": "1", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
+    if sys.platform.startswith("linux"):
+        # OxCaml reserves an address range for every potential domain's nursery.
+        # Configure that reservation before runtime startup under RLIMIT_AS.
+        budget = lim["memory_bytes"]
+        domains = max(1, min(4, budget // (128 << 20)))
+        nursery_words = min(4 << 20, budget // 256)
+        env["OCAMLRUNPARAM"] = f"d={domains},s={nursery_words},o=250"
+        env["MALLOC_ARENA_MAX"] = "2"
+    exe = Path(__file__).absolute().with_name("cairo-vm-cli")
+    argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
+            "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
+    if job["publication"] == "os-host-standard":
+        argv.append("--merge_extra_segments")
+    if sys.platform != "darwin":
+        os.execve(exe, argv, env)
+    # macOS lacks Linux's parent-death signal. Keep a parent for the native
+    # process so an interrupted supervisor cannot strand a VM holding the lock.
+    with subprocess.Popen(argv, env=env) as vm:
+        try:
+            while vm.poll() is None:
+                if os.getppid() != parent:
+                    raise Refusal("interrupted", "supervisor exited")
+                usage = subprocess.run(["/bin/ps", "-o", "rss=", "-p", str(vm.pid)],
+                                       capture_output=True, text=True).stdout.strip()
+                if usage and int(usage) * 1024 > lim["memory_bytes"]:
+                    raise Refusal("memory_limit", "job exceeded resident memory limit")
+                try:
+                    vm.wait(timeout=0.03)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if vm.poll() is None:
+                vm.kill()
+                vm.wait()
+        check_exit(vm.returncode, "")
+    sys.exit(0)
+
+def check_exit(rc, log):
+    if rc == 0:
+        return
+    detail = log[:2000].strip()
+    if rc == 2 and detail in ("Fatal error: Not enough heap memory to reserve minor heaps",
+                             "Fatal error: out of memory"):
+        raise Refusal("memory_limit", detail)
+    if rc < 0:
+        kind = {-signal.SIGXFSZ: "output_limit", -signal.SIGXCPU: "wall_limit"}.get(rc, "internal_fault")
+    elif rc - 80 in CODES.values():
+        kind = next(k for k, v in CODES.items() if v == rc - 80)
+    elif rc in (6, 20, 21, 23, 24, 25, 27):
+        kind = next(k for k, v in CODES.items() if v == rc)
+    elif rc == 1:
+        kind = "invalid_input"
+    else:
+        kind = "internal_fault"
+    raise Refusal(kind, detail or f"worker exit {rc}")
+
+def supervise(job, stage, lock, deadline):
+    lim = job["limits"]
+    command = [sys.executable, str(Path(__file__).absolute()), "--worker", str(stage), str(os.getpid())]
+    with (stage / "error").open("w+b") as log, subprocess.Popen(command, stdin=subprocess.PIPE,
+           stdout=subprocess.DEVNULL, stderr=log, start_new_session=True, pass_fds=(lock,)) as proc:
+        try:
+            proc.stdin.write(json.dumps(job).encode())
+            proc.stdin.close()
+            while proc.poll() is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise Refusal("wall_limit", "job exceeded wall-clock limit")
+                try:
+                    proc.wait(timeout=min(remaining, 0.05))
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if proc.poll() is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+        log.seek(0)
+        check_exit(proc.returncode, log.read(4096).decode(errors="replace"))
+
+@contextmanager
+def staging(output):
+    # The caller owns the output directory. Only known private staging files may be reclaimed.
+    stage = output.with_name("." + output.name + ".oxcairo-stage")
+    stage.mkdir(mode=0o700, exist_ok=True)
+    info = stage.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise Refusal("io_error", "unexpected staging directory ownership or permissions")
+    names = {"program", "out", "error"}
+    def clean():
+        entries = list(stage.iterdir())
+        def owned_file(item):
+            writer_temp = re.fullmatch(r"\.oxcairo-pie-[0-9a-f]{6}\.zip", item.name)
+            return (item.name in names or writer_temp) and stat.S_ISREG(item.lstat().st_mode)
+        if not all(owned_file(item) for item in entries):
+            raise Refusal("io_error", "unexpected staging contents")
+        for item in entries:
+            item.unlink()
+    clean()
+    try:
+        yield stage
+    finally:
+        clean()
+        stage.rmdir()
+
+def generate(job):
+    deadline = time.monotonic() + job["limits"]["wall_ms"] / 1000
+    output = Path(job["output"])
+    if output.is_symlink():
+        raise Refusal("invalid_request", "output must not be a symlink")
+    for name in job["inputs"]:
+        if output.exists() and os.path.samefile(output, job[name]):
+            raise Refusal("invalid_request", "output aliases an input")
+    lock_path = output.with_name("." + output.name + ".oxcairo.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Refusal("busy", "another job owns this output")
+        with staging(output) as stage:
+            supervise(job, stage, fd, deadline)
+            archive = stage / "out"
+            with archive.open("rb") as file:
+                checksum = hashlib.sha256()
+                for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                    checksum.update(chunk)
+                digest = checksum.hexdigest()
+                os.fsync(file.fileno())
+            size = archive.stat().st_size
+            if time.monotonic() >= deadline:
+                raise Refusal("wall_limit", "publication exceeded wall-clock limit")
+            os.replace(archive, output)
+            directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            return {"schema":1, "status":"ok", "output":str(output), "bytes":size, "sha256":digest}
+    finally:
+        os.close(fd)
+
+def main():
+    worker = len(sys.argv) == 4 and sys.argv[1] == "--worker"
+    try:
+        if worker:
+            child(Path(sys.argv[2]), int(sys.argv[3]))
+        if sys.argv[1:] != ["v1"]:
+            raise Refusal("invalid_request", "expected protocol v1")
+        result = generate(request())
+    except (Refusal, OSError, ValueError, RecursionError, MemoryError) as exc:
+        kind = (exc.kind if isinstance(exc, Refusal) else os_error_kind(exc) if isinstance(exc,OSError)
+                else "memory_limit" if isinstance(exc,MemoryError) else "invalid_request")
+        if worker:
+            print(str(exc), file=sys.stderr)
+        else:
+            print(json.dumps({"schema":1,"status":"rejected","code":kind,"detail":str(exc)[:2000]}))
+        return (80 if worker else 0) + CODES[kind]
+    print(json.dumps(result))
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
