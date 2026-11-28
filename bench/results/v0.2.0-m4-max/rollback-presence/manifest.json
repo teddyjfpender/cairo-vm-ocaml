@@ -1,0 +1,15 @@
+{
+  "before": "d884acca5e5386899490bd7ba320e034201c5906",
+  "after": "7e611bc0bbc2b55f173777d608b1b610ca2fe1fc",
+  "binaries": {
+    "ocaml_before": "e8361960841a0af09d97edc79006e9825a9e9cffa25344bef03976cbece25efc",
+    "ocaml_after": "ee94abbb91be92c9412a3409e5977c5df1b1b8cab83301d7c48c975b976be3be",
+    "rust_checked": "5c5cf91833a5dd932d5ed368b076244cd1fe7b199c80904e0a791b4066bfd289"
+  },
+  "witness_sha256": "4a3f210b08bbd01433a556dc8f48c6ef5d77e39fa9067b40fe077a96b2548bfc",
+  "phase": "Cold fresh processes, full compiler JSON, validate all public words, no trace or archive emission in timing.",
+  "host": "Apple M4 Max, 36 GiB",
+  "seed": 2711,
+  "pairs": 9,
+  "trace_differential": "rollback-1536 8340910 7630536 trace, memory and public output match Rust"
+}
