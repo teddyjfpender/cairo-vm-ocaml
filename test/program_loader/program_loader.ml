@@ -138,3 +138,16 @@ let () =
   rejected {|"attributes":[{"name":"x","start_pc":18446744073709551616,"end_pc":0,"value":"x"}]|};
   rejected {|"debug_info":{"instruction_locations":{"1":{}}}|};
   rejected {|"debug_info":{"instruction_locations":{},"file_contents":[null,]}}|}
+
+let () =
+  let src = {|[{"x":13},{"x":27}, {"x":"\u0061"}]|} in
+  let open Json_reader in
+  let entries = from_string ~projection:(Elements Offset) src |> Yojson.Safe.Util.to_list in
+  let read offset = from_offset src (Yojson.Safe.Util.to_int offset) in
+  assert (List.map read entries = Yojson.Safe.Util.to_list (Yojson.Safe.from_string src));
+  List.iter (fun offset -> match from_offset src offset with
+      | exception Invalid_argument _ -> ()
+      | _ -> failwith "invalid offset accepted") [-1; String.length src];
+  match from_string ~projection:(Elements Offset) {|[{"x":false},{"x":01}]|} with
+  | exception Yojson.Json_error _ -> ()
+  | _ -> failwith "malformed deferred witness accepted"

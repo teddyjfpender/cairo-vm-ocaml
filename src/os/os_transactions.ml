@@ -23,10 +23,10 @@ let pop item queue =
   | head :: tail -> queue := tail; head
   | [] -> fail "End of OS %s iterator" item
 
-let register ~calls:call_state ~block ~felt reg =
+let register ~source ~virtual_os ~calls:call_state ~block ~felt reg =
   let txs = ref [] and infos = ref [] and active = ref None and info = ref None in
   let calls = ref [] in
-  let next_tx () = Json_reader.from_string (U.to_string (pop "transaction" txs)) in
+  let next_tx () = Json_reader.from_offset source (U.to_int (pop "transaction" txs)) in
   let tx () = match !active with Some t -> t | None -> fail "Missing active OS transaction" in
   let tx_info () = match !info with Some i -> i | None -> fail "Missing active execution info" in
   let member key = U.member key (tx ()).body in
@@ -51,9 +51,9 @@ let register ~calls:call_state ~block ~felt reg =
   Os_calls.register call_state ~felt ~next:(fun () -> pop "call info" calls) reg;
   let start () =
     if !info <> None then fail "Execution info already active";
-    let i = match pop "transaction execution info" infos with
-      | `String raw -> Json_reader.from_string ~projection:Os_calls.execution_projection raw
-      | checked -> checked in
+    let item = pop "transaction execution info" infos in
+    let i = if virtual_os then item else
+      Json_reader.from_offset ~projection:Os_calls.execution_projection source (U.to_int item) in
     info := Some i;
     let rec flatten call =
       call :: List.concat_map flatten (U.to_list (U.member "inner_calls" call)) in

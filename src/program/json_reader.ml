@@ -19,6 +19,7 @@ type projection =
   | Values of projection
   | Elements of projection
   | Encoded
+  | Offset (* Validate the entire value and retain its offset in the source. *)
 
 (* Intern common schema keys and skip unused fields while still validating
    their JSON. Object keys in identifier, member and hint maps remain dynamic. *)
@@ -40,9 +41,9 @@ external project_key : string -> int ref -> (string * projection) list -> (strin
 external validate_schema : string -> int ref -> Program_metadata.schema -> Program_metadata.schema -> bool
   = "cvm_json_validate_schema" [@@noalloc]
 
-let from_string ?identifiers ?(projection=Json) src : J.t =
+let parse ?identifiers ~projection ~start ~whole src : J.t =
   let seen_identifiers = ref false and seen_debug = ref false and seen_attributes = ref false in
-  let n = String.length src and pos = ref 0 in
+  let n = String.length src and pos = ref start in
   let peek () =
     while !pos < n && (match src.[!pos] with ' ' | '\n' | '\r' | '\t' -> true | _ -> false) do
       (* indentation comes in runs of spaces *)
@@ -81,6 +82,8 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
   let rec value projection =
     let token = peek () in
     match projection, token with
+    | Offset, _ ->
+        let start = !pos in pos := skip start; `Int start
     | Encoded, _ ->
         let start = !pos in pos := skip start;
         `String (String.sub src start (!pos-start))
@@ -162,7 +165,17 @@ let from_string ?identifiers ?(projection=Json) src : J.t =
                  with Yojson.Json_error msg -> json_error "Invalid token at byte %d: %s" st msg)
   in
   let v = value (if Option.is_some identifiers then Program else projection) in
-  match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> v
+  if whole then begin
+    match peek () with _ -> json_error "Junk after end of JSON value" | exception Yojson.Json_error _ -> ()
+  end;
+  v
+
+let from_string ?identifiers ?(projection=Json) src =
+  parse ?identifiers ~projection ~start:0 ~whole:true src
+
+let from_offset ?(projection=Json) src start =
+  if start < 0 || start >= String.length src then invalid_arg "JSON value offset";
+  parse ~projection ~start ~whole:false src
 
 let from_file ?identifiers ?projection path =
   let contents = In_channel.with_open_bin path In_channel.input_all in

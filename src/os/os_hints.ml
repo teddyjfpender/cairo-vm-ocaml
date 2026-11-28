@@ -22,22 +22,25 @@ let felt = function
   | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
   | j -> felt_slow j
 
+type input = { document : Yojson.Safe.t; source : string; virtual_os : bool }
+
 let read_input ~virtual_os path =
   (* Keep each transaction and its witnesses as validated JSON until the OS
      selects them. Only the active transaction's object graph stays live. *)
   let open Json_reader in
-  let info = if virtual_os then Os_calls.execution_projection else Encoded in
-  let block_fields = Fields ["transactions", Elements Encoded; "tx_execution_infos", Elements info] in
+  let info = if virtual_os then Os_calls.execution_projection else Offset in
+  let block_fields = Fields ["transactions", Elements Offset; "tx_execution_infos", Elements info] in
   let projection = Fields ["os_input", Fields ["os_block_inputs", Elements block_fields]] in
-  let hints = Json_reader.from_file ~projection path in
+  let source = In_channel.with_open_bin path In_channel.input_all in
+  let hints = Json_reader.from_string ~projection source in
   if virtual_os then begin
     let blocks = U.to_list (U.member "os_block_inputs" (U.member "os_input" hints)) in
     List.iter (fun block ->
         List.iter Os_calls.validate_virtual_resources (U.to_list (U.member "tx_execution_infos" block))) blocks
   end;
-  hints
+  {document=hints; source; virtual_os}
 
-let register ~os_program ~watch ~accessed ~set_pages hints =
+let register ~os_program ~watch ~accessed ~set_pages {document=hints; source; virtual_os} =
   let input = U.member "os_input" hints and config = U.member "os_hints_config" hints in
   let blocks = U.to_list (U.member "os_block_inputs" input) in
   let rng = lazy (
@@ -72,7 +75,7 @@ let register ~os_program ~watch ~accessed ~set_pages hints =
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
   let calls = Os_calls.create () and secp = Os_secp.create () in
   Deprecated_syscalls.register ~os_program calls ~felt reg;
-  let begin_transactions = Os_transactions.register ~calls ~block ~felt reg in
+  let begin_transactions = Os_transactions.register ~source ~virtual_os ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
   Os_da.register ~set_pages reg;
