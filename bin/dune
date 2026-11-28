@@ -1,6 +1,5 @@
 (executable
  (name main)
- (modules main)
  (public_name cairo-vm-ocaml)
  (libraries cairovm unix)
  (ocamlopt_flags (:standard -O3 -inline 200 -unsafe)))
@@ -8,9 +7,3 @@
 (install
  (section bin)
  (files (main.exe as cairo-vm-cli)))
-
-(executable
- (name pack_witness)
- (public_name oxcairo-pack-witness)
- (modules pack_witness)
- (libraries cairovm unix))

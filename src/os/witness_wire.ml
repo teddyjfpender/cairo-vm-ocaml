@@ -5,6 +5,8 @@ let magic = "OXW1"
 let max_bytes = 256 lsl 20
 let max_nodes = 4 lsl 20
 let max_depth = 256
+external ascii : string -> bool = "cvm_witness_ascii" [@@noalloc]
+let valid_text s = ascii s || String.is_valid_utf_8 s
 let invalid message = raise (Yojson.Json_error ("Invalid OXW1 witness: " ^ message))
 
 type location = Root | Os_input | Classes | Legacy_classes | Class | Legacy_class | Class_body | Words | Other
@@ -46,7 +48,7 @@ let decode_payload ?cache payload : Yojson.Safe.t =
   let text info =
     let n = length info in
     let s = String.sub payload (take n) n in
-    if not (String.is_valid_utf_8 s) then invalid "invalid UTF-8";
+    if not (valid_text s) then invalid "invalid UTF-8";
     s in
   let integer negative bits =
     if Int64.unsigned_compare bits (Int64.of_int max_int) <= 0 then
@@ -186,7 +188,7 @@ let write channel (document : Yojson.Safe.t) =
       (reserve 5; header 26; Buffer.add_int32_be !out (Int64.to_int32 bits))
     else (reserve 9; header 27; Buffer.add_int64_be !out bits) in
   let text s =
-    if not (String.is_valid_utf_8 s) then invalid "invalid UTF-8";
+    if not (valid_text s) then invalid "invalid UTF-8";
     let n = String.length s in
     argument 3 (Int64.of_int n); reserve n; Buffer.add_string !out s in
   let count () =

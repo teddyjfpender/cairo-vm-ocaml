@@ -19,8 +19,13 @@ static intnat scan(value raw, value output, value pool, intnat cursor) {
     unsigned width = *p++;
     if (width > 32 || (size_t)(end - p) < width || (width && !p[width-1])) return -1;
     u64 limbs[4] = {0};
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    memcpy(limbs, p, width);
+#else
     for (unsigned j = 0; j < width; ++j)
+
       limbs[j / 8] |= (u64)p[j] << ((j % 8) * 8);
+#endif
     p += width;
     if (geq_p(limbs)) return -1;
     if (write) {
@@ -39,4 +44,22 @@ value cvm_witness_words_count(value raw) {
 
 value cvm_witness_words_load(value raw, value output, value pool, value cursor) {
   return Val_long(scan(raw, output, pool, Long_val(cursor)));
+}
+
+/* Schema keys and hexadecimal state values are usually ASCII. A machine-word
+   check lets the decoder use the standard UTF-8 validator for the remainder. */
+value cvm_witness_ascii(value text) {
+  const unsigned char *p = (const unsigned char *)String_val(text);
+  size_t n = caml_string_length(text);
+  u64 high = 0;
+  while (n >= 8) {
+    u64 word;
+    memcpy(&word, p, sizeof word);
+    high |= word;
+    p += 8;
+    n -= 8;
+  }
+  if (high & UINT64_C(0x8080808080808080)) return Val_false;
+  while (n--) if (*p++ >= 128) return Val_false;
+  return Val_true;
 }
