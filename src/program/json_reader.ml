@@ -26,6 +26,7 @@ type projection =
   | Elements of projection
   | Cached of cache
   | Presence (* Validate the value, retaining only whether it is null. *)
+  | Span
   | Encoded
   | Offset (* Validate the entire value and retain its offset in the source. *)
 
@@ -154,6 +155,9 @@ let parse_value ?add_struct ?word_offsets ?identifier_batch ?reference_offsets ?
         if token = 'n' then `Null else `Bool true
     | Offset, _ ->
         let start = !pos in pos := skip start; `Int start
+    | Span, _ ->
+        let first = !pos in pos := skip first;
+        `List [`Int first; `Int !pos]
     | Encoded, _ ->
         let start = !pos in pos := skip start;
         `String (String.sub src start (!pos-start))
