@@ -86,10 +86,10 @@ execute ordinary compiled programs and replay a recorded OS PIE directly.
 | --- | --- |
 | CairoZero source | `cairo-compile` from cairo-lang produces compiled program JSON. Both CLIs consume that JSON. |
 | Cairo assembly and contract classes for the OS | A compatible upstream compiler supplies the OS program and compiled contracts. The checkout includes compiled OS, Virtual OS and aggregator fixtures. |
-| Transactions or a block number | The native runner takes a prepared sequencer witness, including the state and execution information required by that block. Producing fresh witnesses in the reference workflow uses the pinned Rust sequencer and Blockifier. |
+| Transactions or a block number | The native runner takes a prepared sequencer witness, including the state and execution information required by that block. The pinned Rust sequencer and Blockifier produce these witnesses in the reference workflow. Any producer that emits compatible OsHints JSON can supply them. RPC queries and state collection happen upstream. |
 | A recorded Cairo PIE | The CLI and replay library consume the archive directly. Secure replay uses the supplied memory and execution resources. |
 | AIR public and private input | The CLI writes these files, the trace and relocated memory in proof mode. |
-| A verified Stwo proof | The repository's workflow builds the OCaml snapshot exporter and the pinned Rust adapter, prover and verifier separately. |
+| A verified Stwo proof | The CLI emits proof inputs. The repository’s proof workflow separately builds the OCaml snapshot exporter and the pinned Rust adapter, prover and verifier. |
 
 [Compiled program fixtures](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/main/test/fixtures/programs)
 · [Reference witness tooling](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/main/bench/reference)
