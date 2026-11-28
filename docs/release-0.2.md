@@ -2,7 +2,20 @@
 
 Runtime `d884acc` runs the pinned Starknet OS, Virtual OS and aggregator from native witnesses. Secure replay and several large contract workloads exceed 10× Rust. Short native scenarios, repeated storage and some artifact-emitting workloads remain below the release target.
 
-## Release candidate against Rust
+## Full compiler loader refinement
+
+At runtime `16aa093`, the median cold speedup across 70 stock sequencer scenarios was **3.25×**, and **19/70** reached 10×. The Rust case medians summed to 28.16 s, against 2.32 s for OxCairo, or **12.15×**. Each of five rounds shuffled the scenarios and the order of four engines per scenario. Every process returned the same public words. All three OCaml builds used release PGO and read the full compiler JSON.
+
+| Engine | Median scenario speedup vs stock Rust | Sum of case medians |
+| --- | ---: | ---: |
+| Stock sequencer | 1.00× | 28.16 s |
+| Previous OCaml runtime, `7e611bc` | 2.82× | 2.66 s |
+| Batched identifiers and references, `afbf090` | 2.90× | 2.61 s |
+| Batched records and parallel debug validation, `16aa093` | **3.25×** | **2.32 s** |
+
+In the matched comparison, all 70 scenarios improved against the previous OCaml runtime. The median incremental speedup was **1.142×** and the summed runtime improved **1.150×**. The new build matched the saved native, Virtual OS and aggregator archives, randomized encryption checks and the generic Rust differential suite. The packaged worker, CLI and C library passed their smoke tests and produced matching trace, memory and archive contents. [Full four-engine timings and binary identities](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/release/os-performance/bench/results/v0.2.0-m4-max/incremental-loader/typed-compiler)
+
+## Previous release candidate against Rust
 
 | 70 upstream scenarios | Rust suite time | OxCairo suite time | Total ratio | Median scenario | At least 10× |
 | --- | ---: | ---: | ---: | ---: | ---: |
