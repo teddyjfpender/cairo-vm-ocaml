@@ -17,7 +17,7 @@
 
 OxCairo runs Cairo programs in execution and proof mode. It supports the Rust Cairo VM v4.0.0 CLI and adds native execution of Starknet OS block witnesses, Virtual OS and the block aggregator. Programs can also replay Cairo PIEs through the CLI, OCaml library or C interface.
 
-On an Apple M4 Max, release runtime `d884acc` ran 70 native Starknet OS scenarios against the stock Rust sequencer. With a fresh process and the full compiler, the median speedup was **2.68×** under lighter load and **2.18×** under contention. Summed times improved **9.89×** and **7.85×**, respectively, with **19 of 70** cases reaching 10× in both runs. Secure replay of two production OS PIEs was **15.63×** and **15.57×** faster than stock Rust v4. [0.2 performance and qualification](docs/release-0.2.md) · [Raw Rust and OxCairo comparisons](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/e384368af01d4fb98de12bacd0854cf3d895dad1/bench/results/v0.2.0-m4-max/candidate-d884acc)
+On an Apple M4 Max, runtime `f6e37bd` ran 70 native Starknet OS scenarios against the stock Rust sequencer. Across 350 cold comparisons using the full compiler, the median scenario was **3.02× faster** and summed case medians fell from **28.24 s to 2.46 s** (**11.48×**). **19 of 70** scenarios reached 10×. Secure replay of two production OS PIEs reached **15.25×** and **15.95×** against Rust v4. [0.2 performance and qualification](docs/release-0.2.md)
 
 ## Quick start
 

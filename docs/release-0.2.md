@@ -2,6 +2,14 @@
 
 The release candidate runs the pinned Starknet OS, Virtual OS and aggregator from native witnesses. Secure replay and several large contract workloads exceed 10× Rust. Short native scenarios, repeated storage and some artifact-emitting workloads remain below the release target.
 
+## Release with strict parity and historical witness support
+
+Runtime `f6e37bd` includes the strict harness from PR #48, the snapshot ABI proposal from PR #49 and the historical witness and dispatcher changes from PR #50. Secure replay also accepts the reordered and identically repeated memory records accepted by Rust 3.2.0. The distributed CLI, worker and file-based C API passed their standalone checks. The byte-oriented snapshot provider described by PR #49 remains a proposal.
+
+In 350 randomized cold comparisons, summed case medians fell from **28.24 s for stock Rust to 2.46 s for OxCairo**, or **11.48×**. The median scenario was **3.02×**, with **19/70** at 10×. The two middle cases were a Cairo 0 proven revert and deprecated contract calls. Rust took 137.0 and 124.1 ms, against 45.3 and 41.0 ms for OxCairo. Reaching 10× would require 13.7 and 12.4 ms. In the same randomized rounds, the previous release runtime reached 2.99× median against Rust. The merged runtime gained 1.011× at the median relative to that previous OCaml binary.
+
+The strict differential suite matched all 150 execution, 150 PIE-output and 150 proof-mode cases. Of 150 replays, 146 succeeded and the other four matched reviewed invalid-address diagnostics. Both Stwo opcode cases passed. All ten previously verified Stwo proofs had identical regenerated prover inputs. [Strict parity harness and reviewed rejections](parity.md)
+
 ## Performance after builtin loop and compiler changes
 
 Runtime `86fd938` was measured before including the three release-quality PRs. Timings use fresh processes unless marked warm. Rust comparisons use the stock VM v4 CLI for generic programs and production replay, and the pinned sequencer for native witnesses. The 22 scaled cases include stock and memory-bounded checked sequencer runs, identified in the raw data.
