@@ -144,7 +144,6 @@ let step vm d =
   end;
   let size = if (d lsr 50) land 3 = 1 then 2 else 1 in
   let dst = read vm 1 dst_addr and op0 = read vm 1 op0_addr and op1 = get vm op1_seg op1_off in
-  if vm.trace_on then record_trace vm pc_seg pc ap fp;
   match ext with
   | 1 | 2 ->
       (* NOP with res = op1: only builtin deduction can supply operands *)
@@ -155,20 +154,28 @@ let step vm d =
       if dst = Felt.empty then fail "NoDst: couldn't deduce dst";
       if op0 = Felt.empty then write_checked vm 1 op0_addr op0';
       if op1 = Felt.empty then write_checked vm op1_seg op1_off op1';
-      (* handle_blake2s_instruction *)
-      if not (Felt.is_felt dst) then fail "Expected integer at 1:%d (Blake2s counter)" dst_addr;
-      let counter = Felt.to_nat dst in
-      if counter < 0 || counter > 0xFFFFFFFF then fail "Blake2s counter at 1:%d does not fit in 32 bits" dst_addr;
-      let state_ptr = read_ptr vm 1 op0_addr "state pointer" in
-      let state = u32_range vm state_ptr 8 in
-      let msg_ptr = read_ptr vm op1_seg op1_off "message pointer" in
-      let message = u32_range vm msg_ptr 16 in
-      let out = read_ptr vm 1 ap "output pointer" in
-      let f0 = if ext = 2 then 0xFFFFFFFF else 0 in
-      let h = Blake2s.compress state message counter 0 f0 0 in
-      Array.iteri (fun i w -> write_checked vm (Felt.rseg out) (Felt.roff out + i) (Felt.small w)) h;
-      if Array.length vm.watched <> 0 then
-        for i = 0 to 7 do mark_watched vm (Felt.rseg out) (Felt.roff out + i) done;
+      if vm.trace_on then record_trace vm pc_seg pc ap fp;
+      let written = ref 0 in
+      (try
+        (* handle_blake2s_instruction *)
+        if not (Felt.is_felt dst) then fail "Expected integer at 1:%d (Blake2s counter)" dst_addr;
+        let counter = Felt.to_nat dst in
+        if counter < 0 || counter > 0xFFFFFFFF then fail "Blake2s counter at 1:%d does not fit in 32 bits" dst_addr;
+        let state_ptr = read_ptr vm 1 op0_addr "state pointer" in
+        let state = u32_range vm state_ptr 8 in
+        let msg_ptr = read_ptr vm op1_seg op1_off "message pointer" in
+        let message = u32_range vm msg_ptr 16 in
+        let out = read_ptr vm 1 ap "output pointer" in
+        let f0 = if ext = 2 then 0xFFFFFFFF else 0 in
+        let h = Blake2s.compress state message counter 0 f0 0 in
+        Array.iteri (fun i w ->
+            let seg = Felt.rseg out and off = Felt.roff out + i in
+            write_checked vm seg off (Felt.small w);
+            if Array.length vm.watched <> 0 then mark_watched vm seg off;
+            incr written) h
+       with Errors.Vm_error _ as error ->
+         if vm.trace_on then vm.incomplete_blake <- (vm.last_trace, !written) :: vm.incomplete_blake;
+         raise error);
       finish vm d pc ap size
   | 3 ->
       let mul = (d lsr 52) land 3 = 2 in
@@ -220,6 +227,7 @@ let step vm d =
       if dst = Felt.empty then write_checked vm 1 dst_addr dst';
       if not (Felt.equal res dst') then
         fail "An ASSERT_EQ instruction failed: %s != %s." (value_to_string res) (value_to_string dst');
+      if vm.trace_on then record_trace vm pc_seg pc ap fp;
       finish vm d pc ap size
   | _ -> fail "Invalid opcode extension %d" ext
 

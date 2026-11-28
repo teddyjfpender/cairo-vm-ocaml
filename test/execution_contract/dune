@@ -1,0 +1,7 @@
+(executable
+ (name probe)
+ (libraries cairovm yojson))
+
+(rule
+ (alias runtest)
+ (action (run python3 %{dep:regression.py} %{exe:probe.exe})))

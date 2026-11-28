@@ -81,7 +81,8 @@ let update_accessed r =
   while state.(0) < vm.tlen do
     trace_access t vm.tlen vm.icache vm.segs.(1) acc.bits acc.count state !page;
     if state.(0) < vm.tlen then begin
-      let next, pc_seg, pc, ap, fp = trace_entry t state.(0) in
+      let entry = state.(0) in
+      let next, pc_seg, pc, ap, fp = trace_entry t entry in
       state.(0) <- next;
       let d =
         if pc_seg <= 0 then decoded vm pc_seg pc else begin
@@ -117,7 +118,8 @@ let update_accessed r =
       if ext = 1 || ext = 2 then begin
         let out = read vm 1 ap in
         if Felt.is_reloc out then
-          for k = 0 to 7 do
+          let count = Option.value ~default:8 (List.assoc_opt entry vm.incomplete_blake) in
+          for k = 0 to count - 1 do
             mark acc (Felt.rseg out) (Felt.roff out + k)
           done
       end
