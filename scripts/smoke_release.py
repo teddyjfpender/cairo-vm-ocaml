@@ -49,6 +49,8 @@ def main():
         job = dict(schema=1, revision="1860b9850b5c51858c50c0f5038933e49f932eef", program=str(compiled),
                    witness=str(historical), output=str(work / "standard.zip"))
         result = subprocess.check_output([package / "oxcairo-os-host", "v1"], input=json.dumps(job).encode())
+        subprocess.run([sys.executable, str(fixtures.parent / "os_witness_refusals.py"),
+                        str(package / "oxcairo-os-host"), str(compiled), str(historical)], check=True)
         # Pinned sequencer os_reference WITNESS.json EXPECTED.zip --merge-extra-segments
         expected_zip = "b78c75c541cdd948d1d7603d41103aa3f6ceb8ae505630a4f3cbe3e791f47bd7"
         if json.loads(result)["sha256"] != expected_zip or hashlib.sha256(Path(job["output"]).read_bytes()).hexdigest() != expected_zip:
