@@ -19,6 +19,8 @@ The state-fold receipt records `chain_id`, `number`, `block_hash`, `derived_root
 
 To derive a receipt from the original fold evidence, run `python3 bench/fold_receipt.py run.jsonl sampled-header.json l1-anchors.json --anchor-height HEIGHT`. Select each sampled block as a verified batch endpoint. A root observed only at the end of a larger batch qualifies that endpoint. The converter streams contiguous fold rows from genesis, checks the sample against its header and checks the covering `header+l1` row against the independently observed L1 update. Preserve the source files with the owner and include the generated receipt in the authenticated manifest.
 
+The qualifier checks exact Rust and candidate ZIP equality and then reads their shared OS output header. The final state root, block number, and block hash must match the authenticated sample. Both sequencer pins place these words at output offsets 1, 3, and 5. The qualifier locates the output builtin using the program's builtin order and checks all ten header cells. It streams the 40-byte memory records with an 8 GiB uncompressed limit and accepts up to 8 MiB of program metadata. [Historical OS output parser](https://github.com/starkware-libs/sequencer/blob/1860b9850b5c51858c50c0f5038933e49f932eef/crates/starknet_os/src/io/os_output.rs#L249-L259) · [Current OS output parser](https://github.com/starkware-libs/sequencer/blob/ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45/crates/starknet_os/src/io/os_output.rs#L267-L277)
+
 The receipt covers candidate execution on a prepared witness. Whole-job timing starts with the source input, before input decompression and class preparation.
 
 ## Time both complete jobs

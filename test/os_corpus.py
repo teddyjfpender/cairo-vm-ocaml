@@ -3,13 +3,16 @@ import copy
 import json
 from pathlib import Path
 import platform
+import struct
 import sys
 import tempfile
 import unittest
+import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 from fold_receipt import receipt as from_fold
 from qualify_os_host import digest, qualify
+from os_pie_header import MAX_METADATA, output_header
 from whole_os_job import measure
 
 
@@ -23,6 +26,51 @@ class SampleContract(unittest.TestCase):
         path = self.root / name
         path.write_text(value if isinstance(value, str) else json.dumps(value))
         return {"path": name, "sha256": digest(path)}
+
+    def pie(self, words, *, index=2, size=10, extra=b"", omit=(), reverse=False):
+        path = self.root / "reference.zip"
+        meta = dict(program=dict(builtins=["output"]), builtin_segments=dict(output=dict(index=index, size=size)))
+        base = (1 << 63) + (index << 47)
+        cells = [(base + i, word) for i, word in enumerate(words) if i not in omit]
+        # A second segment can contain the same offsets; they carry no OS output.
+        cells.append((1 << 63, 99))
+        if reverse:
+            cells.reverse()
+        memory = b"".join(struct.pack("<Q", address) + word.to_bytes(32, "little")
+                          for address, word in cells) + extra
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("metadata.json", json.dumps(meta))
+            archive.writestr("memory.bin", memory)
+        return {"path": path.name, "sha256": digest(path)}
+
+    def test_bounded_public_header(self):
+        words = [0, 11, 122, 123, 9, 10, 0, 1, 0, 1]
+        self.pie(words, reverse=True)
+        self.assertEqual(output_header(self.root/"reference.zip"), (11, 123, 10))
+        for kwargs in [dict(index=3), dict(size=5), dict(extra=b"short"), dict(omit=(1,)),
+                       dict(extra=struct.pack("<Q", (1 << 63) + (2 << 47) + 1) + bytes(32))]:
+            self.pie(words, **kwargs)
+            with self.assertRaises(ValueError):
+                output_header(self.root/"reference.zip")
+        for offset, value in [(1, 1 << 255), (5, (1 << 251) + 17 * (1 << 192) + 1), (8, 2)]:
+            bad = words.copy()
+            bad[offset] = value
+            self.pie(bad)
+            with self.assertRaises(ValueError):
+                output_header(self.root/"reference.zip")
+
+    def test_rejects_oversized_or_ambiguous_members(self):
+        path = self.root / "reference.zip"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("metadata.json", b" " * (MAX_METADATA + 1))
+            archive.writestr("memory.bin", b"")
+        with self.assertRaisesRegex(ValueError, "member size"):
+            output_header(path)
+        self.pie([0] * 10)
+        with zipfile.ZipFile(path, "a") as archive, self.assertWarns(UserWarning):
+            archive.writestr("memory.bin", b"")
+        with self.assertRaisesRegex(ValueError, "duplicate PIE archive"):
+            output_header(path)
 
     def test_original_fold_evidence(self):
         rows = [
@@ -45,7 +93,7 @@ class SampleContract(unittest.TestCase):
         host = self.write("host", """#!/usr/bin/env python3
 import hashlib,json,pathlib,sys
 req=json.load(sys.stdin)
-data=pathlib.Path(req['witness']).read_bytes()
+data=pathlib.Path(__file__).with_name('reference.zip').read_bytes()
 pathlib.Path(req['output']).write_bytes(data)
 print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))
 """)
@@ -53,12 +101,14 @@ print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256
         document = dict(os_hints_config=dict(chain_info=dict(chain_id=hex(int.from_bytes(b"SN_MAIN", "big")))),
                         os_input=dict(os_block_inputs=[dict(block_info=dict(block_number=123), new_block_hash="0xa")]))
         sample = self.write("sample", document)
-        source = self.write("raw", document)
+        pie = self.pie([0, 11, 122, 123, 9, 10, 0, 1, 0, 1])
+        original_bytes = (self.root/"reference.zip").read_bytes()
+        source = dict(pie)
         fold = dict(chain_id="SN_MAIN", number=123, block_hash="0xa", derived_root="0xb", header_root="0xb",
                     l1_anchor=dict(covered_through=125, transaction_hash="0x"+"1"*64,
                                    derived_root="0xc", contract_root="0xc"))
         case = dict(number=123, block_hash="0xa", state_root="0xb", categories=["cairo0-account","declare","revert","large-storage"],
-                    declared_compiler_versions=["test1","test2"], source=source, witness=sample, rust_pie=sample,
+                    declared_compiler_versions=["test1","test2"], source=source, witness=sample, rust_pie=pie,
                     fold_receipt=self.write("fold", fold))
         manifest = dict(schema=1, chain_id="SN_MAIN", cairo_vm="3.2.0", revision="1"*40, program=sample,cases=[case])
 
@@ -67,7 +117,26 @@ print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256
             return qualify(self.root/"manifest", entry["sha256"], self.root/"host")
 
         receipt = check(manifest)
-        self.assertEqual(receipt["cases"][0]["sha256"], sample["sha256"])
+        self.assertEqual(receipt["cases"][0]["sha256"], pie["sha256"])
+        self.assertEqual(receipt["cases"][0]["state_root"], "0xb")
+        # Both engines publish the same ZIP, but the authenticated independent
+        # fold and manifest may identify a different root.
+        wrong = copy.deepcopy(manifest)
+        wrong["cases"][0]["state_root"] = "0xe"
+        changed_fold = dict(fold, derived_root="0xe", header_root="0xe")
+        wrong["cases"][0]["fold_receipt"] = self.write("other-fold", changed_fold)
+        with self.assertRaisesRegex(ValueError, "PIE public output"):
+            check(wrong)
+        for offset in [3, 5]:
+            words = [0, 11, 122, 123, 9, 10, 0, 1, 0, 1]
+            words[offset] += 1
+            changed = copy.deepcopy(manifest)
+            changed["cases"][0]["rust_pie"] = self.pie(words)
+            changed["cases"][0]["source"] = changed["cases"][0]["rust_pie"]
+            with self.assertRaisesRegex(ValueError, "PIE public output"):
+                check(changed)
+        # Restore the exact original ZIP bytes for the whole-job copy observer.
+        (self.root/"reference.zip").write_bytes(original_bytes)
         for key, val in [("rust_pie", host), ("state_root","0xe"), ("declared_compiler_versions",["test1"])]:
             altered = copy.deepcopy(manifest)
             altered["cases"][0][key] = val
