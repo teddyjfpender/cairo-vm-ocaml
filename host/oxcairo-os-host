@@ -175,8 +175,31 @@ def child(stage, parent):
     signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
-    os.execve(exe, [str(exe), *arguments, "--layout", "all_cairo",
-                    "--max_steps", str(lim["steps"]), "--cairo_pie_output", str(stage / "out")], env)
+    argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
+            "--cairo_pie_output", str(stage / "out")]
+    if sys.platform != "darwin":
+        os.execve(exe, argv, env)
+    # macOS lacks Linux's parent-death signal. Keep a parent for the native
+    # process so an interrupted supervisor cannot strand a VM holding the lock.
+    with subprocess.Popen(argv, env=env) as vm:
+        try:
+            while vm.poll() is None:
+                if os.getppid() != parent:
+                    raise Refusal("interrupted", "supervisor exited")
+                usage = subprocess.run(["/bin/ps", "-o", "rss=", "-p", str(vm.pid)],
+                                       capture_output=True, text=True).stdout.strip()
+                if usage and int(usage) * 1024 > lim["memory_bytes"]:
+                    raise Refusal("memory_limit", "job exceeded resident memory limit")
+                try:
+                    vm.wait(timeout=0.03)
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            if vm.poll() is None:
+                vm.kill()
+                vm.wait()
+        check_exit(vm.returncode, "")
+    sys.exit(0)
 
 def check_exit(rc, log):
     if rc == 0:
@@ -206,11 +229,6 @@ def supervise(job, stage, lock, deadline):
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise Refusal("wall_limit", "job exceeded wall-clock limit")
-                if sys.platform == "darwin":
-                    usage = subprocess.run(["/bin/ps","-o","rss=","-p",str(proc.pid)],
-                                           capture_output=True, text=True).stdout.strip()
-                    if usage and int(usage) * 1024 > lim["memory_bytes"]:
-                        raise Refusal("memory_limit", "job exceeded resident memory limit")
                 try:
                     proc.wait(timeout=min(remaining, 0.05))
                 except subprocess.TimeoutExpired:
