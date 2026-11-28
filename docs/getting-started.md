@@ -4,8 +4,9 @@
 
 ### Use the release binaries
 
-Download the archive for your platform and its adjacent SHA-256 file from
+Published archives and their adjacent SHA-256 files appear on
 [GitHub Releases](https://github.com/teddyjfpender/cairo-vm-ocaml/releases).
+For a locally built 0.2.0 candidate, use the archive and checksum under `dist/`.
 On Apple Silicon the 0.2.0 binaries link to Homebrew GMP at
 `/opt/homebrew/opt/gmp/lib/libgmp.10.dylib`. Install it with `brew install gmp`.
 From the directory containing the downloaded files, run:
