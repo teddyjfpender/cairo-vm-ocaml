@@ -11,5 +11,10 @@
   "host": "Apple M4 Max, 36 GiB",
   "seed": 2711,
   "pairs": 9,
-  "trace_differential": "rollback-1536 8340910 7630536 trace, memory and public output match Rust"
+  "trace_differential": "rollback-1536 8340910 7630536 trace, memory and public output match Rust",
+  "integrated_pgo": {
+    "cairo-vm-cli": "f1caadab7204d3faa11526010b08e72d419a2f32055fa6789b548f34a1f764c3",
+    "native-worker": "d0709878739ca9828a78d39dbfbc3e6f209116c3fa42db1feb37a753ea1952b5",
+    "oxcairo.so": "e3c9ebdac1ff8aeb188919442f213fd4f1a038a6d49d77e88851c96e88d04494"
+  }
 }
