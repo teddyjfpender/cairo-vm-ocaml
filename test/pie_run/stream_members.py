@@ -48,7 +48,7 @@ def main():
 
         # Span an inflation buffer with consecutive cells in a real extra
         # segment. Move two cells across that boundary without changing
-        # their contents or count: secure replay must still detect order.
+        # their contents or count: both memory orders must replay identically.
         with zipfile.ZipFile("rust4-bitwise.zip") as source:
             memory = bytearray(source.read("memory.bin"))
         meta = json.loads(metadata["metadata.json"])
@@ -61,16 +61,24 @@ def main():
         for offset in range(size):
             memory.extend(struct.pack("<Q", (1 << 63) | (seg << 47) | offset))
             memory.extend(bytes(32))
-        for ordered in (True, False):
-            if not ordered:
-                boundary = 32768 * 40
-                memory[boundary-40:boundary+40] = memory[boundary:boundary+40] + memory[boundary-40:boundary]
+        def replay(data, mode):
             with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
                 for name, value in metadata.items():
                     z.writestr(name, value)
-                z.writestr("memory.bin", memory)
-            mode = "--ordered-replay" if ordered else "--unordered-replay"
+                z.writestr("memory.bin", data)
             subprocess.run([executable, mode, path], check=True)
+
+        replay(memory, "--valid-replay")
+        boundary = 32768 * 40
+        memory[boundary-40:boundary+40] = memory[boundary:boundary+40] + memory[boundary-40:boundary]
+        replay(memory, "--valid-replay")
+        replay(memory + memory[:40], "--valid-replay")
+        conflict = bytearray(memory[:40])
+        conflict[8] ^= 1
+        replay(memory + conflict, "--invalid-replay")
+        # The VM initializes program memory. Replacing one such record with
+        # a duplicate keeps the record count while changing the address map.
+        replay(memory[40:80] + memory[40:], "--invalid-replay")
 
 
 if __name__ == "__main__":

@@ -113,11 +113,14 @@ let () = match Array.to_list Sys.argv with
       Pie_zip.write ~level:(int_of_string level) path
         ["empty", (fun _ -> ()); "data", stream; "again", stream]
   | [_; "--stream"; path] -> check_stream path
-  | [_; ("--ordered-replay" | "--unordered-replay" as mode); path] ->
+  | [_; ("--valid-replay" | "--invalid-replay" as mode); path] ->
       let pie, source = Pie_file.read_deferred path in
-      let replay () = Pie_run.run ~source ~layout:"all_cairo" ~trace:false ~secure:true
-          ~allow_missing_builtins:false ~fill_holes:false pie in
-      if mode = "--ordered-replay" then ignore (replay ()) else assert (fails replay)
+      let check replay =
+        if mode = "--valid-replay" then ignore (replay ()) else assert (fails replay) in
+      let replay ?source pie () = Pie_run.run ?source ~layout:"all_cairo" ~trace:false
+          ~secure:true ~allow_missing_builtins:false ~fill_holes:false pie in
+      check (replay ~source pie);
+      check (replay (Pie_file.read path))
   | [_; "--invalid-stream"; path] ->
       let _,source = Pie_file.read_deferred path in
       (match Pie_file.iter_memory source ignore with

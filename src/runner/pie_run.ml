@@ -78,13 +78,12 @@ let decode_value m pos =
     c
   end
 
-(* MemorySegmentManager::load_pie_memory: insert every cell in file order
-   (write-once, with builtin validation). Returns whether the addresses are
-   strictly increasing, the order cairo-vm serializes memory in. *)
+(* Insert cells in file order with the usual write-once and builtin checks. *)
 external load_run : bytes -> int -> Segment.seg -> Felt.pool -> int array -> unit
   = "cvm_pie_load_run" [@@noalloc]
 
-let load_memory vm pie sizes source =
+let load_memory vm pie sizes source ~secure =
+  let iter f = match source with None -> f pie.memory | Some src -> iter_memory src f in
   let occupied = Array.make (Array.length sizes) 0 in
   let sorted = ref true and prev_seg = ref (-1) and prev_off = ref (-1) in
   let count = ref 0 in
@@ -116,8 +115,27 @@ let load_memory vm pie sizes source =
         prev_off := off
       end else prev_off := state.(2) - 1
     done in
-  (match source with None -> load pie.memory | Some src -> iter_memory src load);
-  !sorted, !count
+  iter load;
+  if !sorted || not secure then !count else begin
+    (* Rust compares PIE memory as an address/value map. Write-once insertion
+       has checked the values; count distinct addresses so repeated records
+       cannot conceal a missing cell supplied by execution. Ordinary sorted
+       archives require neither the second pass nor the bitsets. *)
+    let seen = Array.map (fun high -> Bytes.make ((high + 7) / 8) '\000') occupied in
+    let distinct = ref 0 in
+    iter (fun chunk ->
+        for i = 0 to Bytes.length chunk / cell_bytes - 1 do
+          let pos = i * cell_bytes in
+          let seg, off = addr_of_word (Int64.to_int (Bytes.get_int64_le chunk pos)) in
+          let bits = seen.(seg) and index = off lsr 3 and mask = 1 lsl (off land 7) in
+          let byte = Bytes.get_uint8 bits index in
+          if byte land mask = 0 then begin
+            Bytes.set_uint8 bits index (byte lor mask);
+            incr distinct
+          end
+        done);
+    !distinct
+  end
 
 let count_cells vm =
   let n = ref 0 in
@@ -182,7 +200,7 @@ let pedersen_data base j =
 
 (* ---- CairoPie::check_pie_compatibility ---- *)
 
-let check_compatibility (r : Runner.t) pie ~sorted ~cell_count ~pages ~attributes =
+let check_compatibility (r : Runner.t) pie ~cell_count ~pages ~attributes =
   let vm = r.vm in
   let builtin_of name = List.find_opt (fun b -> bname b.kind = name) vm.builtins in
   (* metadata: segments the runner would write into its own PIE *)
@@ -207,7 +225,7 @@ let check_compatibility (r : Runner.t) pie ~sorted ~cell_count ~pages ~attribute
   then
     pie_error "Cairo PIE diff: metadata mismatch";
   (* write-once memory already holds every loaded cell with its PIE value *)
-  if (not sorted) || count_cells vm <> cell_count then pie_error "Cairo PIE diff: memory mismatch";
+  if count_cells vm <> cell_count then pie_error "Cairo PIE diff: memory mismatch";
   let counters_ok =
     List.length vm.builtins = List.length pie.builtin_instance_counter
     && List.for_all
@@ -270,13 +288,13 @@ let run ?source ?(allow_legacy_instructions=false) ~layout ~trace ~secure ~allow
   for _ = 1 to n_extra do
     ignore (add_segment vm)
   done;
-  let sorted,cell_count = load_memory vm pie sizes source in
+  let cell_count = load_memory vm pie sizes source ~secure in
   Resources.with_preverified_pedersen vm (fun () ->
       Cpu.run ~stop:(r.end_seg, 0) ~steps:pie.n_steps vm r.hints);
   if not (vm.pc_seg = r.end_seg && vm.pc = 0) then
     fail "Could not reach the end of the program. RunResources has no remaining steps.";
   Finalize.end_run ~fill_holes r ~secure ~allow_missing:allow_missing_builtins;
-  if secure then check_compatibility r pie ~sorted ~cell_count ~pages:!pages ~attributes:!attributes;
+  if secure then check_compatibility r pie ~cell_count ~pages:!pages ~attributes:!attributes;
   { runner = r; output_pages = !pages; output_attributes = !attributes; pedersen_extra = !pedersen_extra }
 
 let write_output ?compression_level ~secure ~merge_extra_segments result path =
