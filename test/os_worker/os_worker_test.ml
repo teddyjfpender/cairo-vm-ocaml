@@ -50,7 +50,8 @@ let () =
       send (J.to_string (`Assoc ["schema",`Int 1;"publication",`String publication;
           "witness",`String input;"output",`String out;"limits",`Assoc limits])) in
     let first=job () in
-    assert (field "status" first="ok");
+    if field "status" first <> "ok" then
+      failwith ("default worker request failed: " ^ J.to_string first);
     let digest=sha output in
     assert (field "sha256" first=digest);
     let expect code result = assert (field "code" result=code && sha output=digest) in
