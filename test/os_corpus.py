@@ -32,8 +32,10 @@ pathlib.Path(req['output']).write_bytes(data)
 print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256(data).hexdigest())))
 """)
         (self.root/"host").chmod(0o755)
-        sample = self.write("sample", "fixture only")
-        source = self.write("raw", "fixture only")
+        document = dict(os_hints_config=dict(chain_info=dict(chain_id=hex(int.from_bytes(b"SN_MAIN", "big")))),
+                        os_input=dict(os_block_inputs=[dict(block_info=dict(block_number=123), new_block_hash="0xa")]))
+        sample = self.write("sample", document)
+        source = self.write("raw", document)
         fold = dict(chain_id="SN_MAIN", number=123, block_hash="0xa", derived_root="0xb", header_root="0xb",
                     l1_anchor=dict(covered_through=125, transaction_hash="0x"+"1"*64,
                                    derived_root="0xc", contract_root="0xc"))

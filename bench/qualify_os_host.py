@@ -72,6 +72,15 @@ def qualify(manifest, trusted_digest, host):
             require(felt(anchor["derived_root"]) == felt(anchor["contract_root"]), "L1 anchor root mismatch")
             asset(root, case["source"])
             witness = asset(root, case["witness"])
+            with witness.open("rb") as stream:
+                document = json.load(stream)
+            identity = document["os_hints_config"]["chain_info"]["chain_id"]
+            require(felt(identity) == int.from_bytes(b"SN_MAIN", "big"), "witness chain identity mismatch")
+            blocks_in_witness = document["os_input"]["os_block_inputs"]
+            require(len(blocks_in_witness) == 1 and blocks_in_witness[0]["block_info"]["block_number"] == number
+                    and felt(blocks_in_witness[0]["new_block_hash"]) == felt(case["block_hash"]),
+                    f"witness does not describe sampled block {number}")
+            del document, blocks_in_witness
             reference = asset(root, case["rust_pie"])
             output = Path(directory) / f"{number}.zip"
             request = dict(schema=1, revision=data["revision"], program=str(program), witness=str(witness),
