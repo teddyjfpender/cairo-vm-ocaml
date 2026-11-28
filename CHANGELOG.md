@@ -7,6 +7,8 @@
 - Qualify Apollo 0.20.0-rc.1 at sequencer revision `1860b9850b5c51858c50c0f5038933e49f932eef`. Eight fixtures matched execution and proof-mode artifacts. The upstream Stwo verifier accepted direct genesis, Virtual OS and aggregator proofs. The latter two use the simple bootloader.
 - Compare complete instruction state after successful and rejected operations. Correct trace and access-marker handling on failed instructions and retain the observable writes made before an error.
 - Add mainnet handoff verification and paired whole-job benchmarking. A measurement consumes recorded block inputs, runs both full host commands and checks each complete published archive against the authenticated reference digest.
+- The first whole-job measurement used one synthetic empty block on macOS arm64. Production median service time was 51.67 ms in Rust and 123.54 ms through the process candidate over five pairs. All ten complete ZIPs matched across Production and serial Standard. The production candidate path includes decoding, validation and republishing with the consumer's concurrent writer. [Measurements and input scope](https://github.com/teddyjfpender/cairo-vm-ocaml/issues/65#issuecomment-7236492669)
+- Require independent Lean execution over a public formal model for the standing hint-free CI subset. The three-way gate compares stdout, every relocated trace register and initialized memory, plus two reviewed refusals.
 
 ## 0.2.0 (2026-11-28)
 
