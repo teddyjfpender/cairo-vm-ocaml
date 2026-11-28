@@ -130,3 +130,33 @@ let () =
   in
   check true;
   check false
+
+(* An uncached static Blake instruction marks eight output cells. On an
+   interrupted instruction only the recorded prefix was actually written. *)
+let () =
+  let jump = Z.of_string "0x10780017fff7fff" in
+  let check extension partial =
+    let blake = Z.logor (Z.shift_left (Z.of_int extension) 63)
+        (Z.of_string "0x0010800080008000") in
+    let program = {Program.data=[|jump; Z.zero; blake|]; builtins=[]; main=Some 0;
+                   start=Some 0; end_=Some 0; hints=[]; references=[||];
+                   identifiers=Hashtbl.create 0} in
+    let r = Runner.initialize ~proof:false {Cairo_run.default_config with trace=true} program in
+    let vm = r.vm in
+    let output = Vm.add_segment vm in
+    Vm.write vm output 11 Felt.one;
+    Vm.write vm 1 3 (Felt.reloc output 0);
+    vm.icache <- [|Instruction.decode_word jump; 0; 0|];
+    for _ = 1 to 250_000 do Cpu.record_trace vm 0 0 2 2 done;
+    let entry = vm.tlen in
+    Cpu.record_trace vm 0 2 3 3;
+    vm.steps <- vm.tlen;
+    Option.iter (fun count -> vm.incomplete_blake <- [entry,count]) partial;
+    let holes = Resources.pie_memory_holes r in
+    assert (holes = Resources.memory_holes r);
+    assert (r.acc.count.(output) = Option.value ~default:8 partial);
+    holes
+  in
+  List.iter (fun extension ->
+      let complete = check extension None in
+      assert (check extension (Some 3) = complete + 5)) [1;2]
