@@ -43,7 +43,7 @@ let feed buffer oc crc bytes length =
     if buffer.used = Bytes.length buffer.input then flush_blocks buffer oc crc
   done
 
-type profile = Fast | Rust_3_2
+type profile = Fast | Stored_headers | Rust_3_2
 type archive
 
 external open_pinned : string -> archive = "cvm_pinned_zip_open"
@@ -66,7 +66,7 @@ let write_pinned path members =
       if not (finish handle) then fail "Cannot finalize Cairo PIE");
     Sys.rename staged path)
 
-let write_fast ~level path members =
+let write_fast ~known ~level path members =
   if level < 0 || level > 9 then fail "Cairo PIE compression level must be between 0 and 9";
   let method_id = if level = 0 then 0 else 8 in
   let compressed = lazy (compressor level) in
@@ -76,15 +76,26 @@ let write_fast ~level path members =
     let central = List.map (fun (name, write) ->
       let off = pos_out oc in
       if off > 0xfffffffe then fail "Cairo PIE zip exceeds the size limit";
+      let initial_crc, initial_size =
+        if known then begin
+          let crc = ref 0 and size = ref 0 in
+          write (fun bytes len ->
+            if len < 0 || len > Bytes.length bytes || len > 0xfffffffe - !size then
+              fail "Cairo PIE zip member exceeds the size limit";
+            size := !size + len;
+            crc := crc_update !crc bytes len);
+          !crc, !size
+        end else 0,0 in
       u32 0x04034b50; u16 20; u16 0; u16 method_id; u16 0; u16 33;
-      u32 0; u32 0; u32 0; u16 (String.length name); u16 0; output_string oc name;
-      let start = pos_out oc and crc = ref 0 and original = ref 0 in
+      u32 initial_crc; u32 initial_size; u32 initial_size;
+      u16 (String.length name); u16 0; output_string oc name;
+      let start = pos_out oc and crc = ref initial_crc and original = ref 0 in
       let emit bytes len =
         if len < 0 || len > Bytes.length bytes || len > 0xfffffffe - !original then
           fail "Cairo PIE zip member exceeds the size limit";
         original := !original + len;
         if level = 0 then begin
-          crc := crc_update !crc bytes len;
+          if not known then crc := crc_update !crc bytes len;
           output oc bytes 0 len
         end else feed (Lazy.force compressed) oc crc bytes len in
       write emit;
@@ -95,7 +106,11 @@ let write_fast ~level path members =
       let stop = pos_out oc in
       let packed = stop - start in
       if stop > 0xfffffffe then fail "Cairo PIE zip exceeds the size limit";
-      seek_out oc (off + 14); u32 !crc; u32 packed; u32 !original; seek_out oc stop;
+      if known then begin
+        if packed <> initial_size then fail "Cairo PIE member size changed between passes"
+      end else begin
+        seek_out oc (off + 14); u32 !crc; u32 packed; u32 !original; seek_out oc stop
+      end;
       name, !crc, packed, !original, off) members in
     let start = pos_out oc in
     List.iter (fun (name, crc, packed, original, off) ->
@@ -108,4 +123,7 @@ let write_fast ~level path members =
 
 
 let write ?(profile=Fast) ~level path members =
-  match profile with Fast -> write_fast ~level path members | Rust_3_2 -> write_pinned path members
+  match profile with
+  | Fast -> write_fast ~known:false ~level path members
+  | Stored_headers -> write_fast ~known:true ~level:0 path members
+  | Rust_3_2 -> write_pinned path members
