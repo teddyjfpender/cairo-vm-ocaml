@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 
+import echonet_job
 from qualify_os_host import asset, digest, require
 
 
@@ -23,8 +24,9 @@ def run_arm(command, archive, destination, scratch, expected, timeout):
     args = [variables.get(token, token) for token in command]
     scratch.mkdir()
     usage = scratch / "usage.txt"
+    timer = "/usr/bin/time" if Path("/usr/bin/time").is_file() else "time"
     start = time.monotonic_ns()
-    with subprocess.Popen(["/usr/bin/time", "-f", "%M", "-o", str(usage), "--", *args],
+    with subprocess.Popen([timer, "-f", "%M", "-o", str(usage), "--", *args],
                           cwd=scratch, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                           start_new_session=True) as proc:
         def interrupt():
@@ -61,10 +63,13 @@ def measure(plan_file, rounds, seed, timeout, out):
     require(cases and len(cases) == len(qualified) and {case["number"] for case in cases} == qualified.keys(),
             "whole jobs must cover every qualified case exactly once")
     arms = {"rust", "oxcairo"}
-    require(plan["commands"].keys() == arms, "expected two complete job commands")
+    staged = "pipeline" in plan
+    require(staged != ("commands" in plan), "choose pipeline or external commands")
+    if not staged:
+        require(plan["commands"].keys() == arms, "expected two complete job commands")
     commands = {}
     identities = {}
-    for arm, spec in plan["commands"].items():
+    for arm, spec in plan.get("commands", {}).items():
         exe = asset(root, spec["executable"])
         argv = spec["arguments"]
         require(isinstance(argv, list) and all(isinstance(arg, str) for arg in argv)
@@ -76,11 +81,20 @@ def measure(plan_file, rounds, seed, timeout, out):
     rng = random.Random(seed)
     rows = []
     inputs = {case["number"]: asset(root, case["source"]) for case in cases}
+    witnesses = {}
     for case in cases:
+        if staged:
+            number = case["number"]
+            require(case["witness"]["sha256"] == qualified[number]["witness_sha256"],
+                    "witness reference differs from qualification")
+            witnesses[number] = echonet_job.canonical_witness_hash(asset(root, case["witness"]))
         require(case["source"]["sha256"] == qualified[case["number"]]["source_sha256"],
                 "raw source differs from the qualified block")
     with tempfile.TemporaryDirectory(dir=out.parent) as work:
-        temp = Path(work)
+        temp = Path(work).resolve()
+        if staged:
+            commands = echonet_job.commands(root, plan, qualification, temp)
+            identities = {arm: plan["pipeline"][arm]["sha256"] for arm in arms}
         for rnd in range(rounds):
             numbers = list(inputs)
             rng.shuffle(numbers)
@@ -90,8 +104,15 @@ def measure(plan_file, rounds, seed, timeout, out):
                 for arm in order:
                     with tempfile.TemporaryDirectory(dir=temp) as run:
                         directory = Path(run)
-                        sample = run_arm(commands[arm], inputs[number], directory / "block.zip",
+                        command = commands[arm]
+                        case = qualified[number]
+                        if staged:
+                            command = [*command, case["source_sha256"], witnesses[number], case["sha256"]]
+                        sample = run_arm(command, inputs[number], directory / "block.zip",
                                          directory / "work", qualified[number]["sha256"], timeout)
+                        if staged:
+                            sample["canonical_witness_sha256"] = witnesses[number]
+                            sample["stage_ns"] = json.loads((directory / "work/stages.json").read_bytes())
                     rows.append(dict(round=rnd, number=number, arm=arm, **sample))
     totals = {arm: 0 for arm in arms}
     cases_summary = []
