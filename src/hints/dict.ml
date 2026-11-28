@@ -67,7 +67,7 @@ let from_snapshot vm scopes (data, changes) = add_tracker vm scopes data (Some c
 let incr_ptr t = t.current_ptr <- value_add t.current_ptr (Felt.small 3)
 
 external squash_rows : int array -> int array -> Segment.seg array -> Builtin.flag array ->
-  int array -> Felt.pool -> int -> Bytes.t array -> int list -> int -> Felt.t array -> Segment.seg array -> int -> int =
+  int array -> Felt.pool -> int -> Bytes.t array -> int list -> int -> Felt.t array -> Segment.seg array -> int -> Segment.seg -> int =
   "cvm_squash_rows_byte" "cvm_squash_rows" [@@noalloc]
 
 let squash_member c member offset correction =
@@ -180,7 +180,7 @@ let register reg =
             match !indices, !position with
             | Ints rest, Int current when Z.fits_int current ->
                 let steps = squash_rows registers vm.icache vm.segs vm.seg_flag vm.hi Felt.pool
-                    vm.nsegs vm.watched rest (Z.to_int current) vm.rules vm.tsegs vm.ntsegs in
+                    vm.nsegs vm.watched rest (Z.to_int current) vm.rules vm.tsegs vm.ntsegs vm.trace in
                 (* The initial hint already popped one index. Publish only
                    the additional complete rows consumed by the primitive. *)
                 if steps > 9 then begin
