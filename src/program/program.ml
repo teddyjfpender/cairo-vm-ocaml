@@ -244,8 +244,18 @@ let load_json j =
    | _ -> ());
   load_with_identifiers identifiers j
 
+external read_program : Unix.file_descr -> int -> string option = "cvm_pread_program"
+
 let load_file path =
-  let contents = In_channel.with_open_bin path In_channel.input_all in
+  let contents = In_channel.with_open_bin path (fun ic ->
+      let fd = Unix.descr_of_in_channel ic in
+      let stat = Unix.fstat fd in
+      if stat.st_kind <> Unix.S_REG || stat.st_size < 4_000_000 ||
+         stat.st_size > Sys.max_string_length || Domain.recommended_domain_count () < 2
+      then In_channel.input_all ic
+      else match read_program fd stat.st_size with
+        | Some contents -> contents
+        | None -> In_channel.input_all ic) in
   if String.starts_with ~prefix:Packed_program.magic contents then
     (try Packed_program.decode contents
      with Packed_program.Invalid reason -> raise (Parse_error ("Invalid packed program: " ^ reason)))

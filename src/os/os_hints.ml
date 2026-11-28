@@ -163,7 +163,15 @@ let initialize_files ?on_da ?(virtual_os=false) ?layout_def ?record_trace ~proof
      all accesses to its felt pool remain on the caller's domain. *)
   let worker =
     if Domain.recommended_domain_count () < 2 then None
-    else try Some (Domain.spawn (fun () -> read_input ~virtual_os path)) with Failure _ -> None in
+    else
+      (* New domains use the startup nursery size. Carry over the caller's
+         witness allocation budget to avoid collecting its young objects while
+         the program loader is still filling the large compiler document. *)
+      let words = (Gc.get ()).minor_heap_size in
+      try Some (Domain.spawn (fun () ->
+          let gc = Gc.get () in
+          if gc.minor_heap_size < words then Gc.set {gc with minor_heap_size = words};
+          read_input ~virtual_os path)) with Failure _ -> None in
   let program =
     match Program.load_file program_path with
     | p -> p

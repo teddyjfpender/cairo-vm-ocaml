@@ -182,3 +182,17 @@ let () =
       match load indent invalid with
       | exception Yojson.Json_error _ -> ()
       | _ -> failwith "invalid debug metadata after a speculative boundary") ["  "; "    "]
+
+(* Deterministically exercise file growth and truncation between observing the
+   descriptor's size and its positional reads. Fallback still starts at zero. *)
+external pread_program : Unix.file_descr -> int -> string option = "cvm_pread_program"
+
+let () =
+  let contents = String.init 65537 (fun i -> Char.chr (i land 255)) in
+  with_json contents (fun path ->
+      In_channel.with_open_bin path (fun ic ->
+          let fd = Unix.descr_of_in_channel ic and size = String.length contents in
+          assert (pread_program fd size = Some contents);
+          assert (pread_program fd (size - 1) = None);
+          assert (pread_program fd (size + 1) = None);
+          assert (In_channel.input_all ic = contents)))

@@ -207,6 +207,32 @@ CAMLprim value cvm_json_debug_span(value input, value bounds) {
     if (colon == end || *colon != ':') continue;
     const unsigned char *first = whitespace(colon + 1, end);
     if (first == end || *first != '{') continue;
+    /* In sorted compiler output hints follows debug_info. Search from the
+       smaller metadata tail before walking through megabytes of locations.
+       The caller verifies both ends against the complete root and schema. */
+    const unsigned char *block_end = end;
+    while (block_end > first + 1) {
+      size_t left = (size_t)(block_end - first - 1);
+      const unsigned char *block = block_end - (left > 65536 ? 65536 : left);
+      const unsigned char *q = block;
+      while ((q = memchr(q, 'h', (size_t)(block_end - q))) != NULL) {
+        const unsigned char *h = q++;
+        if ((size_t)(end-h) < 6 || (size_t)(h - first) <= spaces + 2 || h[-1] != '"' ||
+            memcmp(h,"hints\"",6) || h[-(ptrdiff_t)spaces-2] != '\n' ||
+            memcmp(h-spaces-1, indent, spaces)) continue;
+        const unsigned char *comma = h-spaces-2;
+        while (comma > first+1 && (comma[-1] == ' ' || comma[-1] == '\r' ||
+                                    comma[-1] == '\t' || comma[-1] == '\n')) --comma;
+        if (comma - first <= 2 || comma[-1] != ',' || comma[-2] != '}') continue;
+        if (comma-1-first < 2000000) continue;
+        Field(bounds, 0) = Val_long((intnat)(first-base));
+        Field(bounds, 1) = Val_long((intnat)(comma-1-base));
+        return Val_true;
+      }
+      block_end = block;
+      /* Unsorted and differently indented inputs have the ordinary path. */
+      if (end-block > (end-first)/3) break;
+    }
     const unsigned char *close = first + 1;
     while ((close = memchr(close, '}', (size_t)(end-close))) != NULL) {
       if ((size_t)(close-first) > spaces && close[-(ptrdiff_t)spaces-1] == '\n' &&
