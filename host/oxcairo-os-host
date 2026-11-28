@@ -10,6 +10,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import resource
 import signal
 import stat
@@ -40,7 +41,6 @@ def trusted_pins():
     path = os.environ.get("OXCAIRO_OS_PROFILE")
     pins = {revision: set(hashes) for revision, hashes in PINS.items()}
     if path:
-        import re
         with open(path, "rb") as file:
             raw = file.read(65537)
         if len(raw) > 65536:
@@ -176,7 +176,7 @@ def child(stage, parent):
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_DETERMINISTIC": "1", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
-            "--cairo_pie_output", str(stage / "out")]
+            "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
     if sys.platform != "darwin":
         os.execve(exe, argv, env)
     # macOS lacks Linux's parent-death signal. Keep a parent for the native
@@ -252,7 +252,10 @@ def staging(output):
     names = {"program", "out", "error"}
     def clean():
         entries = list(stage.iterdir())
-        if any(item.name not in names or not stat.S_ISREG(item.lstat().st_mode) for item in entries):
+        def owned_file(item):
+            writer_temp = re.fullmatch(r"\.oxcairo-pie-[0-9a-f]{6}\.zip", item.name)
+            return (item.name in names or writer_temp) and stat.S_ISREG(item.lstat().st_mode)
+        if not all(owned_file(item) for item in entries):
             raise Refusal("io_error", "unexpected staging contents")
         for item in entries:
             item.unlink()
