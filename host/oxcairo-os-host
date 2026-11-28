@@ -36,6 +36,28 @@ class Refusal(Exception):
         super().__init__(detail)
         self.kind = kind
 
+def trusted_pins():
+    path = os.environ.get("OXCAIRO_OS_PROFILE")
+    pins = {revision: set(hashes) for revision, hashes in PINS.items()}
+    if path:
+        import re
+        with open(path, "rb") as file:
+            raw = file.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("operator OS profile is too large")
+        profile = json.loads(raw, object_pairs_hook=unique)
+        if not isinstance(profile, dict) or profile.keys() != {"revision", "program_sha256"}:
+            raise ValueError("invalid operator OS profile")
+        revision = profile["revision"]
+        digest = profile["program_sha256"]
+        if not isinstance(revision, str) or not re.fullmatch("[0-9a-f]{40}", revision):
+            raise ValueError("invalid profile revision")
+        if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+            raise ValueError("invalid profile digest")
+        pins.setdefault(revision, set()).add(digest)
+    return pins
+
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -57,7 +79,8 @@ def request():
     for k in required - {"schema"}:
         if not isinstance(obj[k], str) or not obj[k] or "\0" in obj[k]:
             raise ValueError("expected nonempty string for " + k)
-    if obj["revision"] not in PINS:
+    pins = trusted_pins()
+    if obj["revision"] not in pins:
         raise Refusal("unknown_revision", "unsupported OS revision")
     supplied = obj.get("limits", {})
     if not isinstance(supplied, dict) or supplied.keys() - DEFAULTS.keys():
@@ -72,6 +95,7 @@ def request():
         raise Refusal("memory_limit", "job requires at least 32 MiB")
     for k in ["program", "witness", "output"]:
         obj[k] = str(Path(obj[k]).absolute())
+    obj["hashes"] = sorted(pins[obj["revision"]])
     obj["limits"] = limits
     return obj
 
@@ -122,8 +146,9 @@ def child(stage, parent):
     if os.stat(job["program"]).st_size > compiler_max:
         raise Refusal("program_mismatch", "compiler file exceeds supported size")
     resource.setrlimit(resource.RLIMIT_FSIZE, (compiler_max, resource.getrlimit(resource.RLIMIT_FSIZE)[1]))
-    copy_program(job["program"], program, PINS[job["revision"]])
+    copy_program(job["program"], program, job["hashes"])
     set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
+    signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     os.execve(exe, [str(exe), str(program), "--layout", "all_cairo", "--os_hints", job["witness"],

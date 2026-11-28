@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
@@ -34,6 +35,8 @@ def main():
         package = work / name
         program = work / "compiled OS.json"
         program.write_bytes(gzip.decompress((fixtures / "programs/starknet-os-training.json.gz").read_bytes()))
+        subprocess.run([sys.executable, str(fixtures.parents[0] / "os_host.py"),
+                        str(package / "oxcairo-os-host"), str(program), str(witness)], check=True)
         env = {"HOME": directory, "PATH": "", "LC_ALL": "C"}
         pie = work / "genesis.zip"
         output = subprocess.check_output(
