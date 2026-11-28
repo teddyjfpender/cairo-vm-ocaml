@@ -136,6 +136,16 @@ cairo-vm-cli os.oxcp --os_hints block.json --layout all_cairo --print_output
 
 Keep the compiler JSON for Rust comparisons. Repack after changing the compiled program. The loader checks the format version and table bounds before execution.
 
+## Run successive blocks in one process
+
+The release archive includes `oxcairo-os-worker`. It loads the compiler program once and starts a fresh secure VM for each request. Each request reads the witness from disk. For example, this stream executes two different blocks and then closes the worker.
+
+```sh
+printf '%s\n' 'RUN' 'RUN second-block.json' | oxcairo-os-worker os.json first-block.json
+```
+
+The worker prints `READY` once. Each `RUN` emits the public output words and a final `DONE` line. A bare `RUN` uses the initial witness. A path after `RUN ` selects another witness, including paths containing spaces. An execution error exits the process. Supply the corresponding compiled program and append `--virtual-os` or `--aggregator` to run those modes.
+
 ## Compressed Cairo PIE output
 
 The writer stores ZIP members by default. Add `--pie_compression_level 6` to compress them. Levels 1 through 9 select DEFLATE. Level 0 selects storage. Archive member contents, CRCs and replay semantics are the same across levels. ZIP sizes and compressed bytes depend on the compressor.

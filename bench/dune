@@ -5,6 +5,7 @@
 
 (executable
  (name native_os_worker)
+ (public_name oxcairo-os-worker)
  (modules native_os_worker)
  (libraries cairovm unix))
 

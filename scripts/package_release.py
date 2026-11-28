@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package an already-built CLI and replay library without tagging or publishing."""
+"""Package an already-built CLI, prepared OS worker and replay library without tagging or publishing."""
 
 import argparse
 import gzip
@@ -17,6 +17,7 @@ def main():
     parser.add_argument("tag", help="release tag, e.g. v0.2.0")
     parser.add_argument("target", choices=["macos-arm64", "linux-x86_64"])
     parser.add_argument("cli", type=Path)
+    parser.add_argument("--worker", type=Path, help="include the prepared OS worker executable")
     parser.add_argument("--library", type=Path, default=Path("_build/default/bindings/c/oxcairo.so"))
     parser.add_argument("--output-dir", type=Path, default=Path("dist"))
     args = parser.parse_args()
@@ -29,6 +30,8 @@ def main():
     files = {name: root / name for name in ("README.md", "CHANGELOG.md", "LICENSE")}
     files.update({"cairo-vm-cli": args.cli, "lib/oxcairo.so": args.library,
                   "include/oxcairo.h": root / "bindings/c/oxcairo.h"})
+    if args.worker is not None:
+        files["oxcairo-os-worker"] = args.worker
     for variable, source, name in [("OXC_LIBDEFLATE", "COPYING", "libdeflate"),
                                    ("OXC_OPENSSL", "LICENSE.txt", "openssl")]:
         prefix = os.environ.get(variable)
@@ -44,7 +47,7 @@ def main():
             with tarfile.open(fileobj=gz, mode="w|") as tar:
                 for member, path in sorted(files.items()):
                     info = tarfile.TarInfo(f"{name}/{member}")
-                    info.mode = 0o755 if member in ("cairo-vm-cli", "lib/oxcairo.so") else 0o644
+                    info.mode = 0o755 if member in ("cairo-vm-cli", "oxcairo-os-worker", "lib/oxcairo.so") else 0o644
                     info.size = path.stat().st_size
                     with path.open("rb") as data:
                         tar.addfile(info, data)
