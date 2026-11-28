@@ -30,6 +30,7 @@ val n_cells : t -> int
 type memory_source
 val read_deferred : string -> t * memory_source
 (** Open the archive and decode its metadata, leaving [memory] empty. *)
+
 val iter_memory : ?parallel:bool -> memory_source -> (bytes -> unit) -> unit
 (** Visit serialized cells in file order and check the member CRC. A chunk
     is valid only during its callback. *)
