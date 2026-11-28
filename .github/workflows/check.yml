@@ -20,6 +20,15 @@ jobs:
           eval "$(opam env --switch "$OXCAML_SWITCH")"
           dune build --profile release
           dune runtest --profile release
+      - name: Exercise the installed release products
+        run: |
+          tag="v$(sed -n 's/^version: "\(.*\)"/\1/p' cairo-vm-ocaml.opam)"
+          target=linux-x86_64
+          if [ "$RUNNER_OS" = macOS ]; then target=macos-arm64; fi
+          python3 scripts/package_release.py "$tag" "$target" _build/default/bin/main.exe \
+            --worker _build/default/bench/native_os_worker.exe --library _build/default/bindings/c/oxcairo.so \
+            --output-dir "$RUNNER_TEMP"
+          python3 scripts/smoke_release.py "$RUNNER_TEMP/oxcairo-$tag-$target.tar.gz"
       - name: Reproduce sequencer OS archive digests
         run: |
           gzip -dc test/fixtures/programs/starknet-os-training.json.gz > "$RUNNER_TEMP/starknet-os.json"

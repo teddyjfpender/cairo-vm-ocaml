@@ -81,4 +81,5 @@ jobs:
             library=_build/release-library.so
           fi
           python3 scripts/package_release.py "$TAG" "${{ matrix.target }}" "$cli" --worker "$worker" --library "$library" --output-dir .
+          python3 scripts/smoke_release.py "$name.tar.gz"
           gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber
