@@ -3,8 +3,14 @@
 module Make (C : sig val prime : Z.t val minus_three : bool end) = struct
   let p = C.prime
   let modulo x = Z.erem x p
-  let add x y = modulo (Z.add x y)
-  let sub x y = modulo (Z.sub x y)
+  (* Coordinates and field products are canonical, so a sum or difference
+     needs at most one correction. *)
+  let add x y =
+    let z = Z.add x y in
+    if Z.geq z p then Z.sub z p else z
+  let sub x y =
+    let z = Z.sub x y in
+    if Z.sign z < 0 then Z.add z p else z
   let mul x y = modulo (Z.mul x y)
   let square x = mul x x
   let twice x = add x x

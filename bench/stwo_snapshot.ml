@@ -5,10 +5,11 @@ let () =
   let cfg = Runner.{layout="all_cairo_stwo"; trace=true; secure_run=false;
                     allow_missing_builtins=true; entrypoint="main"} in
   let runner = match Array.to_list Sys.argv with
-    | [_; _; _] -> Runner.initialize ~proof:true cfg prog
+    | [_; _; _] | [_; _; _; "--legacy"] -> Runner.initialize ~proof:true cfg prog
     | [_; _; _; "--bootloader"; path] -> Bootloader.initialize ~proof:true ~path cfg prog
     | [_; _; _; "--os"; path] -> Os_hints.initialize ~proof:true ~path cfg prog
     | _ -> invalid_arg "PROGRAM SNAPSHOT [--bootloader INPUT | --os INPUT]" in
+  runner.vm.allow_legacy_instructions <- List.mem "--legacy" (Array.to_list Sys.argv);
   Runner.run_until_end runner;
   Finalize.end_run ~disable_trace_padding:true ~fill_holes:true runner ~secure:false ~allow_missing:true;
   let vm = runner.vm in

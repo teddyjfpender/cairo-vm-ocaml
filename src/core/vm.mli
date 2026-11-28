@@ -30,6 +30,7 @@ type vm = {
   mutable code_base : int;
   mutable code_page : int array;
   mutable watched : Bytes.t array; (** accessed words of selected contract bytecode segments *)
+  mutable allow_legacy_instructions : bool;
   trace_on : bool;
   mutable trace : Segment.seg;  (** packed entries or full pc, ap, fp triples *)
   mutable tlen : int;

@@ -26,6 +26,7 @@ type vm = {
   mutable code_base : int;
   mutable code_page : int array;
   mutable watched : Bytes.t array;
+  mutable allow_legacy_instructions : bool;
   trace_on : bool;
   mutable trace : seg; (* tagged packed entries or full pc, ap, fp triples *)
   mutable tlen : int;
@@ -61,6 +62,7 @@ let create ~trace =
     code_pages = Hashtbl.create 8;
     code_seg = -1; code_base = 0; code_page = [||];
     watched = [||];
+    allow_legacy_instructions = false;
     trace_on = trace;
     (* lazily committed; the two extra words are record_trace's headroom, so
        a power-of-two run of packed entries (a padded proof run) fits without

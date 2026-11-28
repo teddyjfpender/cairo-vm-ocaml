@@ -241,11 +241,12 @@ let stripped_program pie =
       references = [||]; identifiers = Hashtbl.create 1;
     }
 
-let run ?source ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
+let run ?source ?(allow_legacy_instructions=false) ~layout ~trace ~secure ~allow_missing_builtins ~fill_holes (pie : Pie_file.t) =
   let sizes = metadata_sizes pie in
   let prog = stripped_program pie in
   let cfg = { Runner.layout; trace; secure_run = secure; allow_missing_builtins; entrypoint = "main" } in
   let r = Runner.initialize cfg prog in
+  r.vm.allow_legacy_instructions <- allow_legacy_instructions;
   let vm = r.vm in
   (* VirtualMachine::finalize_segments_by_cairo_pie *)
   List.iter (fun s -> Hashtbl.replace r.seg_sizes s.index s.size) (segment_infos pie);

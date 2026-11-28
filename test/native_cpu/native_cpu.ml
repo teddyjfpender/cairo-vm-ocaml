@@ -280,3 +280,24 @@ let () =
     for i = 0 to 15 do assert (read vm 1 i = read ref_vm 1 i) done;
     for i = 0 to vm.tlen-1 do assert (raw_get vm.trace i = raw_get ref_vm.trace i) done)
     [Felt.reloc 2 3; Felt.small 42]
+
+(* cairo-vm 3.2 accepts a conditional jump with its distance in a stack
+   cell. v4's opcode classifier requires an immediate distance. *)
+let () =
+  let word = Felt.of_z (Z.of_string "0x2127ffe7fff7fff") in
+  let cells = Array.make 16 Felt.zero in
+  cells.(5) <- Felt.one;
+  cells.(6) <- Felt.small 4;
+  let vm = make_vm [|word|] cells in
+  (match Cpu.step vm with
+   | exception Vm_error _ -> ()
+   | () -> failwith "generic instruction admitted by default");
+  vm.allow_legacy_instructions <- true;
+  Cpu.step vm;
+  assert (vm.pc = 1 && vm.steps = 1 && vm.tlen = 1);
+  assert (Array.length vm.icache = 0 || vm.icache.(0) = 0);
+  vm.pc <- 0;
+  Segment.sset vm.segs.(1) 7 Felt.one;
+  Cpu.step vm;
+  assert (vm.pc = 4 && vm.steps = 2);
+  assert (Array.length vm.icache = 0 || vm.icache.(0) = 0)

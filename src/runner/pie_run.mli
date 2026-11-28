@@ -17,6 +17,7 @@ type result = {
 
 val run :
   ?source:Pie_file.memory_source ->
+  ?allow_legacy_instructions:bool ->
   layout:string ->
   trace:bool ->
   secure:bool ->

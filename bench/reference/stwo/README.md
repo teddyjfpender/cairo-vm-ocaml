@@ -37,3 +37,5 @@ verify --proof_path proof.json
 ```
 
 The saved receipts give the input and proof digests, proof lengths and sampled peak RSS. The proofs used Blake2s, the upstream canonical-small preprocessed trace, 70 FRI queries and 26 proof-of-work bits. The explicit lifting sizes bound the prover's twiddle allocation. Canonical-small excludes the EC-op builtin. The all-builtins fixture passed adapted-input equality and is outside the verified-proof table. This qualification covers the recorded upstream fixtures and four sequencer-generated OS tasks. The additional account, reverted invoke and multiblock executions also produced identical complete prover inputs from the two VMs. Use the same OS proof parameters for those tasks.
+
+The upstream `all_opcode_components` fixture uses a valid cairo-vm 3.2 generic conditional jump. Add `--legacy` to the snapshot command for this fixture. The native CLI exposes the same compatibility setting as `--allow_legacy_instructions`. The default decoder follows v4.0.0. All 1,495 steps produced the same adapted input as Rust, and the independent verifier accepted its proof with the fixture parameters.

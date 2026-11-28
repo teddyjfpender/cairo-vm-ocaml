@@ -61,5 +61,14 @@
     "proof_bytes": 14647244,
     "prover_peak_kib": 4057456,
     "verifier_exit": 0
+  },
+  {
+    "workload": "all_opcode_components.legacy",
+    "steps": 1495,
+    "prover_input_sha256": "a33b1a973ec677a42a369c7431d5f648741619717db61a3ce5ea34e7971c671e",
+    "proof_sha256": "b6d3da684896023db325fa57c768a91c88888e2302d89e7366f963e9c84c902c",
+    "proof_bytes": 12030087,
+    "prover_peak_kib": 3822192,
+    "verifier_exit": 0
   }
 ]

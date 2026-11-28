@@ -6,14 +6,21 @@ open Instruction
 open Vm
 open Deduce
 
-let decode_at vm seg off =
+let word_at vm seg off =
   if off < 0 then fail "Negative program counter %d:%d" seg off;
   let v = get vm seg off in
   if v = Felt.empty then fail "Instruction at %d:%d is not assigned (UnknownMemoryCell)" seg off;
   if not (is_felt v) then fail "Instruction at %d:%d is a relocatable value" seg off;
-  let z = Felt.to_z v in
-  try decode_word z
-  with Generic_instruction -> fail "Unsupported generic instruction at pc %d:%d: 0x%s" seg off (Z.format "%x" z)
+  Felt.to_z v
+
+let noncanonical vm seg off word =
+  if vm.allow_legacy_instructions then decode_legacy_word word
+  else fail "Unsupported generic instruction at pc %d:%d: 0x%s" seg off (Z.format "%x" word)
+
+let decode_at vm seg off =
+  let word = word_at vm seg off in
+  try decode_word word with Generic_instruction -> noncanonical vm seg off word
+
 
 (* Dynamic contract bytecode can occupy a small region far into a segment.
    Allocate decoded words only in pages actually executed. *)
@@ -40,9 +47,9 @@ let contract_page vm =
   end;
   vm.code_page
 
-let[@inline never] fetch_slow vm =
+let[@inline never] fetch_canonical vm =
   if vm.pc_seg = 0 then begin
-    let d = decode_at vm 0 vm.pc in
+    let d = decode_word (word_at vm 0 vm.pc) in
     if vm.pc >= Array.length vm.icache then begin
       let n = ref (max 64 (Array.length vm.icache)) in
       while !n <= vm.pc do
@@ -55,16 +62,22 @@ let[@inline never] fetch_slow vm =
     if d land ext_mask = 0 then vm.icache.(vm.pc) <- d;
     d
   end
-  else if vm.pc_seg < 0 then decode_at vm vm.pc_seg vm.pc
+  else if vm.pc_seg < 0 then decode_word (word_at vm vm.pc_seg vm.pc)
   else begin
     let page = contract_page vm and index = vm.pc land 1023 in
     let cached = page.(index) in
     if cached <> 0 then cached land lnot (1 lsl 61) else
-      let d = decode_at vm vm.pc_seg vm.pc in
+      let d = decode_word (word_at vm vm.pc_seg vm.pc) in
       if d land ext_mask = 0 then
         page.(index) <- (if Array.length (page_handlers vm.page_hints index) <> 0 then d lor (1 lsl 61) else d);
       d
   end
+
+(* The native batch kernel assumes the v4 instruction shapes. Generic v3.2
+   words go directly to the scalar executor and never populate either cache. *)
+let fetch_slow vm =
+  try fetch_canonical vm with Generic_instruction ->
+    noncanonical vm vm.pc_seg vm.pc (word_at vm vm.pc_seg vm.pc)
 
 (* ---------------- step ---------------- *)
 

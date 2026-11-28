@@ -23,6 +23,7 @@ let delegate message =
           | Unix.Unix_error (e, _, _) -> prerr_endline (path ^ ": " ^ Unix.error_message e); exit 2)
 
 let () =
+  let legacy = ref false in
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
   let secure = ref None and allow_missing = ref None and stats = ref false in
@@ -51,6 +52,7 @@ let () =
       ("--entrypoint", Arg.Set_string entry, "NAME  entrypoint (default main)");
       ("--secure_run", Arg.String (fun s -> secure := Some (bool_of s)), "true|false");
       ("--allow_missing_builtins", Arg.String (fun s -> allow_missing := Some (bool_of s)), "true|false");
+      ("--allow_legacy_instructions", Arg.Set legacy, " execute generic instructions accepted by cairo-vm 3.2");
       ("--disable_trace_padding", Arg.Set disable_trace_padding, " keep the actual proof-mode execution length");
       ("--fill-holes", Arg.String (fun s -> fill_holes := Some (bool_of s)), "true|false  materialize deducible builtin outputs");
       ("--proof_mode", Arg.Set proof, " run in canonical proof mode");
@@ -152,7 +154,7 @@ let () =
         let pie,source = Pie_file.read_deferred file in
         let t1 = Unix.gettimeofday () in
         let res =
-          Pie_run.run ~source ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
+          Pie_run.run ~source ~allow_legacy_instructions:!legacy ~layout:!layout ~trace:cfg.trace ~secure:cfg.secure_run
             ~allow_missing_builtins:cfg.allow_missing_builtins ~fill_holes:(Option.value !fill_holes ~default:false) pie
         in
         pie_input := Some res;
@@ -168,6 +170,7 @@ let () =
           | None, _, Some path -> Os_hints.initialize_files ~virtual_os:!virtual_os ?layout_def ~record_trace:cfg.trace ~proof ~path cfg file
           | None, None, None -> Runner.initialize ?layout_def ~proof cfg (Program.load_file file) in
         let t1 = Unix.gettimeofday () in
+        r.vm.allow_legacy_instructions <- !legacy;
         Runner.run_until_end r;
         r, t1, Unix.gettimeofday () in
       let r, t1, t2 = if Option.is_some !bootloader_input then Resources.with_pedersen_verifier execute
