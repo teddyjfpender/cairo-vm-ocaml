@@ -19,3 +19,16 @@ let () =
       assert (Z.equal (Felt.to_z b) (Z.of_string hi))) cases;
   let low, high = Os_kzg.commit [|Z.zero|] in
   assert (low = Felt.zero && Z.equal (Felt.to_z high) (Z.shift_left (Z.of_int 3) 190))
+
+(* Exercise each window boundary with coefficients spanning the full input width. *)
+let () =
+  let random = Random.State.make [|314159|] in
+  let coefficient i =
+    if i mod 7 = 0 then Z.zero
+    else Z.of_bits (String.init 32 (fun _ -> Char.chr (Random.State.int random 256))) in
+  List.iter (fun n ->
+      let inputs = Array.init n coefficient in
+      let lo, hi = Os_kzg.commit inputs in
+      let expected_lo, expected_hi = Os_kzg.commit_reference inputs in
+      assert (Felt.equal lo expected_lo && Felt.equal hi expected_hi))
+    [0; 1; 31; 32; 191; 192; 639; 640]

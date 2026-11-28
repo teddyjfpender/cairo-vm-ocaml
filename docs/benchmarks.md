@@ -11,6 +11,12 @@ On the 8,388,608-step proof-mode bootloader run of `SN_PIE_2` at the same revisi
 Detailed measurements, newest first. Each section names the machine, the Rust version
 and the method. Raw paired timings live in [`bench/results/`](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/main/bench/results/).
 
+## Large native OS witnesses and data availability
+
+The four-block storage workload reaches 51,839,675 executed Cairo steps at 8,192 invokes. The five-block mixed syscall workload reaches 42,218,395 steps at 64 repetitions. OCaml matched the public output and all five decompressed PIE members on both. Stock Rust exceeded the 4 GiB process allowance on these inputs. A separate Rust 3.2.0 diagnostic runs the sequencer's checks and streams the original PIE encoding. Its archives also matched stock Rust on both smaller inputs. With only public output requested from both implementations, seven alternating cold pairs measured 7.43× for the larger storage witness and 8.48× for the larger mixed witness at OCaml revision `faa291a`. [Reference source and reproduction](../bench/reference/README.md) · [Public-output pairs](../bench/results/native-os-verified-output-m4-max.csv).
+
+A second family uses four blocks, distinct storage keys, full-width values, and on-chain blob commitments. At 4,096 invokes the sequential-key case executed 29,745,545 Cairo steps and the scattered-key case executed 34,562,436. Expanding the fixed setup at build time and evaluating its multiscalar product with six-limb field arithmetic improved cold end-to-end OCaml wall time by 1.39× and 1.32× respectively. Each number is the median of eleven alternating pairs on an M4 Max. The comparison across all eight sizes and key patterns ranged from 1.15× to 1.46×. [Paired wall times](../bench/results/native-os-blob-commitments-m4-max.csv).
+
 ## Native program startup
 
 On the M4 Max, thirty alternating cold pairs compared the same OCaml executable reading compiler JSON and reading the packed version of that program. The full genesis run was 2.15× faster with the packed input, the account flow 1.63× and the 27-transaction syscall flow 1.18×. At 4,096 storage invokes the ratio was 1.004×. All fifteen OS fixtures checked at this revision matched Rust's five PIE member hashes with packed input. [JSON and packed timings](../bench/results/native-packed-program-m4-max.csv).

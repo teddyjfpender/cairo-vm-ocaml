@@ -1,0 +1,88 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,6 +12,7 @@
+ 
+ #![cfg_attr(docsrs, feature(doc_cfg))]
+ #![deny(warnings)]
++#![allow(unused_parens)]
+ #![forbid(unsafe_code)]
+ 
+ pub mod air_private_input;
+--- a/src/vm/vm_memory/memory.rs
++++ b/src/vm/vm_memory/memory.rs
+@@ -828,6 +828,12 @@
+         self.insert(key, val)?;
+         self.mark_as_accessed(key);
+         Ok(())
++    }
++}
++
++impl Memory {
++    pub fn oxcairo_pie_cells(&self) -> impl Iterator<Item=((usize,usize),MaybeRelocatable)> + '_ {
++        self.data.iter().enumerate().flat_map(|(i, seg)| seg.iter().enumerate().filter_map(move |(j,c)| c.get_value().map(|v| ((i,j),v))))
+     }
+ }
+ 
+--- a/src/vm/runners/cairo_pie.rs
++++ b/src/vm/runners/cairo_pie.rs
+@@ -304,6 +304,10 @@
+         file_path: &Path,
+         merge_extra_segments: bool,
+     ) -> Result<(), std::io::Error> {
++        self.oxcairo_write_stream(file_path,merge_extra_segments,None)
++    }
++
++    pub fn oxcairo_write_stream(&self, file_path:&Path, merge_extra_segments:bool, source: Option<&crate::vm::vm_memory::memory::Memory>) -> Result<(),std::io::Error> {
+         let mut metadata = self.metadata.clone();
+ 
+         let segment_offsets = if merge_extra_segments {
+@@ -328,7 +332,17 @@
+         zip_writer.start_file("metadata.json", options)?;
+         serde_json::to_writer(&mut zip_writer, &metadata)?;
+         zip_writer.start_file("memory.bin", options)?;
+-        zip_writer.write_all(&self.memory.to_bytes(segment_offsets))?;
++        if let Some(source)=source {
++            let mut batch = CairoPieMemory(Vec::with_capacity(16384));
++            for cell in source.oxcairo_pie_cells() {
++                batch.0.push(cell);
++                if batch.0.len() == 16384 {
++                    zip_writer.write_all(&batch.oxcairo_encode(&segment_offsets))?;
++                    batch.0.clear();
++                }
++            }
++            zip_writer.write_all(&batch.oxcairo_encode(&segment_offsets))?;
++        } else { zip_writer.write_all(&self.memory.to_bytes(segment_offsets))?; }
+         zip_writer.start_file("additional_data.json", options)?;
+         serde_json::to_writer(&mut zip_writer, &self.additional_data)?;
+         zip_writer.start_file("execution_resources.json", options)?;
+@@ -677,6 +691,9 @@
+         }
+ 
+         pub fn to_bytes(&self, seg_offsets: Option<HashMap<usize, Relocatable>>) -> Vec<u8> {
++            self.oxcairo_encode(&seg_offsets)
++        }
++        pub fn oxcairo_encode(&self, seg_offsets:&Option<HashMap<usize, Relocatable>>) -> Vec<u8> {
+             // Missing segment and memory holes can be ignored
+             // as they can be inferred by the address on the prover side
+             let values = &self.0;
+--- a/src/vm/runners/cairo_runner.rs
++++ b/src/vm/runners/cairo_runner.rs
+@@ -1372,7 +1372,8 @@
+     }
+ 
+     // Constructs and returns a CairoPie representing the current VM run.
+-    pub fn get_cairo_pie(&self) -> Result<CairoPie, RunnerError> {
++    pub fn get_cairo_pie(&self) -> Result<CairoPie, RunnerError> { self.oxcairo_build_pie(true) }
++    pub fn oxcairo_build_pie(&self, copy_memory:bool) -> Result<CairoPie, RunnerError> {
+         let program_base = self.program_base.ok_or(RunnerError::NoProgBase)?;
+         let execution_base = self.execution_base.ok_or(RunnerError::NoExecBase)?;
+ 
+@@ -1458,7 +1459,7 @@
+ 
+         Ok(CairoPie {
+             metadata,
+-            memory: (&self.vm.segments.memory).into(),
++            memory: if copy_memory {(&self.vm.segments.memory).into()} else {super::cairo_pie::CairoPieMemory(Vec::new())},
+             execution_resources: self.get_execution_resources()?,
+             additional_data: CairoPieAdditionalData(
+                 self.vm

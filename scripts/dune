@@ -14,4 +14,5 @@
 
 (executable
  (name embed_setup)
- (modules embed_setup))
+ (modules embed_setup)
+ (libraries zarith))

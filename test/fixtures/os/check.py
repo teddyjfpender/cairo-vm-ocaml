@@ -16,9 +16,11 @@ def main():
     parser.add_argument("--virtual-os", action="store_true", help="check the compiled virtual OS")
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
+    merged = ("storage-2048", "storage-4096", "syscalls-scaled-32", "storage-8192",
+              "syscalls-scaled-64", "sequential-4096", "scattered-4096")
     cases = ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
                  "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
-                 "storage-2048", "storage-4096", "syscalls-scaled-32")
+                  *merged)
     if args.virtual_os:
         cases = ("virtual-message", "virtual-execution-info", "virtual-multicall-16", "virtual-multicall-64")
     mode = "--virtual_os_hints" if args.virtual_os else "--os_hints"
@@ -32,7 +34,7 @@ def main():
             pie = Path(directory) / f"{name}.zip"
             command = [args.binary.resolve(), args.program, mode, source,
                             "--layout", "all_cairo", "--cairo_pie_output", pie]
-            if name in ("storage-2048", "storage-4096", "syscalls-scaled-32"):
+            if name in merged:
                 command.append("--merge_extra_segments")
             subprocess.run(command, check=True)
             with zipfile.ZipFile(pie) as z:

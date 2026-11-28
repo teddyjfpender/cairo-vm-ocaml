@@ -8,18 +8,11 @@ let p = Z.of_string "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f
 module Curve = Weierstrass.Make (struct let prime = p let minus_three = false end)
 open Curve
 let half = Z.shift_right p 1
-let sqrt_exp = Z.shift_right (Z.succ p) 2
-
 let setup_size = 4096
 
 let points = lazy (Array.init setup_size (fun i -> lazy (
-    let data = String.sub Kzg_setup.points (48*i) 48 in
-    let encoded = Hintrt.z_of_be data in
-    let x = Z.extract encoded 0 381 in
-    let rhs = add (mul x (square x)) (Z.of_int 4) in
-    let y = Z.powm rhs sqrt_exp p in
-    if not (Z.equal (square y) rhs) then fail "Invalid BLS12-381 setup point";
-    x, if Z.gt y half = Z.testbit encoded 381 then y else Z.sub p y)))
+    let coordinate j = Z.of_bits (String.sub Kzg_setup.coordinates ((2*i+j)*48) 48) in
+    coordinate 0, coordinate 1)))
 
 let encode point = match affine point with
   | None -> Z.shift_left (Z.of_int 3) 382
@@ -27,7 +20,7 @@ let encode point = match affine point with
       let flags = if Z.gt y half then 5 else 4 in
       Z.logor x (Z.shift_left (Z.of_int flags) 381)
 
-let commit coefficients =
+let commit_reference coefficients =
   let n = Array.length coefficients in
   if n > setup_size then fail "Too many DA coefficients";
   let width = if n < 32 then 3 else if n < 192 then 5 else if n < 640 then 7 else 9 in
@@ -49,6 +42,24 @@ let commit coefficients =
   done;
   let value = encode !acc in
   Felt.of_z (Z.extract value 0 192), Felt.of_z (Z.shift_right value 192)
+
+let commit coefficients =
+  let module Native = struct
+    external msm : string -> bytes -> bytes -> unit = "cvm_bls_msm"
+  end in
+  let n = Array.length coefficients in
+  if n > setup_size then fail "Too many DA coefficients";
+  if Array.exists (fun z -> Z.sign z < 0 || Z.numbits z > 256) coefficients then
+    commit_reference coefficients
+  else begin
+    let scalars = Bytes.make (32*n) '\000' in
+    Array.iteri (fun i z ->
+        let s = Z.to_bits z in Bytes.blit_string s 0 scalars (32*i) (String.length s)) coefficients;
+    let bytes = Bytes.create 48 in
+    Native.msm Kzg_setup.coordinates scalars bytes;
+    let encoded = Z.of_bits (Bytes.unsafe_to_string bytes) in
+    Felt.of_z (Z.extract encoded 0 192), Felt.of_z (Z.shift_right encoded 192)
+  end
 
 let register ?capture reg =
   let open Hintrt in
