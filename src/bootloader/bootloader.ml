@@ -30,8 +30,7 @@ let initialize ?(on_pie_loaded=ignore) ?layout_def ~proof ~path cfg prog =
   let active = ref None and previous = ref None and address = ref Felt.empty in
   let current () = match !active with Some task -> task | None -> fail "No current bootloader task" in
   let topologies = ref [] and runner = ref None in
-  let table = Hashtbl.create 32 in
-  let register code f = Hashtbl.add table code f in
+  let register, compile_hint = Hints.extend () in
   Builtin_selection.register register;
   register Code.read_input (fun _ _ -> ());
   register "SETUP_RUN_SIMPLE_BOOTLOADER_BEFORE_TASK_EXECUTION" (fun c vm ->
@@ -122,9 +121,6 @@ let initialize ?(on_pie_loaded=ignore) ?layout_def ~proof ~path cfg prog =
       set_val vm c name (Felt.reloc seg 0)))
     [Code.simulate_ec, "new_ec_op_ptr", Builtin.Ec_op; Code.simulate_keccak, "new_keccak_ptr", Builtin.Keccak;
      Code.simulate_ecdsa, "new_ecdsa_ptr", Builtin.Ecdsa];
-  let compile_hint p scopes h = match Hashtbl.find_opt table h.Program.code with
-    | Some f -> f (make_ctx p scopes h)
-    | None -> Hints.compile p scopes h in
   let r = Runner.initialize ?layout_def ~proof ~compile_hint cfg prog in
   runner := Some r;
   r

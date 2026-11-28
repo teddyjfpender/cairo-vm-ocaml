@@ -12,15 +12,7 @@ let configure_batch_gc () =
                     space_overhead = max gc.space_overhead 250}
   end
 
-let felt_slow j =
-  let z = Pie_file.z_of_json j in
-  if Z.sign z < 0 || Z.geq z Felt.p then fail "OS input field element out of range";
-  Felt.of_z z
-
-let felt = function
-  | `Int i when i >= 0 -> Felt.of_int i
-  | `String s as j -> (match Felt.of_hex_opt s with Some value -> value | None -> felt_slow j)
-  | j -> felt_slow j
+let felt = Os_input.felt
 
 type input = { document : Yojson.Safe.t; source : string; virtual_os : bool; prepared : Legacy_class.Prepared.t option }
 
@@ -64,22 +56,14 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
   List.iter (fun (key, _) -> Felt_tbl.add deprecated_hashes (felt (`String key)) ()) deprecated;
   let public_keys = match U.member "public_keys" config with
     | `Null -> [] | a -> List.map felt (U.to_list a) in
-  let table = Hashtbl.create 32 in
-  let reg code f = Hashtbl.add table code f in
-  let compile = fun prog scopes (h : Program.hint) ->
-    match Hashtbl.find_opt table h.code with
-    | Some f -> f (make_ctx prog scopes h)
-    | None -> Hints.compile prog scopes h in
+  let reg, compile = Hints.extend () in
   reg Hint_codes.relocate_segment (Segments.relocate ~allow_felt:true);
   Legacy_class.register ?prepared ~classes:deprecated ~felt ~compile reg;
   let segment vm = Felt.reloc (Vm.add_segment vm) 0 in
   let state_entries = ref None and class_entries = ref None in
   let pointer vm = function Some ptr -> ptr | None -> segment vm in
-  let current = ref (-1) in
-  let block () =
-    match List.nth_opt blocks (max 0 !current) with
-    | Some b when !current >= 0 -> b
-    | _ -> fail "No current OS block" in
+  let remaining = ref blocks and current = ref None in
+  let block () = match !current with Some b -> b | None -> fail "No current OS block" in
   let begin_block = Os_compression.register ~block ~felt
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
   let calls = Os_calls.create () and secp = Os_secp.create () in
@@ -137,7 +121,9 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
   reg "SegmentsAddTempInitialTxsRangeCheckPtr" (fun c vm ->
       set_val vm c "initial_txs_range_check_ptr" (Felt.reloc (Vm.add_temp_segment vm) 0));
   reg "LogRemainingBlocks" (fun c vm -> ignore (get_felt vm c "n_blocks"));
-  reg "CreateBlockAdditionalHints" (fun _ _ -> incr current; Os_secp.reset secp; begin_block (); begin_transactions ());
+  reg "CreateBlockAdditionalHints" (fun _ _ ->
+      current := Some (Os_calls.pop "block" remaining);
+      Os_secp.reset secp; begin_block (); begin_transactions ());
   reg "GetNClassHashesToMigrate" (fun c vm ->
       let hashes = U.to_list (U.member "class_hashes_to_migrate" (block ())) in
       set_val vm c "n_classes_to_migrate" (Felt.small (List.length hashes)));

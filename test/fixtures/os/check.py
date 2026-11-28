@@ -4,9 +4,23 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import zipfile
+
+
+def check_archive(pie, expected, name):
+    with zipfile.ZipFile(pie) as z:
+        hashes = {}
+        for member in z.namelist():
+            with z.open(member) as stream:
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                hashes[member] = digest.hexdigest()
+    if hashes != expected:
+        raise SystemExit(f"{name}: sequencer PIE member mismatch")
 
 
 def main():
@@ -38,7 +52,9 @@ def main():
         expected = json.loads((fixture / f"{name}.sha256.json").read_text())
         with tempfile.TemporaryDirectory() as directory:
             source = fixture / f"{name}.json"
-            if not source.exists():
+            if source.exists() and name in ("deprecated-calls", "virtual-multicall-16"):
+                source = Path(shutil.copy(source, directory))
+            elif not source.exists():
                 source = Path(directory) / source.name
                 source.write_bytes(gzip.decompress((fixture / f"{name}.json.gz").read_bytes()))
             pie = Path(directory) / f"{name}.zip"
@@ -57,16 +73,26 @@ def main():
                     raise SystemExit(f"{name}: public output differs from Rust")
             else:
                 subprocess.run(command, check=True)
-            with zipfile.ZipFile(pie) as z:
-                hashes = {}
-                for member in z.namelist():
-                    with z.open(member) as stream:
-                        digest = hashlib.sha256()
-                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                            digest.update(chunk)
-                        hashes[member] = digest.hexdigest()
-            if hashes != expected:
-                raise SystemExit(f"{name}: sequencer PIE member mismatch")
+            check_archive(pie, expected, name)
+            if name == "deprecated-calls":
+                witness = json.loads(source.read_bytes())
+                classes = witness["os_input"]["deprecated_compiled_classes"].values()
+                program = next(c["program"] for c in classes if c["program"].get("attributes") == [])
+                for omit in (False, True):
+                    if omit:
+                        del program["attributes"]
+                    else:
+                        program["attributes"] = None
+                    source.write_text(json.dumps(witness))
+                    subprocess.run(command, check=True)
+                    check_archive(pie, expected, name)
+                reads = witness["os_input"]["os_block_inputs"][0]["tx_execution_infos"][0][
+                    "fee_transfer_call_info"]["storage_access_tracker"]["storage_read_values"]
+                reads[0] = hex(prime + int(reads[0], 16))
+                source.write_text(json.dumps(witness))
+                invalid = subprocess.run(command, capture_output=True, text=True)
+                if invalid.returncode != 1 or "OS input field element out of range" not in invalid.stderr:
+                    raise SystemExit("noncanonical syscall storage read was accepted or misdiagnosed")
             print(f"Native {name} matches all sequencer PIE members")
             if name == "virtual-multicall-16":
                 witness = json.loads(source.read_bytes())

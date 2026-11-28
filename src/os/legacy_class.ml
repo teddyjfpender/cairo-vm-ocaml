@@ -109,6 +109,12 @@ end
 
 external restore_cache : bool -> bool = "cvm_batch_pedersen_cache" [@@noalloc]
 
+(* Historical class definitions encode absent attributes as either missing or null. *)
+let load_program json =
+  let fields = U.to_assoc json in
+  let normalize = function "attributes", `Null -> "attributes", `List [] | field -> field in
+  Program.load_json (`Assoc (List.map normalize fields))
+
 let register ?prepared ~classes ~felt ~compile reg =
   let remaining = ref [] and loaded = ref None and previous_cache = ref None in
   reg "LoadDeprecatedClassFacts" (fun c vm ->
@@ -129,7 +135,7 @@ let register ?prepared ~classes ~felt ~compile reg =
           let external_ = entries "EXTERNAL" in
           let l1 = entries "L1_HANDLER" in
           let ctor = entries "CONSTRUCTOR" in
-          let p = Program.load_json (U.member "program" j) in
+          let p = load_program (U.member "program" j) in
           let names = gen_arg vm (List.map Os_block_hash.ascii p.builtins) in
           let code = gen_arg vm (Array.to_list (Array.map Felt.of_z p.data)) in
           write_arg vm base ([Felt.of_z (const_z c "DEPRECATED_COMPILED_CLASS_VERSION")] @ external_ @ l1 @ ctor
