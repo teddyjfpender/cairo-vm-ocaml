@@ -60,9 +60,14 @@ let register ~block ~felt reg =
       | Some (n, word) ->
           set c.scopes "descend_length" (Int (Z.of_int n)); set c.scopes "descend_word" (Int word);
           write_ap vm Felt.one);
+  let descent c key =
+    match var c.scopes key with Int z -> z | _ -> fail "Invalid Patricia descent" in
   reg "ids.length, ids.word = descend" (fun c vm ->
-      let fetch key = match var c.scopes key with Int z -> z | _ -> fail "Invalid Patricia descent" in
-      set_int vm c "length" (fetch "descend_length"); set_int vm c "word" (fetch "descend_word"));
+      set_int vm c "length" (descent c "descend_length");
+      set_int vm c "word" (descent c "descend_word"));
+  reg "memory[ids.siblings], ids.word = descend" (fun c vm ->
+      write_arg vm (get_ptr vm c "siblings") [Felt.of_z (descent c "descend_length")];
+      set_int vm c "word" (descent c "descend_word"));
   reg C.descend (fun c vm ->
       let tree = follow (node c "node") (height (get_z vm c "length")) (get_z vm c "word") in
       enter_node c tree);
