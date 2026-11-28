@@ -151,3 +151,14 @@ let () =
   match from_string ~projection:(Elements Offset) {|[{"x":false},{"x":01}]|} with
   | exception Yojson.Json_error _ -> ()
   | _ -> failwith "malformed deferred witness accepted"
+
+let () =
+  let read s = Json_reader.from_string ~projection:(Only ["keep", Json]) s in
+  for width = 0 to 24 do
+    let indent = String.make width ' ' in
+    let doc between = "{\"omit\":[" ^ indent ^ between ^ indent ^ "1],\"keep\":2}" in
+    assert (read (doc "\r\n\t") = `Assoc ["keep", `Int 2]);
+    match read (doc "\011") with
+    | exception Yojson.Json_error _ -> ()
+    | _ -> failwith "invalid JSON control character in indentation"
+  done

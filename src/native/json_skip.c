@@ -12,7 +12,19 @@ static inline int hex(unsigned char c) {
 }
 
 static const unsigned char *whitespace(const unsigned char *p, const unsigned char *end) {
-  while (p < end && (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t')) ++p;
+  while (p < end) {
+    unsigned char c = *p;
+    if (c != ' ' && c != '\n' && c != '\r' && c != '\t') break;
+    ++p;
+    /* Compiler debug locations are heavily indented. Skip whole groups of
+       spaces without accepting other control characters as whitespace. */
+    while (end - p >= 8) {
+      uint64_t word;
+      memcpy(&word, p, sizeof word);
+      if (word != UINT64_C(0x2020202020202020)) break;
+      p += sizeof word;
+    }
+  }
   return p;
 }
 
