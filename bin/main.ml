@@ -234,5 +234,18 @@ let () =
   | Program.Parse_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
+  | Unix.Unix_error (err, _, _) when Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" <> None ->
+      let code = match err with
+        | Unix.ENOMEM -> 21 | Unix.EFBIG -> 23 | Unix.EMFILE | Unix.ENFILE -> 24
+        | Unix.ENOSPC -> 25 | _ when Unix.error_message err = "Disk quota exceeded" -> 25 | _ -> 27 in
+      prerr_endline (Unix.error_message err); exit code
+  | Sys_error msg when Sys.getenv_opt "OXCAIRO_HOST_MEMORY_BYTES" <> None ->
+      (* Stdlib channels retain strerror but discard errno. The worker fixes LC_ALL=C. *)
+      let matches err = let reason = Unix.error_message err in
+        msg = reason || String.ends_with ~suffix:(": " ^ reason) msg in
+      let code = if matches Unix.ENOMEM then 21 else if matches Unix.EFBIG then 23
+        else if matches Unix.EMFILE || matches Unix.ENFILE then 24
+        else if matches Unix.ENOSPC || String.ends_with ~suffix:"Disk quota exceeded" msg then 25 else 27 in
+      prerr_endline msg; exit code
   | Sys_error msg | Failure msg | Yojson.Json_error msg -> prerr_endline ("Error: " ^ msg); exit 1
   | Yojson.Safe.Util.Type_error (msg, _) -> prerr_endline ("Invalid program: " ^ msg); exit 1

@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import random
 from pathlib import Path
 import signal
 import subprocess
@@ -58,6 +59,25 @@ def main():
             run(job | {"limits": {limit: value}}, code=code, kind=kind)
         for malformed in [b"", b"{}", b'{"schema":1,"schema":1}', b"x" * 65537, json.dumps(job).encode()+b'\n{}']:
             run(malformed, code=2, kind="invalid_request")
+        rng = random.Random(1860)
+        for _ in range(24):
+            key = rng.choice(["steps", "wall_ms", "output_bytes", "memory_bytes", "open_files"])
+            value = rng.choice([None, -rng.randint(1, 1000), rng.random(), [], {}, str(rng.randint(1,1000))])
+            run(job | {"limits": {key: value}}, code=2, kind="invalid_request")
+        for key, value in [("prime", 17), ("oversized", 2**62)]:
+            altered = root / (key + ".zip")
+            with zipfile.ZipFile(output) as src, zipfile.ZipFile(altered, "w") as dest:
+                for member in src.infolist():
+                    content = src.read(member)
+                    if member.filename == "metadata.json":
+                        data = json.loads(content)
+                        if key == "prime":
+                            data["program"]["prime"] = value
+                        else:
+                            data["program_segment"]["size"] = value
+                        content = json.dumps(data).encode()
+                    dest.writestr(member, content)
+            run(replay | {"pie": str(altered)}, code=5, kind="invalid_input")
         run(job | {"revision": "unknown"}, code=3, kind="unknown_revision")
         run(job | {"program": job["witness"]}, code=4, kind="program_mismatch")
         run(job | {"output": job["witness"]}, code=2, kind="invalid_request")

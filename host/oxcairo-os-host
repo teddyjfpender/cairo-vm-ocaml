@@ -174,8 +174,10 @@ def check_exit(rc, log):
     detail = log[:2000].strip()
     if rc < 0:
         kind = {-signal.SIGXFSZ: "output_limit", -signal.SIGXCPU: "wall_limit"}.get(rc, "internal_fault")
-    elif rc in CODES.values():
-        kind = next(k for k,v in CODES.items() if v == rc)
+    elif rc - 80 in CODES.values():
+        kind = next(k for k, v in CODES.items() if v == rc - 80)
+    elif rc in (20, 21, 23, 24, 25, 27):
+        kind = next(k for k, v in CODES.items() if v == rc)
     elif rc == 1:
         kind = "invalid_input"
     else:
@@ -282,7 +284,7 @@ def main():
             print(str(exc), file=sys.stderr)
         else:
             print(json.dumps({"schema":1,"status":"rejected","code":kind,"detail":str(exc)[:2000]}))
-        return CODES[kind]
+        return (80 if worker else 0) + CODES[kind]
     print(json.dumps(result))
     return 0
 
