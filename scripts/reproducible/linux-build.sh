@@ -16,7 +16,7 @@ for suite in noble noble-updates noble-security; do
 done > /tmp/oxcairo-packages.list
 apt_opts=(-o Dir::Etc::sourcelist=/tmp/oxcairo-packages.list -o Dir::Etc::sourceparts=- -o Acquire::Check-Valid-Until=false)
 sudo apt-get "${apt_opts[@]}" update
-sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends autoconf automake libgmp-dev zlib1g-dev
+sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends autoconf automake libgmp-dev zlib1g-dev python3
 export OPAMNODEPEXTS=1
 # Install the exact compiler, package manager and target standard library used for the
 # static ZIP backend. No host rustup or prebuilt compressor enters either replica.
