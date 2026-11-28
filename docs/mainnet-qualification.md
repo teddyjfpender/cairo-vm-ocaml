@@ -17,6 +17,8 @@ The manifest is JSON with `schema` equal to 1, `chain_id` equal to `SN_MAIN`, `c
 
 The state-fold receipt records `chain_id`, `number`, `block_hash`, `derived_root` and `header_root` for the sampled block. Its `l1_anchor` records the anchor block as `covered_through`, the Ethereum `transaction_hash`, and the independently computed `derived_root` and L1-observed `contract_root` at that anchor. A later anchor covers an earlier block through a verified contiguous fold. State roots and block hashes are hexadecimal Stark field elements. Archive and witness digests identify the exact bytes used.
 
+To derive a receipt from the original fold evidence, run `python3 bench/fold_receipt.py run.jsonl sampled-header.json l1-anchors.json --anchor-height HEIGHT`. Select each sampled block as a verified batch endpoint. A root observed only at the end of a larger batch qualifies that endpoint. The converter streams contiguous fold rows from genesis, checks the sample against its header and checks the covering `header+l1` row against the independently observed L1 update. Preserve the source files with the owner and include the generated receipt in the authenticated manifest.
+
 The receipt covers candidate execution on a prepared witness. Whole-job timing starts with the source input, before input decompression and class preparation.
 
 ## Time both complete jobs
