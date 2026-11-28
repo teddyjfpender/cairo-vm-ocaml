@@ -69,21 +69,21 @@ diagnostic. This fixture previously executed on OxCairo v0.1.0.
 
 ### Independent Lean execution in CI
 
-The native parity job builds the pinned executable Lean runner and its deduction step. Its adapter reads the original compiler JSON and CLI flags, creates a runner plan, steps the machine, validates the final state and relocates the trace and memory from that state. The adapter uses the upstream model's loader-facing program representation and converts the compiler JSON into that representation itself. It receives no observations from Rust or OxCairo. [Pinned independent model](https://github.com/starknet-innovation/cairo-vm-lean/tree/6cae3dd895e89ddde776b589ad2612b0f71d96b1) · [Pinned formal semantics](https://github.com/starkware-libs/formal-proofs/tree/d0dd8279612a248cbc6bf6d286030bf0bb2a37ff)
+The native parity job builds StarkWare’s public Lean instruction and CPU semantics at revision `d0dd827`. The adapter calls the upstream instruction result and next-PC, next-AP and next-FP definitions directly over the Cairo prime field. It decodes the original compiler JSON, initializes sparse memory, supplies the operand deductions needed by this corpus and checks write-once memory. A bounded sizing run determines segment widths, then a fresh run at the final relocated addresses produces the actual trace, memory and stdout. Neither run consumes observations from another VM. [Pinned public CPU semantics](https://github.com/starkware-libs/formal-proofs/blob/d0dd8279612a248cbc6bf6d286030bf0bb2a37ff/Stwo/Verification/Semantics/Cpu.lean)
 
 The standing corpus has four successful programs and two reviewed rejections. It covers a bare return, nested call and return, immediate and indirect memory operands, field addition and multiplication, unconditional and both outcomes of conditional jumps, and positive and negative public output. Successful cases compare all stdout bytes, each relocated pre-step register triple and the complete initialized relocated memory. An invalid field prime and a missing entrypoint must produce the reviewed rejection in each engine. A fault-injection control changes a byte in the real Lean trace and requires the gate to identify disagreements with both other VMs.
 
-The checked profile is hint-free ordinary execution with no builtin or the output builtin, a maximum of 2,048 steps and the small layout. The adapter also accepts the plain layout for programs without builtins. Proof mode, padded or AIR traces, PIEs, other builtins, extension instructions, unusual compiler metadata and native Starknet execution remain outside this third-oracle corpus. The Lean pin models the v3.2.0-era runner. The common corpus compares that subset against Rust v4 and OxCairo directly.
+The checked profile is hint-free ordinary execution with no builtin or the output builtin, a maximum of 2,048 steps and the small layout. The adapter also accepts the plain layout for programs without builtins. Proof mode, padded or AIR traces, PIEs, other builtins, extension instructions, unusual compiler metadata and native Starknet execution remain outside this third-oracle corpus. The adapter implements the harness-facing runner and limits execution to nine supported instruction flag combinations. The upstream semantics supplies each CPU transition. The ordinary CI job compares this subset against Rust v4 and OxCairo.
 
 ```sh
-git clone https://github.com/starknet-innovation/cairo-vm-lean.git lean-model
-git -C lean-model checkout 6cae3dd895e89ddde776b589ad2612b0f71d96b1
+git clone https://github.com/starkware-libs/formal-proofs.git lean-model
+git -C lean-model checkout d0dd8279612a248cbc6bf6d286030bf0bb2a37ff
 export LEAN_CAIRO_MODEL="$PWD/lean-model"
 test/lean/prepare.sh
 python3 test/lean/check.py "$RUST" "$OCAML"
 ```
 
-Install elan before preparing the model. Its pinned toolchain is Lean 4.23.0-rc2. The project manifest pins Mathlib and the formal-proofs submodule. The adapter and selected fixtures travel with the OxCairo source revision. A missing oracle, unsupported mode, timeout or unexpected disagreement fails the CI job.
+Install elan before preparing the model. Its pinned toolchain is Lean 4.23.0-rc2. The formal-proofs project manifest pins Mathlib. The adapter and selected fixtures travel with the OxCairo source revision. A missing oracle, unsupported mode, timeout or unexpected disagreement fails the CI job.
 
 ### PIE replay
 

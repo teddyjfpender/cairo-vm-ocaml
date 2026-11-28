@@ -42,8 +42,8 @@ jobs:
             --expect-rejections test/parity_fixtures/malformed-rejections.json --verbose
       - uses: actions/checkout@v4
         with:
-          repository: starknet-innovation/cairo-vm-lean
-          ref: 6cae3dd895e89ddde776b589ad2612b0f71d96b1
+          repository: starkware-libs/formal-proofs
+          ref: d0dd8279612a248cbc6bf6d286030bf0bb2a37ff
           path: _lean-model
       - name: Build the pinned Lean execution semantics and check three-way agreement
         env:
