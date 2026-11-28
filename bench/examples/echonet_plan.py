@@ -14,6 +14,7 @@ parser.add_argument("--trusted-sha256", required=True)
 parser.add_argument("--sequencer", required=True, type=Path)
 for name in ("rust", "oxcairo"):
     parser.add_argument("--" + name, required=True, type=Path)
+parser.add_argument("--host", type=Path, help="installed oxcairo-os-host beside the pinned cairo-vm-cli")
 parser.add_argument("--compiler", action="append", default=[], metavar="ID=PATH")
 parser.add_argument("--hardware", required=True)
 parser.add_argument("--cache-policy", required=True)
@@ -48,4 +49,8 @@ plan = dict(schema=1, chain_id=manifest["chain_id"], hardware=args.hardware,
             cases=[dict(number=c["number"], source=c["source"], witness=c["witness"]) for c in manifest["cases"]],
             pipeline=dict(sequencer=str(args.sequencer.resolve()), program=manifest["program"],
                           rust=artifact(args.rust), oxcairo=artifact(args.oxcairo), compilers=compilers))
+if args.host:
+    require(args.host.resolve().with_name("cairo-vm-cli").resolve() == args.oxcairo.resolve(),
+            "host must use the pinned sibling cairo-vm-cli")
+    plan["pipeline"]["host"] = artifact(args.host)
 print(json.dumps(plan, indent=2))

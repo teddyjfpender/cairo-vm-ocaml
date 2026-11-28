@@ -2,6 +2,7 @@
 import argparse
 import gzip
 import json
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -31,10 +32,15 @@ def smoke(sequencer, temp):
     common = f"import shutil, sys\nfrom pathlib import Path\nref = {str(archive)!r}\n"
     rust = executable(temp, "rust-test", common + "# synthetic compiler identity\n"
                       "assert sys.argv[3:] == ['--merge-extra-segments']\nshutil.copy(ref, sys.argv[2])\n")
-    ox = executable(temp, "ox", common +
-                    "assert sys.argv[2:3] == ['--os_hints'] and sys.argv[4:-1] == "
+    ox = executable(temp, "cairo-vm-cli", common +
+                    "if '--print_output' in sys.argv:\n"
+                    " assert sys.argv[2:3] == ['--os_hints'] and sys.argv[4:-1] == "
                     "['--layout','all_cairo','--print_output','--pie_profile','rust-3.2',"
-                    "'--merge_extra_segments','--cairo_pie_output']\nshutil.copy(ref, sys.argv[-1])\n")
+                    "'--merge_extra_segments','--cairo_pie_output']\n"
+                    " shutil.copy(ref, sys.argv[-1])\n"
+                    "else:\n"
+                    " assert '--max_steps' in sys.argv and '--merge_extra_segments' in sys.argv\n"
+                    " shutil.copy(ref, sys.argv[sys.argv.index('--cairo_pie_output')+1])\n")
     plan = dict(pipeline=dict(rust=rust, oxcairo=ox, program=dict(path="program", sha256=digest(program)),
                               compilers={}, sequencer=str(sequencer)))
     commands = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), temp)
@@ -58,6 +64,34 @@ def smoke(sequencer, temp):
                                "execute_and_encode_pie", "validate_archive", "deliver"}
         assert all(v > 0 for v in stages.values()) and sum(stages.values()) <= row["wall_ns"]
         assert row["max_rss_kib"] > 0
+    host = temp / "oxcairo-os-host"
+    shutil.copy2(ROOT / "host/oxcairo-os-host", host)
+    plan["pipeline"]["host"] = dict(path=host.name, sha256=digest(host))
+    tools = temp / "supervised"
+    tools.mkdir()
+    installed = echonet_job.commands(temp, plan, dict(revision=echonet_job.REVISION), tools)
+    profile = temp / "profile.json"
+    profile.write_text(json.dumps(dict(revision=echonet_job.REVISION, program_sha256=digest(program))))
+    from unittest.mock import patch
+    with patch.dict("os.environ", OXCAIRO_OS_PROFILE=str(profile)):
+        run_arm(installed["oxcairo"] + hashes, source, tools / "published.zip", tools / "work", hashes[-1], 30)
+    # The adapter validates the host receipt independently of the bytes it stages.
+    fake = executable(temp, "wrong-receipt", common + "import json\nrequest=json.load(sys.stdin)\n"
+                      "shutil.copy(ref, request['output'])\nprint(json.dumps({'schema':1,'status':'ok',"
+                      "'output':request['output'],'sha256':'wrong'}))\n")
+    config = tools / "tools.json"
+    changed = json.loads(config.read_bytes())
+    changed["host"] = str(temp / fake["path"])
+    config.write_text(json.dumps(changed))
+    refused = tools / "refused"
+    refused.mkdir()
+    try:
+        echonet_job.run(config, "oxcairo", source, refused / "published.zip", refused, *hashes)
+    except ValueError as exc:
+        assert "receipt mismatch" in str(exc)
+    else:
+        raise AssertionError("accepted incorrect host receipt")
+    assert not (refused / "published.zip").exists()
     for i, message in enumerate(("recording", "witness", "PIE")):
         wrong = hashes.copy()
         wrong[i] = "0" * 64

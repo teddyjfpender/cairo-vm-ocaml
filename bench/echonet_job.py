@@ -30,6 +30,11 @@ def commands(root, plan, qualification, temp):
     spec = plan["pipeline"]
     require(qualification["revision"] == REVISION, "unsupported Echonet revision")
     paths = {k: str(asset(root, spec[k])) for k in ("rust", "oxcairo", "program")}
+    if "host" in spec:
+        host = asset(root, spec["host"])
+        require(host.with_name("cairo-vm-cli").resolve() == Path(paths["oxcairo"]),
+                "host must use the pinned sibling cairo-vm-cli")
+        paths["host"] = str(host)
     embedded_program_digest(Path(paths["rust"]), Path(paths["program"]))
     paths["compilers"] = {k: str(asset(root, v)) for k, v in spec["compilers"].items()}
     # Import only the builder and its dependencies, directly from the pinned git object.
@@ -100,13 +105,23 @@ def run(config, arm, source, output, work, source_hash, witness_hash, pie_hash):
     pie = work / "staged.zip"
     with stage("execute_and_encode_pie"):
         if arm == "rust":
-            argv = [tools["rust"], witness, pie, "--merge-extra-segments"]
+            subprocess.run([tools["rust"], witness, pie, "--merge-extra-segments"],
+                           check=True, stdout=subprocess.DEVNULL)
+        elif arm == "oxcairo" and "host" in tools:
+            request = dict(schema=1, revision=REVISION, program=tools["program"], witness=str(witness),
+                           output=str(pie), publication="os-host-standard")
+            result = subprocess.run([tools["host"], "v1"], input=json.dumps(request), text=True,
+                                    stdout=subprocess.PIPE, check=True)
+            reply = json.loads(result.stdout)
+            require(reply.get("schema") == 1 and reply.get("status") == "ok" and
+                    reply.get("output") == str(pie) and reply.get("sha256") == pie_hash and
+                    reply.get("bytes") == pie.stat().st_size, "installed host publication receipt mismatch")
         else:
             require(arm == "oxcairo", "unknown arm")
             argv = [tools["oxcairo"], tools["program"], "--os_hints", witness, "--layout", "all_cairo",
                     "--print_output", "--pie_profile", "rust-3.2", "--merge_extra_segments",
                     "--cairo_pie_output", pie]
-        subprocess.run(argv, check=True, stdout=subprocess.DEVNULL)
+            subprocess.run(argv, check=True, stdout=subprocess.DEVNULL)
     with stage("validate_archive"):
         require(digest(pie) == pie_hash, "staged PIE differs from authenticated reference")
     with stage("deliver"):

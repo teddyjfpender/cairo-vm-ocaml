@@ -90,11 +90,16 @@ def measure(plan_file, rounds, seed, timeout, out):
             witnesses[number] = echonet_job.canonical_witness_hash(asset(root, case["witness"]))
         require(case["source"]["sha256"] == qualified[case["number"]]["source_sha256"],
                 "raw source differs from the qualified block")
+    profile = "external-commands"
     with tempfile.TemporaryDirectory(dir=out.parent) as work:
         temp = Path(work).resolve()
         if staged:
             commands = echonet_job.commands(root, plan, qualification, temp)
-            identities = {arm: plan["pipeline"][arm]["sha256"] for arm in arms}
+            pipeline = plan["pipeline"]
+            profile = "echonet-installed-host-v1" if "host" in pipeline else "echonet-direct-cli"
+            identities = {arm: pipeline[arm]["sha256"] for arm in arms}
+            if "host" in pipeline:
+                identities["host"] = pipeline["host"]["sha256"]
         for rnd in range(rounds):
             numbers = list(inputs)
             rng.shuffle(numbers)
@@ -122,7 +127,7 @@ def measure(plan_file, rounds, seed, timeout, out):
         for arm in arms:
             totals[arm] += times[arm]
         cases_summary.append(dict(number=number, median_wall_ns=times, speedup=times["rust"]/times["oxcairo"]))
-    return dict(schema=1, hardware=plan["hardware"], kernel=platform.release(), cache_policy=plan["cache_policy"],
+    return dict(schema=1, execution_profile=profile, hardware=plan["hardware"], kernel=platform.release(), cache_policy=plan["cache_policy"],
                 plan_sha256=digest(plan_file), qualified_manifest_sha256=source_hash, executable_sha256=identities,
                 rounds=rounds, seed=seed, cases=cases_summary, rows=rows,
                 median_speedup=statistics.median(v["speedup"] for v in cases_summary),

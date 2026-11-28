@@ -11,6 +11,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 test/test_parity.py -v
+      - uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/sequencer
+          ref: ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45
+          sparse-checkout: echonet
+          path: _sequencer
+      - name: Verify offline job profiles and refusal checkpoints
+        run: |
+          python3 -m venv "$RUNNER_TEMP/echonet-env"
+          "$RUNNER_TEMP/echonet-env/bin/pip" install zstandard==0.25.0
+          "$RUNNER_TEMP/echonet-env/bin/python" test/whole_os_job_smoke.py _sequencer
 
   native-smoke:
     runs-on: ubuntu-24.04

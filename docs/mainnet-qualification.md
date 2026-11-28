@@ -41,7 +41,11 @@ build inventory. Store the installed engine binaries, Sierra compiler binaries a
 embedded OS program inside the handoff tree. Build the existing Rust example by copying
 `bench/os_reference.rs` to the pin's `crates/starknet_os/examples/os_reference.rs` and running
 `cargo build --locked --release -p starknet_os --features deserialize --example os_reference`.
-Use the OxCairo release's native `cairo-vm-cli`.
+Extract `oxcairo-os-host` and `cairo-vm-cli` from the same release as regular sibling files in the handoff.
+The Rust arm uses the pinned serial `os_reference`. The candidate sends a v1 request to the
+installed host, including its resource limits, compiler pin check and atomic publication.
+Record any operator environment overrides with the runner configuration. The same adapter
+then verifies and delivers the staged PIE in both arms.
 
 Each authenticated `source` is one gzip JSON recording. See
 `bench/examples/echonet-genesis.json` for a complete synthetic example before compression.
@@ -69,7 +73,7 @@ historical tool your recordings require.
 ```sh
 python3 bench/examples/echonet_plan.py handoff/manifest.json handoff/qualification.json \
   --trusted-sha256 "$MANIFEST_SHA256" --sequencer "$SEQUENCER_CHECKOUT" \
-  --rust handoff/bin/os_reference --oxcairo handoff/bin/cairo-vm-cli \
+  --rust handoff/bin/os_reference --oxcairo handoff/bin/cairo-vm-cli --host handoff/bin/oxcairo-os-host \
   --compiler v1=handoff/bin/sierra-v1 --compiler v2=handoff/bin/sierra-v2 \
   --hardware "$RUNNER_DESCRIPTION" --cache-policy 'shared OS page cache, fresh job directory' \
   > handoff/whole-job.json
@@ -79,7 +83,11 @@ python3 bench/whole_os_job.py handoff/whole-job.json --output results.json
 Each row includes monotonic nanoseconds for acquisition (including source check),
 decompression, class compilation, witness preparation (including the witness check),
 execution through the serial merged Rust-compatible ZIP writer, final archive validation
-and durable local delivery. Both engines also produce public output to a discarded stream.
+and durable local delivery. The receipt labels this profile `echonet-installed-host-v1` and records both candidate
+executable hashes. Omitting `--host` selects `echonet-direct-cli` for measuring direct
+native CLI execution. Only the installed-host profile exercises the v1 supervision and
+publication contract. Both profiles use the Echonet revision above. Apollo revision
+`1860b9850b5c51858c50c0f5038933e49f932eef` needs its own end-to-end qualification.
 VM execution, VM finalization and ZIP encoding share one subprocess interval. Stage times
 exclude interpreter startup and reporting, which are included in whole-job wall time.
 The parent independently checks the complete delivered archive.
