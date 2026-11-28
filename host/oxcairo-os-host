@@ -26,7 +26,7 @@ PINS = {REVISION: {
     "7cd38280aea304b1fc8a55f9f4666828818cfe8a9f7181539472512e011cee10",
 }}
 CODES = {"invalid_request": 2, "unknown_revision": 3, "program_mismatch": 4,
-         "invalid_input": 5, "step_limit": 20, "memory_limit": 21, "wall_limit": 22,
+         "invalid_input": 5, "unsupported_randomized_encryption": 6, "step_limit": 20, "memory_limit": 21, "wall_limit": 22,
          "output_limit": 23, "file_limit": 24, "storage_limit": 25, "busy": 26,
          "io_error": 27, "interrupted": 28, "internal_fault": 70}
 DEFAULTS = {"steps": 100_000_000, "memory_bytes": 4 << 30, "wall_ms": 120_000,
@@ -173,7 +173,7 @@ def child(stage, parent):
         arguments = [str(program), "--os_hints", job["witness"]]
     set_limit(resource.RLIMIT_FSIZE, lim["output_bytes"])
     signal.signal(signal.SIGXFSZ, signal.SIG_DFL)
-    env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
+    env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_DETERMINISTIC": "1", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
             "--cairo_pie_output", str(stage / "out")]
@@ -209,7 +209,7 @@ def check_exit(rc, log):
         kind = {-signal.SIGXFSZ: "output_limit", -signal.SIGXCPU: "wall_limit"}.get(rc, "internal_fault")
     elif rc - 80 in CODES.values():
         kind = next(k for k, v in CODES.items() if v == rc - 80)
-    elif rc in (20, 21, 23, 24, 25, 27):
+    elif rc in (6, 20, 21, 23, 24, 25, 27):
         kind = next(k for k, v in CODES.items() if v == rc)
     elif rc == 1:
         kind = "invalid_input"

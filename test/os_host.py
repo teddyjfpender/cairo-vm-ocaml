@@ -82,6 +82,10 @@ def main():
         run(job | {"program": job["witness"]}, code=4, kind="program_mismatch")
         run(job | {"output": job["witness"]}, code=2, kind="invalid_request")
         invalid = root / "input.json"
+        encrypted = json.loads(args.witness.read_bytes())
+        encrypted["os_hints_config"]["public_keys"] = ["0x1"]
+        invalid.write_text(json.dumps(encrypted))
+        run(job | {"witness": str(invalid)}, code=6, kind="unsupported_randomized_encryption")
         invalid.write_bytes(b'{"os_input":')
         run(job | {"witness": str(invalid)}, code=5, kind="invalid_input")
         fifo = root / "input.pipe"

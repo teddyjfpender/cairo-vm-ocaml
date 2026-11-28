@@ -15,6 +15,8 @@ Run `oxcairo-os-host v1` from the release package, with Python 3.11 or newer on 
 
 The default operation is `generate`. For secure replay, send `{"schema":1,"operation":"replay","pie":"/srv/in.zip","output":"/srv/replayed.zip"}`. Replay accepts the same limits and checks the declared step count before VM initialization. A truncated archive is an `invalid_input` refusal.
 
+The deterministic host requires empty or absent encryption recipients for generation. A nonempty `os_hints_config.public_keys` receives exit 6 before VM stepping. The general native CLI supports encrypted generation with fresh randomness. Secure replay accepts an already produced archive.
+
 The program is the compiled main OS for the named revision. The witness is the JSON input of the sequencer OS hint processor. Preparing that witness from RPC, compiling contract classes and validating a block's state root require upstream components. Choose regular files owned by the service, keep input paths stable for the job, and give the service a private output directory on a local filesystem. These path fields are an interface for a trusted host application. A network service accepting untrusted requests must assign paths itself.
 
 OxCairo recognizes the full and compact compiler JSON digests for Apollo revision `1860b9850b5c51858c50c0f5038933e49f932eef` and revision `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. For an independently qualified build, set the **operator environment** variable `OXCAIRO_OS_PROFILE` to a trusted JSON file with `revision` (40 lowercase hex digits) and `program_sha256` (64 lowercase hex digits). Record the compiler, source, program hash and qualification receipts with that profile. The worker hashes its private compiler snapshot before execution. Adding a digest authorizes those bytes for execution and carries no parity certification.
@@ -29,6 +31,7 @@ Every refusal has schema 1, status `rejected`, a stable `code` and a human-reada
 | 3 | unknown_revision | No operator or built-in pin for the revision |
 | 4 | program_mismatch | Compiler snapshot differs from an allowed digest or exceeds 128 MiB |
 | 5 | invalid_input | Invalid witness or VM rejection |
+| 6 | unsupported_randomized_encryption | The generation witness requests state-diff encryption with fresh private randomness |
 | 20 | step_limit | A further VM step was needed |
 | 21 | memory_limit | Memory budget exhausted or below the worker minimum |
 | 22 | wall_limit | Worker or publication deadline reached |

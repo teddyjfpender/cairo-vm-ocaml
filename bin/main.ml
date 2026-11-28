@@ -229,6 +229,7 @@ let () =
   | Errors.Vm_error msg ->
       prerr_endline ("Error: " ^ msg);
       exit 1
+  | Os_hints.Randomized_encryption -> prerr_endline "Encryption requires a fresh private entropy draw"; exit 6
   | Runner.Step_limit -> prerr_endline "Cairo step limit exceeded"; exit 20
   | Out_of_memory -> prerr_endline "VM memory budget exhausted"; exit 21
   | Program.Parse_error msg ->

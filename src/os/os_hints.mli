@@ -1,3 +1,5 @@
+exception Randomized_encryption
+
 (** Initialize a runner with the sequencer stateless OS hint processor. *)
 val initialize : ?on_da:(Felt.t array -> unit) -> ?virtual_os:bool -> ?image:Program_image.t -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> path:string -> Runner.config -> Program.t -> Runner.t
 
