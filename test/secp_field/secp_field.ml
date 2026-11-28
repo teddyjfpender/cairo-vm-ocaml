@@ -7,7 +7,8 @@ module S = Secp
 let () =
   let st = Random.State.make [| 256 |] in
   let rand bits = Z.of_bits (String.init ((bits + 7) / 8) (fun _ -> Char.chr (Random.State.int st 256))) in
-  let moduli = [ S.secp_p; S.secp_n; S.r1_p; S.secp_p_v2; Z.of_int 2; Z.of_int 21; Z.of_int 1024; Z.pred (Z.shift_left Z.one 256) ] in
+  let moduli = [ S.secp_p; S.secp_n; S.r1_p; S.secp_p_v2; Z.of_int 2; Z.of_int 21; Z.of_int 1024; Z.pred (Z.shift_left Z.one 256);
+                 Z.(succ (sub (shift_left one 256) (shift_left one 64))) ] in
   List.iter
     (fun p ->
       let m = Option.get (F.modulus p) in

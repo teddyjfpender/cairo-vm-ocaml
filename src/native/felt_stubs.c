@@ -382,7 +382,7 @@ static void divrem(u64 q[8], u64 r[4], const u64 *x, mp_size_t n, const u64 m[4]
   n = used(x, n);
   memset(q, 0, 64);
   memset(r, 0, 32);
-  if (n < mn) memcpy(r, x, n * 8);
+  if (n < mn || (n == mn && mpn_cmp(L(x), L(m), n) < 0)) memcpy(r, x, n * 8);
   else mpn_tdiv_qr(L(q), L(r), 0, L(x), n, L(m), mn);
 }
 
@@ -393,10 +393,30 @@ static void floor_mod(u64 r[4], const u64 *x, mp_size_t n, int neg, const u64 m[
   if (neg && !is_zero(r)) mpn_sub_n(L(r), L(m), L(r), 4);
 }
 
+/* For m = 2^256 - c, with 0 < c < 2^64, replace the upper half of
+   the product by its multiple of c. The first fold carries at most c.
+   Its second fold adds at most two limbs. If that overflows, the
+   truncated result is below 2^128 and one more addition of c fits. */
+static void reduce_pseudo_mersenne(u64 r[4], u64 product[8], const u64 m[4]) {
+  u64 c = -m[0];
+  u64 carry = mpn_addmul_1(L(product), L(product + 4), 4, c);
+  u128 extra = (u128)c * carry;
+  u64 low[4] = {(u64)extra, (u64)(extra >> 64), 0, 0};
+  if (add4(r, product, low)) mpn_add_1(L(r), L(r), 4, c);
+  if (mpn_cmp(L(r), L(m), 4) >= 0) sub4(r, r, m);
+}
+
 /* op: 0 a+b, 1 a-b, 2 a*b, 3 a/b (returns 0 when b is not invertible) */
 intnat cvm_sf_op(value vm, intnat op, value va, value vb, value vr) {
   const u64 *m = BUF(vm), *a = BUF(va), *b = BUF(vb);
   u64 t[8] = {0}, inv[4];
+  if (op < 2 && mpn_cmp(L(a), L(m), 4) < 0 && mpn_cmp(L(b), L(m), 4) < 0) {
+    u64 *out = BUF(vr);
+    if (op == 0) {
+      if (add4(out, a, b) || mpn_cmp(L(out), L(m), 4) >= 0) sub4(out, out, m);
+    } else if (sub4(out, a, b)) add4(out, out, m);
+    return 1;
+  }
   int neg = 0;
   switch (op) {
   case 0: t[4] = mpn_add_n(L(t), L(a), L(b), 4); break;
@@ -409,7 +429,9 @@ intnat cvm_sf_op(value vm, intnat op, value va, value vb, value vr) {
     if (!invert_mod(inv, b, m)) return 0;
     mpn_mul_n(L(t), L(a), L(inv), 4);
   }
-  floor_mod(BUF(vr), t, 8, neg, m);
+  if (op >= 2 && (m[1] & m[2] & m[3]) == UINT64_MAX && m[0])
+    reduce_pseudo_mersenne(BUF(vr), t, m);
+  else floor_mod(BUF(vr), t, 8, neg, m);
   return 1;
 }
 value cvm_sf_op_byte(value m, value op, value a, value b, value r) {
