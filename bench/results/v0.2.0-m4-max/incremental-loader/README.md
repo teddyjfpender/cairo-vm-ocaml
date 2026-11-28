@@ -32,6 +32,7 @@ The integrated regular-release baseline was `43598c9a4d9ee63a8844b34b12d54a0b3f6
 |---|---:|---:|---:|---:|---:|
 | First run | 350 | 1.011× | 0.995× | 40/70 | Unmeasured |
 | Independently shuffled recheck | 630 | 1.014× | 1.011× | 41/70 | 1.009× |
+| Lighter-load recheck | 490 | 1.064× | 1.064× | 68/70 | 1.057× |
 
 Both executables produced byte-identical public output in every pair, and each corpus output matched the retained Rust field-element digest. Each digest uses 32-byte big-endian field elements reduced modulo the Cairo prime. Case order was shuffled every round, and first engine alternated by case index plus round. The recheck also measured the child's cumulative user and system CPU time. One-minute host load sampled at the start of each recheck round ranged from 17.1 to 18.6 on 14 logical CPUs. The first and second series had per-case median paired wall ranges of 0.756–1.380× and 0.811–1.283×.
 
@@ -56,3 +57,26 @@ Four ordinary-release variants shared the integrated execution code. `none` uses
 | Both | 1.022× / 1.028× | 1.040× / 1.033× |
 
 The load-only CLI applied the runner's standard OS GC configuration, loaded the same complete JSON through `Program.load_file`, and emitted the program's data, reference and identifier counts. Each of 31 blocks ran all four variants in shuffled order. The E2E comparison ran three four-variant blocks per scenario, with a fresh shuffled engine order per block. Each process emitted the expected Rust output. This diagnostic series uses independent randomized runs, so its estimates differ from the longer two-engine comparisons. [Load-only samples](factorial-program.csv) and [E2E samples](factorial-e2e.csv).
+
+### Lighter-load replication and integration controls
+
+Under lighter host load, the same integrated binaries showed a **1.064× median E2E wall speedup** across the same 70 scenarios. Six hundred thirty pairs at higher load had shown 1.014×. The seven-round lighter run recorded 1.056× total child CPU speedup, and every scenario reduced median child CPU time. The per-case median wall speedup range was 0.995–1.146×. One-minute host load measured at the start of each round ranged from 9.36 to 10.46. Every output matched the retained Rust digest. [All 490 lighter-load pairs](integrated-lighter-scenarios.csv).
+
+| Variant vs preceding loader | Lighter program load only, wall / child CPU | Lighter 70-scenario E2E, wall / child CPU |
+|---|---:|---:|
+| Worker lifetime | 1.043× / 1.039× | 1.039× / 1.022× |
+| Span and word reuse | 1.060× / 1.067× | 1.033× / 1.037× |
+| Both | 1.092× / 1.092× | 1.064× / 1.060× |
+
+The component run repeated the same 31 load-only blocks and three four-engine blocks per scenario with a new shuffle. Observed one-minute load during the 70-scenario component series ranged from 7.35 to 8.99, compared with 15.66–19.81 during the earlier component series. [Load-only samples](light-factorial-program.csv) and [E2E samples](light-factorial-e2e.csv).
+
+A separate diagnostic shuffled seven executables within each case and round. All 1,470 public outputs matched Rust. Each ratio below is the median of 70 case medians across three rounds. In the CSV, `old_base` and `old_final` refer to `eaae51e` and `c9d3613` before integration, while `base` and `final` refer to `43598c9` and `d884acc`. Two `nohash` builds disabled speculative class hashing during witness preparation, and `wide` restored the experimental larger identifier table. The release candidate preserves the original identifier table's traversal order for ambiguous unqualified constants.
+
+| Matched diagnostic comparison | Wall speedup | Child CPU speedup |
+|---|---:|---:|
+| Loader-only branch before integration | 1.081× | 1.093× |
+| Integrated candidate | 1.053× | 1.055× |
+| Integrated candidate with class hashing disabled on both sides | 1.055× | 1.059× |
+| Larger identifier table relative to integrated candidate | 1.019× | 1.025× |
+
+Seventeen of 70 witnesses contained an eligible deprecated-class hash chain. The integrated wall speedup was 1.039× on those cases and 1.059× on the other 53. [Seven-engine diagnostic samples](crossprobe.csv).
