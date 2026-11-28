@@ -1,0 +1,82 @@
+{
+  "os-genesis": {
+    "program": "starknet-os-training",
+    "witness": "os/genesis.json",
+    "flag": "--os_hints",
+    "bytes": 170685,
+    "archive": "8ee74f99272215072a77568c6d7e6a52a270e241d705295bdde55188d616f22d",
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "46e5aa792b4b3b232f44b5d78733570a0a64ec81fbf9ed88d71265414ae882d3",
+      "memory.bin": "f428a774a1d0ea222debb939dac89d207d35f778f9ee683d05e559b6e2d03554",
+      "additional_data.json": "92b6356e6a7d56496de6aab66ef19c6376889a4fcae3121564148ed4763c36dc",
+      "execution_resources.json": "9f855c9f61718f33584a64798a8004e58a1316794821dcbb691151ba4c289861"
+    },
+    "trace": "afc76338d6999266cacd44355543d5cf9320637931443f20d361a8ef44e60504",
+    "memory": "47458fe074afe5a1287cb2293f2ccedcdd0e2a6712ec63a20e8ab0488839c9aa"
+  },
+  "os-reverted": {
+    "program": "starknet-os-training",
+    "witness": "os/reverted-invoke.json.gz",
+    "flag": "--os_hints",
+    "bytes": 1224520,
+    "archive": "d06746329639e997b28242fd6b22f9dd76fde01b1fbd47c9144a747ae90185f6",
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "3be91165d75c0a2621717dc46b3bbfdef90a6c28f7346f13197116fde5f1b220",
+      "memory.bin": "e1b0133776962d38eb3377cb506d6b61b6919d35828ee3bbd766127ceff8a96f",
+      "additional_data.json": "18b7c6efa442f31db57f51084d1c347909afeafacb6b5de2062ec03bf3c14f5d",
+      "execution_resources.json": "4a7a49f233f4b8b46573cbc61ac0a9ef8950d5dabd28108ccc743c53dcd5f317"
+    },
+    "trace": "3387a1c85ec2510598af24a7488e6ef64d51d376b48e7c5129e2f1eb4a3b9b92",
+    "memory": "7b85d4298b125c3fa89b8a0fd02f3153d56e714bd7808159fc99215238be7826"
+  },
+  "virtual-message": {
+    "program": "virtual-os",
+    "witness": "os/virtual-message.json.gz",
+    "flag": "--virtual_os_hints",
+    "bytes": 1176396,
+    "archive": "18787d94e09af48892508de44ed288245d28020ed9f254472ba8a4f443984d28",
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "0ab107f5f99b2e495cc757daad0d4e6e8460ab9d24fd288be318a28993f04a74",
+      "memory.bin": "db2645560d1c66715d7e51f061458fb69ff5c0e2cd9e0196fb01791d7c78795e",
+      "additional_data.json": "a951d76be55fdd46d304004a0a2bb25deb6d28245f224b3641ef5ac117bb4cc8",
+      "execution_resources.json": "ec0f896d58c09ebee2b7fea91f7f514d9ad69b455b30c28dc565f91860e29f24"
+    },
+    "trace": "27f59bf9498d13ad8e4c36395a115a4b9c8ad9f896e3584ee02aa6cc6d32f326",
+    "memory": "df82596ec5f296ea98dccb21c2e3ec7cf833b32f9738accd027516839f075fdd"
+  },
+  "aggregator-storage": {
+    "program": "aggregator",
+    "witness": "aggregator/storage4.json",
+    "flag": "--aggregator_input",
+    "bytes": 85445,
+    "archive": "dc7bf0fda2b25fc105f07cbe1759c7e531019fac382313e778074971e57a6f06",
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "c4ada1ed6a5c2e4bff78a8971b57cd2a79039d2b82e50d19a7b1f26e696e292e",
+      "memory.bin": "cd1eea5f8a3dac582a525385f812b94d141264703508a34c0e8324317bf5eedd",
+      "additional_data.json": "91b4b125dd3370d6683c5d82acd9e8cd742d61a3c1b08d041072cd2c92609295",
+      "execution_resources.json": "5a5552c8cd88dbbf74a26b0def876242df31be1cf8dd87a24e1e8685639e0c41"
+    },
+    "trace": "89033138db7f14e8884e9fe137c4cc8b555ab398a3fcc05666dbe349a40c1ce9",
+    "memory": "ea3ef3ea16e9525707313456e7eb24545c13cec84903b818cbe56eb3cedfb880"
+  },
+  "encrypted-one-block": {
+    "program": "starknet-os-training",
+    "witness": "os/encrypted/one-block.json.gz",
+    "flag": "synthetic-entropy",
+    "bytes": 2244208,
+    "archive": "7bfe937bd1ee5f093a811a3ea67f397f234868e72e692746b32520eeb70011fb",
+    "members": {
+      "version.json": "d2e13c42dc192f20ebde07842c3a721e5838290dc1ef066482f3fa4b54ec2f6f",
+      "metadata.json": "a022622a5884810ed93bd2c6b9064a2a722533cc9b7c031b1c6c8fcd1fa472ee",
+      "memory.bin": "1b55a8b8d358deb14923811c8f8faa133585effe5f59adcfce07b476f8315c3f",
+      "additional_data.json": "55ce028e7e73f9c0cf8b796dc2813c79bec3b88bb0ce57c7f90d38d7ba091461",
+      "execution_resources.json": "ff357f0c4b5bf0a59a34b01d349edf37a6be821e5e4dd3db0c77ffd832848c01"
+    },
+    "trace": "da7583081554292d1bf398e5ebd65b4f0a7f80e520cf4bb222f51022cbfd241e",
+    "memory": "e6756f19c0ba43628d6795ed40b1111512290588a485b94c8edef0e5ceb7ccef"
+  }
+}

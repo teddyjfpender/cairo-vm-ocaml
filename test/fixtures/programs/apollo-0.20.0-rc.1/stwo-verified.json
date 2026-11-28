@@ -1,0 +1,30 @@
+{
+  "stwo_cairo_revision": "9b6be2710e4d7124bc93fe80a5af36556d42ed29",
+  "stwo_revision": "489a0f3ee44a59e03944ad9aa4f3e5a91a3d3f08",
+  "params_sha256": "4562c3ca05bd762c4d14f49c6803a8af887c82daaeb7eb0d655d0692e786150b",
+  "proofs": {
+    "genesis": {
+      "mode": "direct",
+      "prover_input_sha256": "cde9ebab2db64318cb0e034bf31ff3a63b7996d2512423c7c1435a74b4ff1a7e",
+      "proof_sha256": "a9cecc990b898642b9d3331f90b518bc3ed12286425ea842d348a777293debaf",
+      "proof_bytes": 17332407,
+      "verify_exit": 0
+    },
+    "virtual-execution-info": {
+      "mode": "bootloader",
+      "prover_input_sha256": "0a1fdc76ba5248cdcbc182d4c5d4e1af5ef6ccb7b2de0ff936b77ab88cdd5f77",
+      "proof_sha256": "5d15a17087d5610fe1747da246f1589bf620cf66accfcf086d547389b3f22494",
+      "proof_bytes": 14575764,
+      "verify_exit": 0
+    },
+    "single-block": {
+      "mode": "bootloader",
+      "prover_input_sha256": "6ff34818a194aa23f10a4715633cd0357f8b856d0790bbf1a237a049a5dfaa67",
+      "proof_sha256": "aa44205464edde5393df2e13834ea8992628ba989c05932134510a9d35ca5b27",
+      "proof_bytes": 11227099,
+      "verify_exit": 0
+    }
+  },
+  "archive_sha256": "c46188ac049fc15a505a61c0735dc6cadd78c22bb4733fe14c95f3833a5c4804",
+  "archive_bytes": 5814130
+}

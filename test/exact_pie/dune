@@ -1,0 +1,3 @@
+(executables
+ (names replay_encrypted errno_check)
+ (libraries cairovm))

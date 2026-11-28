@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Forward the original program and all flags to the independently built model.
+set -euo pipefail
+adapter="$(cd "$(dirname "$0")" && pwd)/Adapter.lean"
+program="$(realpath "$1")"
+shift
+cd "${LEAN_CAIRO_MODEL:?set to the pinned formal-proofs checkout}/Stwo"
+exec lake env lean --run "$adapter" "$program" "$@"

@@ -79,6 +79,10 @@ let fetch_slow vm =
   try fetch_canonical vm with Generic_instruction ->
     noncanonical vm vm.pc_seg vm.pc (word_at vm vm.pc_seg vm.pc)
 
+let skip_instruction vm =
+  let d = fetch_slow vm in
+  vm.pc <- vm.pc + (if (d lsr 50) land 3 = 1 then 2 else 1)
+
 (* ---------------- step ---------------- *)
 
 let[@inline never] trace_grow vm =
@@ -113,7 +117,6 @@ let[@inline never] slow_operand_read vm seg off =
 
 let rec step_instr vm d =
   let pc_seg = vm.pc_seg and pc = vm.pc and ap = vm.ap and fp = vm.fp in
-  if vm.trace_on then record_trace vm pc_seg pc ap fp;
   let off0 = (d land 0xffff) - 0x8000 in
   let off1 = ((d lsr 16) land 0xffff) - 0x8000 in
   let off2 = ((d lsr 32) land 0xffff) - 0x8000 in
@@ -259,6 +262,7 @@ and[@inline never] slow_step vm d pc_seg pc ap fp size dst_addr op0_addr op1_seg
   update vm d pc_seg pc ap fp size dst op1 res opcode
 
 and[@inline] update vm d pc_seg pc ap fp size dst op1 res opcode =
+  if vm.trace_on then record_trace vm pc_seg pc ap fp;
   (* fp *)
   let new_fp =
     match opcode with

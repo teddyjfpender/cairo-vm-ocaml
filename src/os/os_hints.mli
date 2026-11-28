@@ -1,5 +1,5 @@
 (** Initialize a runner with the sequencer stateless OS hint processor. *)
-val initialize : ?on_da:(Felt.t array -> unit) -> ?virtual_os:bool -> ?image:Program_image.t -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> path:string -> Runner.config -> Program.t -> Runner.t
+val initialize : ?entropy_source:(unit -> string) -> ?on_da:(Felt.t array -> unit) -> ?virtual_os:bool -> ?image:Program_image.t -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> path:string -> Runner.config -> Program.t -> Runner.t
 
 val initialize_files : ?on_da:(Felt.t array -> unit) -> ?virtual_os:bool -> ?layout_def:Layout.t -> ?record_trace:bool -> proof:bool -> path:string -> Runner.config -> string -> Runner.t
 (** Read the program and OS witness on separate domains, then initialize the VM. *)
