@@ -65,7 +65,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           eval "$(opam env --switch "$OXCAML_SWITCH")"
-          python3 scripts/build_pgo.py --jobs 2 --output _build/release-cli
+          python3 scripts/build_pgo.py --jobs 2 --output _build/release-cli --library-output _build/release-library.so
           _build/release-cli --version
 
       - name: Package and upload
@@ -73,6 +73,10 @@ jobs:
         run: |
           name="oxcairo-${TAG}-${{ matrix.target }}"
           cli=_build/default/bin/main.exe
-          if [ "$RUNNER_OS" = macOS ]; then cli=_build/release-cli; fi
-          python3 scripts/package_release.py "$TAG" "${{ matrix.target }}" "$cli" --output-dir .
+          library=_build/default/bindings/c/oxcairo.so
+          if [ "$RUNNER_OS" = macOS ]; then
+            cli=_build/release-cli
+            library=_build/release-library.so
+          fi
+          python3 scripts/package_release.py "$TAG" "${{ matrix.target }}" "$cli" --library "$library" --output-dir .
           gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber

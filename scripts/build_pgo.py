@@ -16,14 +16,19 @@ def main():
     parser.add_argument("os_program", nargs="?", type=Path, help="compiled OS JSON (defaults to the pinned training program)")
     parser.add_argument("--output", type=Path, default=Path("_build/pgo/cairo-vm-cli"))
     parser.add_argument("--worker-output", type=Path, help="also build the persistent benchmark worker with the same profile")
+    parser.add_argument("--library-output", type=Path, help="also build the standalone C replay library with the same profile")
     parser.add_argument("--jobs", type=int, default=1, help="maximum concurrent Dune jobs")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
     output = args.output.resolve()
-    worker = args.worker_output.resolve() if args.worker_output else None
-    if worker == output:
-        parser.error("--worker-output and --output must be distinct")
+    products = {"bin/main.exe": output}
+    if args.worker_output:
+        products["bench/native_os_worker.exe"] = args.worker_output.resolve()
+    if args.library_output:
+        products["bindings/c/oxcairo.so"] = args.library_output.resolve()
+    if len(set(products.values())) != len(products):
+        parser.error("each output needs its own destination")
     root = Path(__file__).resolve().parents[1]
     profdata = shutil.which("llvm-profdata")
     if sys.platform == "darwin" and shutil.which("xcrun"):
@@ -68,13 +73,9 @@ def main():
             raw.append(profile)
         merged = scratch / "os.profdata"
         subprocess.run([profdata, "merge", "-o", merged, *raw], check=True)
-        targets = ["bin/main.exe"]
-        if worker:
-            targets.append("bench/native_os_worker.exe")
-        binaries = build("pgo-use", scratch / "use", dict(env, OXC_PGO_PROFILE=str(merged)), targets)
-        install(binaries / targets[0], output)
-        if worker:
-            install(binaries / targets[1], worker)
+        binaries = build("pgo-use", scratch / "use", dict(env, OXC_PGO_PROFILE=str(merged)), list(products))
+        for target, destination in products.items():
+            install(binaries / target, destination)
     print(output)
 
 
