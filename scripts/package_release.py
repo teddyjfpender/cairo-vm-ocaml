@@ -27,7 +27,8 @@ def main():
     if f"(OxCairo {args.tag[1:]})" not in version:
         parser.error(f"{args.cli} reported {version.strip()}")
     root = Path(__file__).resolve().parents[1]
-    files = {name: root / name for name in ("README.md", "CHANGELOG.md", "LICENSE")}
+    files = {name: root / name for name in ("README.md", "CHANGELOG.md", "LICENSE",
+                                                  "docs/os-host.md", "docs/EXECUTION_CONTRACT.md")}
     files.update({"oxcairo-os-host": root / "host/oxcairo-os-host", "cairo-vm-cli": args.cli, "lib/oxcairo.so": args.library,
                   "include/oxcairo.h": root / "bindings/c/oxcairo.h"})
     if args.worker is not None:
