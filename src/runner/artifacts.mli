@@ -29,6 +29,9 @@ val trace_bounds : Runner.t -> ((int * int * int * int) * (int * int * int * int
 val iter_output_lines : Runner.t -> (string -> unit) -> unit
 (** Pass each output builtin cell, rendered as cairo-vm prints it. *)
 
+val write_output : out_channel -> Runner.t -> unit
+(** Stream the output segment in the CLI's signed decimal format. *)
+
 val output_lines : Runner.t -> string list
 (** The output builtin's cells, rendered as cairo-vm prints them. *)
 

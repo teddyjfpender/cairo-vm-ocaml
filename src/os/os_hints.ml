@@ -165,9 +165,15 @@ let initialize_files ?(virtual_os=false) ?layout_def ?record_trace ~proof ~path 
   let input = match worker with Some d -> Domain.join d | None -> read_input ~virtual_os path in
   initialize_input ?layout_def ?record_trace ~proof input cfg program
 
-let run_output_file ?virtual_os ?image ~path cfg prog =
+let with_output ?virtual_os ?image ~path cfg prog consume =
   Felt.with_temporary_slots (fun () ->
       let r = initialize ?virtual_os ?image ~proof:false ~record_trace:false ~path cfg prog in
       Runner.run_until_end r;
       Finalize.end_run r ~secure:cfg.Runner.secure_run ~allow_missing:cfg.allow_missing_builtins;
-      Artifacts.output_lines r)
+      consume r)
+
+let run_output_file ?virtual_os ?image ~path cfg prog =
+  with_output ?virtual_os ?image ~path cfg prog Artifacts.output_lines
+
+let run_output_to_channel ?virtual_os ?image ~path cfg prog channel =
+  with_output ?virtual_os ?image ~path cfg prog (Artifacts.write_output channel)

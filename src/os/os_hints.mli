@@ -15,3 +15,6 @@ val run_output_file : ?virtual_os:bool -> ?image:Program_image.t -> path:string 
 
 val felt : Yojson.Safe.t -> Felt.t
 (** Decode a canonical field element from the sequencer's JSON. *)
+
+val run_output_to_channel : ?virtual_os:bool -> ?image:Program_image.t -> path:string -> Runner.config -> Program.t -> out_channel -> unit
+(** Execute the same fresh VM and stream its formatted output directly to a channel. *)

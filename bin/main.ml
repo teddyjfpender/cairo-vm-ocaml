@@ -190,7 +190,7 @@ let () =
      | _ -> ());
     if !print_output then begin
       print_string "Program Output:\n";
-      Artifacts.iter_output_lines r (fun line -> output_string stdout line; output_char stdout '\n');
+      Artifacts.write_output stdout r;
       flush stdout
     end;
     Artifacts.with_artifacts r ~trace:!trace ~memory:!memory (fun () ->
