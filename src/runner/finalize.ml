@@ -40,14 +40,14 @@ let read_return_values r ~allow_missing =
       r.exec_public <- o :: r.exec_public
     done
 
-let finalize_segments r =
+let finalize_segments ~disable_trace_padding r =
   let size = Array.length r.prog.data in
   Hashtbl.replace r.seg_sizes 0 size;
   Hashtbl.replace r.public_offsets 0 (List.init size (fun i -> (i, 0)));
   Hashtbl.replace r.public_offsets 1 (List.rev_map (fun o -> (o, 0)) r.exec_public);
   List.iter
     (fun b ->
-      let _, size = try used_and_allocated r b with Insufficient m -> fail "Failed to finalize segments: %s" m in
+      let _, size = try used_and_allocated ~disable_trace_padding r b with Insufficient m -> fail "Failed to finalize segments: %s" m in
       Hashtbl.replace r.seg_sizes b.base size;
       Hashtbl.replace r.public_offsets b.base
         (if b.kind = Output then List.init (used_cells r b) (fun i -> (i, 0)) else []))
@@ -116,24 +116,27 @@ let verify_secure_runner r ~deduced =
       fail "Return fp %s does not match final fp 1:%d" (value_to_string v) vm.fp
   end
 
-let end_run ?(fill_holes=false) r ~secure ~allow_missing =
+let end_run ?(fill_holes=false) ?(disable_trace_padding=false) r ~secure ~allow_missing =
+  if disable_trace_padding && not r.proof then fail "Disabling trace padding requires proof mode";
   Resources.relocate_memory r;
   if r.proof then begin
     verify_auto_deductions ~fill_holes r.vm;
     if not (Hintrt.only_main_scope r.scopes) then fail "Every enter_scope() requires a corresponding exit_scope()";
     r.eff_sizes <- Some (Array.init r.vm.nsegs (used_size r.vm));
-    run_until_next_power_of_2 r;
-    let rec pad () =
-      match check_used_cells r with
-      | () -> ()
-      | exception Insufficient _ ->
-          run_for_steps r 1;
-          run_until_next_power_of_2 r;
-          pad ()
-    in
-    pad ();
+    if not disable_trace_padding then begin
+      run_until_next_power_of_2 r;
+      let rec pad () =
+        match check_used_cells r with
+        | () -> ()
+        | exception Insufficient _ ->
+            run_for_steps r 1;
+            run_until_next_power_of_2 r;
+            pad ()
+      in
+      pad ()
+    end;
     read_return_values r ~allow_missing;
-    finalize_segments r;
+    finalize_segments ~disable_trace_padding r;
     (* the padding steps may have written builtin memory since the deductions *)
     if secure then verify_secure_runner r ~deduced:false
   end

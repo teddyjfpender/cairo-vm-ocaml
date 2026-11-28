@@ -38,11 +38,24 @@ let add c p q = match p, q with
 module K1 = Weierstrass.Make (struct let prime = Secp.secp_p let minus_three = false end)
 module R1 = Weierstrass.Make (struct let prime = Secp.r1_p let minus_three = true end)
 
+external native_curve_available : unit -> bool = "cvm_secp_curve_available" [@@noalloc]
+external native_scale : bool -> string -> string -> string -> bytes -> int
+  = "cvm_secp_curve_scale" [@@noalloc]
+
+let use_native_curve = native_curve_available ()
+
 let multiply c p scalar = match p with
   | Infinity -> Infinity
   | Point (x,y) ->
-      match (if c == k1 then K1.scale else R1.scale) (x,y) scalar with
-      | None -> Infinity | Some (u,v) -> Point (u,v)
+      let portable () =
+        match (if c == k1 then K1.scale else R1.scale) (x,y) scalar with
+        | None -> Infinity | Some (u,v) -> Point (u,v) in
+      if not use_native_curve then portable () else
+        let out = Bytes.create 64 in
+        match native_scale (c == r1) (Z.to_bits x) (Z.to_bits y) (Z.to_bits scalar) out with
+        | 0 -> Infinity
+        | 1 -> Point (Z.of_bits (Bytes.sub_string out 0 32), Z.of_bits (Bytes.sub_string out 32 32))
+        | _ -> portable ()
 
 let execute state vm c op at =
   let input i = at i in

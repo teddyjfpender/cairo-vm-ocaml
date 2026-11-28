@@ -135,3 +135,20 @@ cairo-vm-cli os.oxcp --os_hints block.json --layout all_cairo --print_output
 ```
 
 Keep the compiler JSON for Rust comparisons. Repack after changing the compiled program. The loader checks the format version and table bounds before execution.
+
+## Compressed Cairo PIE output
+
+The writer stores ZIP members by default. Add `--pie_compression_level 6` to compress them. Levels 1 through 9 select DEFLATE. Level 0 selects storage. Archive member contents, CRCs and replay semantics are the same across levels. ZIP sizes and compressed bytes depend on the compressor.
+
+The release build can use libdeflate for archive output and OpenSSL for the two public Starknet secp scalar-multiplication syscalls. The portable build uses zlib and Zarith. On macOS with Homebrew the optional build is:
+
+```sh
+OXC_LIBDEFLATE="$(brew --prefix libdeflate)" OXC_OPENSSL="$(brew --prefix openssl@3)" \
+  dune build --profile release -j2
+```
+
+An absolute prefix links that library's static archive. Set either variable to `system` to use the toolchain's header and library search paths. Omit it to select the portable implementation.
+
+## Unpadded proof execution
+
+Add `--disable_trace_padding` to `--proof_mode` to stop after the final proof instruction and use the unpadded builtin allocation rules from cairo-vm 3.2.0. The default proof invocation pads to the Stone layout's resource requirements. The independent Stwo proof and Rust input comparison can be reproduced from [the qualification instructions](../bench/reference/stwo/README.md).

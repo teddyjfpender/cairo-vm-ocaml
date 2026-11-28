@@ -20,6 +20,12 @@ jobs:
           eval "$(opam env --switch "$OXCAML_SWITCH")"
           dune build --profile release
           dune runtest --profile release
+      - name: Reproduce sequencer OS archive digests
+        run: |
+          gzip -dc test/fixtures/programs/starknet-os-training.json.gz > "$RUNNER_TEMP/starknet-os.json"
+          python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/starknet-os.json" \
+            --only genesis --only account --only storage-2048
+
       - uses: actions/checkout@v4
         if: runner.os == 'Linux'
         with:

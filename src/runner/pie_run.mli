@@ -28,7 +28,7 @@ val run :
 
 val main_pc : Pie_file.t -> int
 
-val write_output : secure:bool -> merge_extra_segments:bool -> result -> string -> unit
+val write_output : ?compression_level:int -> secure:bool -> merge_extra_segments:bool -> result -> string -> unit
 (** Serialize a completed replay, preserving builtin additional data. *)
 
 val replay_file :

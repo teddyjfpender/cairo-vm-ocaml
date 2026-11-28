@@ -9,6 +9,8 @@
     Segment indices are non-negative for real segments and negative for
     temporary ones ([-1] is the first). *)
 
+type 'a hint_page = 'a array array array
+
 type vm = {
   mutable segs : Segment.seg array;
   mutable nsegs : int;
@@ -21,7 +23,8 @@ type vm = {
   mutable fp : int;
   mutable steps : int;
   mutable icache : int array;  (** decoded words of segment 0, 0 = not decoded *)
-  runtime_hints : ((int * int), (vm -> unit) array) Hashtbl.t;
+  runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
+  mutable page_hints : (vm -> unit) hint_page;
   code_pages : ((int * int), int array) Hashtbl.t;
   mutable code_seg : int;
   mutable code_base : int;

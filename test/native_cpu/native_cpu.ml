@@ -246,3 +246,37 @@ let () =
   add_relocation_rule ~allow_felt:true vm (ptr b 0) Felt.one;
   match relocate_temp_memory vm with
   | exception Vm_error _ -> () | () -> failwith "accepted nonzero hop to an integer destination"
+
+(* The same operand is copied, dereferenced and used for deduction while
+   its segment is temporary. Install a rule between batches and compare
+   both pointer and integer relocation with the generic interpreter. *)
+let () =
+  let push = encode 0x480a 0 (-1) (-3) in
+  let indirect offset = encode 0x4802 0 (-3) offset in
+  let words = [|push; indirect 2; indirect 3; push|] in
+  let make () =
+    let cells = Array.make 16 Felt.empty in
+    cells.(5) <- Felt.one;
+    cells.(10) <- Felt.small 91;
+    let vm = make_vm (Array.map Felt.of_z words) cells in
+    let tmp = add_temp_segment vm in
+    write vm 1 3 (Felt.reloc tmp 0);
+    write_checked vm tmp 2 (Felt.small 27);
+    vm.icache <- Array.map decode_word words;
+    vm, tmp in
+  List.iter (fun destination ->
+    let vm, tmp = make () and ref_vm, ref_tmp = make () in
+    let before = !generic_steps in
+    run ~stop:(0,3) vm [||];
+    for _ = 1 to 3 do step ref_vm done;
+    assert (!generic_steps = before);
+    assert (vm.thi.(0) = 4 && get vm tmp 3 = Felt.small 91);
+    assert (read vm 1 8 = Felt.reloc tmp 0 && read vm 1 9 = Felt.small 27);
+    add_relocation_rule ~allow_felt:true vm (Felt.reloc tmp 0) destination;
+    add_relocation_rule ~allow_felt:true ref_vm (Felt.reloc ref_tmp 0) destination;
+    run ~stop:(0,4) vm [||]; step ref_vm;
+    assert (get vm 1 11 = destination && vm.pc = ref_vm.pc && vm.ap = ref_vm.ap);
+    assert (vm.thi = ref_vm.thi && vm.tlen = ref_vm.tlen);
+    for i = 0 to 15 do assert (read vm 1 i = read ref_vm 1 i) done;
+    for i = 0 to vm.tlen-1 do assert (raw_get vm.trace i = raw_get ref_vm.trace i) done)
+    [Felt.reloc 2 3; Felt.small 42]

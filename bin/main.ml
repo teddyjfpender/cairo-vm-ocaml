@@ -26,6 +26,8 @@ let () =
   let file = ref None and trace = ref None and memory = ref None in
   let layout = ref "plain" and print_output = ref false and entry = ref "main" in
   let secure = ref None and allow_missing = ref None and stats = ref false in
+  let disable_trace_padding = ref false in
+  let compression_level = ref 0 in
   let fill_holes = ref None and proof = ref false and merge_extra = ref false in
   let air_public = ref None and air_private = ref None and pie_out = ref None and layout_params = ref None in
   let pack_program = ref None in
@@ -37,7 +39,7 @@ let () =
   let aggregator_input = ref None and aggregator_da = ref None in
   let positional f = match !file with
     | None -> file := Some f | Some _ -> raise (Arg.Bad "expected one program file") in
-  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.1.0)"; exit 0 in
+  let version () = if rust <> None then delegate "version"; print_endline "cairo-vm-cli 4.0.0 (OxCairo 0.2.0)"; exit 0 in
   let bool_of s = match s with "true" -> true | "false" -> false | _ -> raise (Arg.Bad ("expected true|false: " ^ s)) in
   let spec =
     [
@@ -49,10 +51,12 @@ let () =
       ("--entrypoint", Arg.Set_string entry, "NAME  entrypoint (default main)");
       ("--secure_run", Arg.String (fun s -> secure := Some (bool_of s)), "true|false");
       ("--allow_missing_builtins", Arg.String (fun s -> allow_missing := Some (bool_of s)), "true|false");
+      ("--disable_trace_padding", Arg.Set disable_trace_padding, " keep the actual proof-mode execution length");
       ("--fill-holes", Arg.String (fun s -> fill_holes := Some (bool_of s)), "true|false  materialize deducible builtin outputs");
       ("--proof_mode", Arg.Set proof, " run in canonical proof mode");
       ("--air_public_input", Arg.String (fun s -> air_public := Some s), "FILE  write the AIR public input (proof mode)");
       ("--air_private_input", Arg.String (fun s -> air_private := Some s), "FILE  write the AIR private input (proof mode)");
+      ("--pie_compression_level", Arg.Set_int compression_level, "N  PIE compression, 0 stores and 1-9 deflate");
       ("--cairo_pie_output", Arg.String (fun s -> pie_out := Some s), "FILE  write a Cairo PIE zip");
       ("--cairo_layout_params_file", Arg.String (fun s -> layout_params := Some s), "FILE  dynamic layout parameters");
       ("--merge_extra_segments", Arg.Set merge_extra, " merge extra segments in PIE output");
@@ -97,6 +101,8 @@ let () =
   if !air_public <> None && not !proof then usage_error "--air_public_input requires --proof_mode";
   if !air_private <> None && not (!proof && !trace <> None && !memory <> None) then
     usage_error "--air_private_input requires --proof_mode, --trace_file and --memory_file";
+  if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
+  if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";
   if !from_pie && (!proof || !air_public <> None || !air_private <> None) then
@@ -166,7 +172,7 @@ let () =
         r, t1, Unix.gettimeofday () in
       let r, t1, t2 = if Option.is_some !bootloader_input then Resources.with_pedersen_verifier execute
         else execute ignore in
-      Finalize.end_run ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
+      Finalize.end_run ~disable_trace_padding:!disable_trace_padding ~fill_holes:(Option.value !fill_holes ~default:proof) r ~secure:cfg.secure_run
         ~allow_missing:cfg.allow_missing_builtins;
       r, t1, t2
     with Errors.Vm_error msg when rust <> None && !aggregator_input = None && !os_hints = None && !bootloader_input = None && not !stats -> delegate msg in
@@ -193,9 +199,9 @@ let () =
       (fun path ->
         match !pie_input with
         | Some res ->
-            Pie_run.write_output ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra res path
+            Pie_run.write_output ~compression_level:!compression_level ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra res path
         | None ->
-            Pie.write r ~main:(Runner.entry_pc cfg r.prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra path)
+            Pie.write ~compression_level:!compression_level r ~main:(Runner.entry_pc cfg r.prog) ~secure:cfg.secure_run ~merge_extra_segments:!merge_extra path)
       !pie_out;
     if !stats then
       Printf.eprintf "generic=%d hint_pcs=%d " !Cpu.generic_steps !Cpu.hint_steps;

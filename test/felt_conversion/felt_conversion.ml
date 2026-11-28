@@ -53,3 +53,16 @@ let () =
     assert (Stark_sqrt.sqrt square = Some (Z.min x (Z.sub p x)));
     if Z.sign x <> 0 then assert (Stark_sqrt.sqrt (Z.mul (Z.of_int 3) square) = None)
   done
+
+let () =
+  (* Every limb boundary, and invalid bytes at every position. *)
+  for width = 1 to 64 do
+    let digits = String.init width (fun i -> "03A9bcF1".[i mod 8]) in
+    let text = "0X" ^ digits in
+    assert (Option.map Felt.to_z (Felt.of_hex_opt text) = Some (Z.of_string text));
+    for i = 2 to String.length text - 1 do
+      let invalid = Bytes.of_string text in
+      Bytes.set invalid i (if i mod 2 = 0 then ':' else Char.chr 255);
+      assert (Felt.of_hex_opt (Bytes.to_string invalid) = None)
+    done
+  done

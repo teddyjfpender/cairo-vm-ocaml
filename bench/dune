@@ -7,3 +7,8 @@
  (name native_os_worker)
  (modules native_os_worker)
  (libraries cairovm unix))
+
+(executable
+ (name stwo_snapshot)
+ (modules stwo_snapshot)
+ (libraries cairovm))

@@ -14,16 +14,22 @@ def main():
     parser.add_argument("binary", type=Path)
     parser.add_argument("program", type=Path)
     parser.add_argument("--virtual-os", action="store_true", help="check the compiled virtual OS")
+    parser.add_argument("--only", action="append", help="check this named witness (repeatable)")
     args = parser.parse_args()
     fixture = Path(__file__).resolve().parent
     merged = ("storage-2048", "storage-4096", "syscalls-scaled-32", "storage-8192",
               "syscalls-scaled-64", "sequential-4096", "scattered-4096",
               "deploy-l1-calldata-2048", "deploy-l1-blob-2048")
-    cases = ("genesis", "storage", "account", "alternating", "execution-info", "reverted-invoke",
+    cases = ("genesis", "storage", "account", "multi-block", "alternating", "execution-info", "reverted-invoke",
                  "deprecated-calls", "meta-tx", "nested-revert", "syscalls-five-blocks", "syscalls-282", "storage-512",
                   *merged)
     if args.virtual_os:
         cases = ("virtual-message", "virtual-execution-info", "virtual-multicall-16", "virtual-multicall-64")
+    if args.only:
+        missing = set(args.only) - set(cases)
+        if missing:
+            parser.error("unknown fixture: " + ", ".join(sorted(missing)))
+        cases = args.only
     mode = "--virtual_os_hints" if args.virtual_os else "--os_hints"
     public = json.loads((fixture / "deployment-public-output.json").read_text())
     prime = 2**251 + 17 * 2**192 + 1

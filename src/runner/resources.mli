@@ -24,7 +24,7 @@ val used_cells : Runner.t -> Builtin.builtin -> int
 val used_instances : Runner.t -> Builtin.builtin -> int
 (** Used instances of a builtin. *)
 
-val used_and_allocated : Runner.t -> Builtin.builtin -> int * int
+val used_and_allocated : ?disable_trace_padding:bool -> Runner.t -> Builtin.builtin -> int * int
 (** Used and allocated cells of a builtin.
     @raise Insufficient when the usage exceeds the allocation. *)
 

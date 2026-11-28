@@ -17,6 +17,14 @@ let decode_at vm seg off =
 
 (* Dynamic contract bytecode can occupy a small region far into a segment.
    Allocate decoded words only in pages actually executed. *)
+let hint_group_bits = 5
+let hint_group_size = 1 lsl hint_group_bits
+
+let page_handlers page index =
+  if Array.length page = 0 then [||] else
+  let group = page.(index lsr hint_group_bits) in
+  if Array.length group = 0 then [||] else group.(index land (hint_group_size-1))
+
 let contract_page vm =
   let base = vm.pc land lnot 1023 in
   if vm.code_seg <> vm.pc_seg || vm.code_base <> base then begin
@@ -25,6 +33,9 @@ let contract_page vm =
       | Some page -> page
       | None -> let page = Array.make 1024 0 in Hashtbl.add vm.code_pages key page; page
     in
+    vm.page_hints <-
+      (if Hashtbl.length vm.runtime_hints = 0 then [||]
+       else Option.value (Hashtbl.find_opt vm.runtime_hints key) ~default:[||]);
     vm.code_seg <- vm.pc_seg; vm.code_base <- base; vm.code_page <- page
   end;
   vm.code_page
@@ -51,7 +62,7 @@ let[@inline never] fetch_slow vm =
     if cached <> 0 then cached land lnot (1 lsl 61) else
       let d = decode_at vm vm.pc_seg vm.pc in
       if d land ext_mask = 0 then
-        page.(index) <- (if Hashtbl.mem vm.runtime_hints (vm.pc_seg, vm.pc) then d lor (1 lsl 61) else d);
+        page.(index) <- (if Array.length (page_handlers vm.page_hints index) <> 0 then d lor (1 lsl 61) else d);
       d
   end
 
@@ -311,8 +322,9 @@ let[@inline] step vm =
    kernel pays no lookup for hint detection.  The kernel also stops before
    an uncached pc, so a program-segment stop pc only needs a flag while
    cached.  The last steps of a bounded run, fewer than one batch, are
-   generic, which keeps the kernel's loop free of caller limits.  Instructions reading a temporary pointer fall back to the generic path
-   so that memory reads observe the current relocation rules. *)
+   generic, which keeps the kernel's loop free of caller limits. Batches can
+   access unrelocated temporary segments. Operands with active relocation
+   rules go through the generic memory reader. *)
 
 let hint_bit = 1 lsl 61
 let generic_steps = ref 0
@@ -330,10 +342,27 @@ external cpu_batch_poseidon : int array -> int array -> seg array -> flag array 
   seg -> pool -> int -> Bytes.t array -> Felt.t array -> Felt.t array -> int
   = "cvm_cpu_batch_poseidon_byte" "cvm_cpu_batch_poseidon" [@@noalloc]
 
+external cpu_batch_temporary : int array -> int array -> seg array -> flag array -> int array ->
+  seg -> pool -> int -> Bytes.t array -> Felt.t array -> Felt.t array -> seg array -> int array -> Felt.t array -> int
+  = "cvm_cpu_batch_temporary_byte" "cvm_cpu_batch_temporary" [@@noalloc]
+
 let register_runtime_hints vm ~segment ~pc handlers =
   if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
-  Hashtbl.replace vm.runtime_hints (segment, pc) handlers;
-  match Hashtbl.find_opt vm.code_pages (segment, pc land lnot 1023) with
+  (* Group hints by instruction page. Allocate only the occupied groups
+     within a page, including when a class installs a single distant hint. *)
+  let base = pc land lnot 1023 and index = pc land 1023 in
+  let key = segment, base in
+  let page = match Hashtbl.find_opt vm.runtime_hints key with
+    | Some page -> page
+    | None ->
+        let page = Array.make (1024 / hint_group_size) [||] in
+        Hashtbl.add vm.runtime_hints key page;
+        if vm.code_seg = segment && vm.code_base = base then vm.page_hints <- page;
+        page in
+  let group = index lsr hint_group_bits in
+  if Array.length page.(group) = 0 then page.(group) <- Array.make hint_group_size [||];
+  page.(group).(index land (hint_group_size-1)) <- handlers;
+  match Hashtbl.find_opt vm.code_pages key with
   | Some page when page.(pc land 1023) <> 0 ->
       let i = pc land 1023 in page.(i) <- page.(i) lor hint_bit
   | _ -> ()
@@ -347,7 +376,8 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
   let poseidon = if vm.trace_on then None else List.find_opt (fun b -> b.kind = Poseidon) vm.builtins in
-  let registers = Array.make 13 0 in
+  let registers = Array.make 15 0 in
+  registers.(14) <- Bool.to_int vm.trace_on;
   let first = vm.steps in
   while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
@@ -357,9 +387,12 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
       Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
     end;
     if vm.pc_seg > 0 && Hashtbl.length vm.runtime_hints <> 0 then begin
-      match Hashtbl.find_opt vm.runtime_hints (vm.pc_seg, pc) with
-      | None -> ()
-      | Some handlers -> incr hint_steps; Array.iter (fun run -> run vm) handlers
+      ignore (contract_page vm);
+      let handlers = page_handlers vm.page_hints (pc land 1023) in
+      if Array.length handlers <> 0 then begin
+        incr hint_steps;
+        Array.iter (fun run -> run vm) handlers
+      end
     end;
     let count =
       if vm.pc_seg < 0 || (vm.pc_seg <> 0 && vm.pc_seg = stop_seg) || steps - (vm.steps - first) < batch_max then 0
@@ -371,7 +404,12 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
         registers.(11) <- if vm.pc_seg = 0 then 0 else vm.code_base;
         let ped_cache = match pedersen with Some b -> b.cache | None -> [||] in
         let count =
-          match poseidon with
+          if vm.ntsegs > 0 then begin
+            registers.(13) <- vm.ntsegs;
+            let pose = match poseidon with Some b -> b.cache | None -> [||] in
+            cpu_batch_temporary registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs
+              vm.watched ped_cache pose vm.tsegs vm.thi vm.rules
+          end else match poseidon with
           | Some b -> cpu_batch_poseidon registers cache vm.segs vm.seg_flag vm.hi vm.trace pool
                         vm.nsegs vm.watched ped_cache b.cache
           | None when Array.length vm.watched = 0 ->

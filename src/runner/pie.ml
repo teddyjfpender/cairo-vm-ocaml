@@ -42,40 +42,7 @@ let to_string j =
 
 let int n = Num (string_of_int n)
 
-(* ---- zip (stored entries) ---- *)
-
-(* Members emit bounded chunks. Patch the CRC and size in the local header
-   once the member has been written, retaining the stored ZIP format. *)
-external crc_update : int -> bytes -> int -> int = "cvm_pie_crc_update"
-
 let text_member s emit = emit (Bytes.unsafe_of_string s) (String.length s)
-
-let write_zip path members =
-  Out_channel.with_open_bin path (fun oc ->
-    let u16 n = output_byte oc n; output_byte oc (n lsr 8) in
-    let u32 n = u16 n; u16 (n lsr 16) in
-    let central = List.map (fun (name, write) ->
-      let off = pos_out oc in
-      if off > 0xfffffffe then fail "Cairo PIE zip exceeds the size limit";
-      u32 0x04034b50; u16 20; u16 0; u16 0; u16 0; u16 33;
-      u32 0; u32 0; u32 0; u16 (String.length name); u16 0; output_string oc name;
-      let start = pos_out oc and crc = ref 0 in
-      write (fun bytes len ->
-        crc := crc_update !crc bytes len;
-        output oc bytes 0 len);
-      let stop = pos_out oc in
-      let n = stop - start in
-      if stop > 0xfffffffe then fail "Cairo PIE zip exceeds the size limit";
-      seek_out oc (off + 14); u32 !crc; u32 n; u32 n; seek_out oc stop;
-      name, !crc, n, off) members in
-    let start = pos_out oc in
-    List.iter (fun (name, crc, n, off) ->
-      u32 0x02014b50; u16 20; u16 20; u16 0; u16 0; u16 0; u16 33;
-      u32 crc; u32 n; u32 n; u16 (String.length name); u16 0; u16 0;
-      u16 0; u16 0; u32 0; u32 off; output_string oc name) central;
-    let size = pos_out oc - start in
-    u32 0x06054b50; u16 0; u16 0; u16 (List.length members);
-    u16 (List.length members); u32 size; u32 start; u16 0)
 
 (* ---- PIE contents ---- *)
 
@@ -102,7 +69,7 @@ let memory_member (r : Runner.t) merged offsets emit =
     if n > 0 then emit chunk n
   done
 
-let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
+let write ?(compression_level=0) ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t) ~main ~secure
     ~merge_extra_segments path =
   let output_pages = Option.value output_pages ~default:r.output_pages in
   let output_attributes = Option.value output_attributes ~default:r.output_attributes in
@@ -183,7 +150,7 @@ let write ?output_pages ?output_attributes ?(pedersen_extra = []) (r : Runner.t)
           Obj (List.map (fun (k, b) -> (suffix k, int (Resources.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
       ]
   in
-  write_zip path
+  Pie_zip.write ~level:compression_level path
     [
       ("version.json", text_member (to_string (Obj [ ("cairo_pie", Str "1.1") ])));
       ("metadata.json", text_member (to_string metadata));

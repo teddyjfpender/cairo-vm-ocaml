@@ -27,3 +27,8 @@ The two largest deployment fixtures each contain four consecutive blocks, one Si
 To regenerate the transactions, append the contents of `deployment_witness.rs` to `crates/starknet_os_flow_tests/src/tests.rs` in the pinned checkout. In the test manager, serialize `self.os_hints` with `serde_json::to_writer` after the committer populates the block inputs and immediately before OS execution. Run `tests::test_oxcairo_wide_deploy_and_l1` with `OXCAIRO_DEPLOYS=2048`. Set `OXCAIRO_BLOB=1` for the blob case. Convert the chain name in `os_hints_config.chain_info.chain_id` to its ASCII bytes encoded as a hexadecimal felt before passing the witness to either VM.
 
 The stock API exceeded the 3.3 GiB process allowance on the two 6,145-transaction inputs. Their public outputs and archive hashes use the memory-bounded Rust reference above. Smaller cases through 3,073 transactions also have stock API timings. Empty RSS cells in the timing file mean the child exited between samples.
+
+
+## Compiler input identity
+
+Pass the sequencer build's `apollo_starknet_os_program-*/out/starknet_os_bytes` file to `bench/compare_native_os.py --program`. The harness maps the independent Rust executable and checks that the complete compiler file occurs byte-for-byte in its image before starting any timings. Both VMs then use those bytes. To test a packed or debug-stripped input, supply the verified compiler output as usual and also pass `--prepared-program ALTERNATIVE`. The resulting rows are labelled and carry both SHA-256 digests.

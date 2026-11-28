@@ -10,16 +10,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1).map(PathBuf::from);
     let program_path = args.next().expect("compiled bootloader");
     let input_path = args.next().expect("bootloader input");
-    let output_path = args.next().expect("output directory");
+    let mut output_path = None;
+    let mut pad = true;
+    for arg in args {
+        if arg.as_os_str() == "--no-padding" {
+            pad = false;
+        } else if output_path.replace(arg).is_some() {
+            return Err("expected at most one artifact directory".into());
+        }
+    }
     let simple_bootloader_program = Program::from_file(&program_path, Some("main"))?;
     let program_input_contents = std::fs::read_to_string(input_path)?;
-    let cairo_run_config = RunMode::Proof {
+    let mut cairo_run_config = RunMode::Proof {
         layout: LayoutName::starknet_with_keccak,
         dynamic_layout_params: None,
-        disable_trace_padding: false,
-        relocate_mem: true,
+        disable_trace_padding: !pad,
+        relocate_mem: output_path.is_some(),
     }
     .create_config();
+    cairo_run_config.relocate_trace = output_path.is_some();
 
     let mut runner = cairo_run_program(
         &simple_bootloader_program,
@@ -32,6 +41,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     runner.vm.write_output(&mut output_buffer)?;
     print!("{output_buffer}");
 
+    let Some(output_path) = output_path else {
+        return Ok(());
+    };
     use std::io::{BufWriter, Write};
     let mut trace = BufWriter::new(std::fs::File::create(output_path.join("trace.bin"))?);
     for entry in runner.relocated_trace.as_ref().unwrap() {

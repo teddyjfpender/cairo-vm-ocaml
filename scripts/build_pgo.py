@@ -13,13 +13,12 @@ import tempfile
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("os_program", type=Path, help="compiled Starknet os.cairo JSON")
+    parser.add_argument("os_program", nargs="?", type=Path, help="compiled OS JSON (defaults to the pinned training program)")
     parser.add_argument("--output", type=Path, default=Path("_build/pgo/cairo-vm-cli"))
     parser.add_argument("--jobs", type=int, default=1, help="maximum concurrent Dune jobs")
     args = parser.parse_args()
     if args.jobs < 1:
         parser.error("--jobs must be positive")
-    program = args.os_program.resolve(strict=True)
     output = args.output.resolve()
     root = Path(__file__).resolve().parents[1]
     profdata = shutil.which("llvm-profdata")
@@ -35,6 +34,12 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="oxcairo-pgo-") as temporary:
         scratch = Path(temporary).resolve()
+        if args.os_program is None:
+            program = scratch / "training-program.json"
+            with gzip.open(root / "test/fixtures/programs/starknet-os-training.json.gz", "rb") as src, program.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+        else:
+            program = args.os_program.resolve(strict=True)
         env = os.environ.copy()
         env.pop("CAIRO_VM_RUST_CLI", None)
         cli = build("pgo-train", scratch / "train", env)

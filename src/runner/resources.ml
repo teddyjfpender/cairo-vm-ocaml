@@ -264,11 +264,22 @@ let cells_of b = match b.kind with Output -> 0 | k -> cells_per_instance k
 
 let allocated_memory_units r b = allocated_instances r b * cells_of b
 
-let used_and_allocated r b =
+let next_pow2 n =
+  let p = ref 1 in
+  while !p < n do
+    p := 2 * !p
+  done;
+  !p
+
+let used_and_allocated ?(disable_trace_padding=false) r b =
   match b.kind with
   | Output ->
       let u = used_cells r b in
       (u, u)
+  | k when disable_trace_padding ->
+      let n = used_instances r b in
+      let size = if n = 0 then 0 else max 16 (next_pow2 n) * cells_of b in
+      used_cells r b, size
   | k ->
       let used = used_cells r b in
       let size = allocated_memory_units r b in
@@ -389,12 +400,5 @@ let check_used_cells r =
   check_range_check_usage r;
   check_memory_usage r;
   check_diluted_check_usage r
-
-let next_pow2 n =
-  let p = ref 1 in
-  while !p < n do
-    p := 2 * !p
-  done;
-  !p
 
 let run_until_next_power_of_2 r = run_for_steps r (next_pow2 r.vm.steps - r.vm.steps)

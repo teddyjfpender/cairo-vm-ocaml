@@ -1,6 +1,7 @@
 """Exercise empty, exact and partial chunks on both supported ZIP methods."""
 import json
 import pathlib
+import random
 import struct
 import subprocess
 import sys
@@ -13,7 +14,20 @@ def main():
     with zipfile.ZipFile("rust4-bitwise.zip") as source:
         metadata = {k: source.read(k) for k in source.namelist() if k != "memory.bin"}
     with tempfile.TemporaryDirectory() as tmp:
-        path = pathlib.Path(tmp) / "test.zip"
+        root = pathlib.Path(tmp)
+        path = root / "test.zip"
+        source = root / "data.bin"
+        archive = root / "written.zip"
+        rng = random.Random(381699)
+        for level, size in ((0, 327680), (1, 262144), (6, 1048576), (9, 2100001)):
+            data = rng.randbytes(size)
+            source.write_bytes(data)
+            subprocess.run([executable, "--write-chunks", str(level), source, archive], check=True)
+            with zipfile.ZipFile(archive) as z:
+                assert z.read("empty") == b""
+                for name in ("data", "again"):
+                    assert z.read(name) == data
+                    assert z.getinfo(name).compress_type == (zipfile.ZIP_DEFLATED if level else zipfile.ZIP_STORED)
         for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
             for cells in (0, 32768, 262145):
                 with zipfile.ZipFile(path, "w", compression=method) as z:

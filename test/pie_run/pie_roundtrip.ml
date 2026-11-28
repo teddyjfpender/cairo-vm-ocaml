@@ -99,6 +99,19 @@ let () =
 
 
 let () = match Array.to_list Sys.argv with
+  | [_; "--write-chunks"; level; source; path] ->
+      let input = In_channel.with_open_bin source In_channel.input_all in
+      let stream emit =
+        let chunk = Bytes.create 70001 in
+        let offset = ref 0 in
+        while !offset < String.length input do
+          let length = min (Bytes.length chunk) (String.length input - !offset) in
+          Bytes.blit_string input !offset chunk 0 length;
+          emit chunk length;
+          offset := !offset + length
+        done in
+      Pie_zip.write ~level:(int_of_string level) path
+        ["empty", (fun _ -> ()); "data", stream; "again", stream]
   | [_; "--stream"; path] -> check_stream path
   | [_; ("--ordered-replay" | "--unordered-replay" as mode); path] ->
       let pie, source = Pie_file.read_deferred path in

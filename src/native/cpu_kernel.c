@@ -25,10 +25,19 @@ static inline intnat offset(intnat code) {
   return (code >> 2) & OFFSET_MASK;
 }
 
-/* The OCaml operand reader applies active relocation rules. Returning before
-   any write keeps this instruction restartable even if a rule overflows. */
-static inline int temporary(intnat code) {
-  return code < 0 && (code & 3) == 2;
+/* Negative pointers with no relocation rule retain their segment and
+   offset. An active rule can produce another pointer or an integer and
+   can overflow, so let the checked OCaml reader handle those operands. */
+struct temporary_segments {
+  value rules, segments, highs;
+  intnat count;
+};
+
+static inline int needs_relocation(const struct temporary_segments *temps, intnat code) {
+  if (code >= 0 || (code & 3) != 2) return 0;
+  if (!temps) return 1;
+  uintnat index = -(code >> 42) - 1;
+  return index < Wosize_val(temps->rules) && Long_val(Field(temps->rules, index)) != 0;
 }
 
 static inline int same_value(value pool, intnat a, intnat b) {
@@ -124,7 +133,7 @@ static void finish_poseidon(struct pending_poseidon *q, value pool, value cache)
    execution-segment high-water mark, trace length, and next felt-pool slot. */
 static inline __attribute__((always_inline))
 value batch(value state, value cache, value segs, value flags, value highs,
-            value trace, value pool, intnat nsegs, const int tracing, value ped_cache, value watched, value pose_cache, struct pending_poseidon *queue) {
+            value trace, value pool, intnat nsegs, const int tracing, value ped_cache, value watched, value pose_cache, struct pending_poseidon *queue, const struct temporary_segments *temps) {
   const intnat cache_size = Wosize_val(cache);
   if (Wosize_val(state) < 9 || nsegs < 2 || (uintnat)nsegs > Wosize_val(segs) ||
       (uintnat)nsegs > Wosize_val(flags) || (uintnat)nsegs > Wosize_val(highs))
@@ -160,7 +169,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
     /* Push a frame/stack/immediate operand. The compiler uses [fp-1]
        for the otherwise unused op0, which must still be assigned. */
     if ((shape == 0xe0a || shape == 0xe0e || shape == 0xe06) && (uint16_t)d == 0x8000) {
-      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1] || temporary(stack[fp-1])) break;
+      if (!fits(ap, length) || !fits(fp-1, length) || !stack[fp-1] || needs_relocation(temps, stack[fp-1])) break;
       intnat v;
       if (shape == 0xe06) {
         if (!fits(pc+1, program_length)) break;
@@ -170,7 +179,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
         if (!fits(from, length) || !stack[from]) goto general;
         v = stack[from];
       }
-      if (!v || temporary(v) || temporary(stack[ap]) || (stack[ap] && !same_value(pool, stack[ap], v))) break;
+      if (!v || needs_relocation(temps, v) || needs_relocation(temps, stack[ap]) || (stack[ap] && !same_value(pool, stack[ap], v))) break;
       copy_cell(queue, stack+ap, v); next_ap = ap+1;
       if (next_ap > high) high = next_ap;
       goto complete;
@@ -187,7 +196,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
         intnat n = (a >> 2) + (imm >> 2);
         if (n <= -SMALL_BOUND || n >= SMALL_BOUND) goto general;
         out = small_code(n);
-      } else if ((a & 3) == 2 && !temporary(a)) {
+      } else if ((a & 3) == 2 && !needs_relocation(temps, a)) {
         intnat off = offset(a) + (imm >> 2);
         if ((uintnat)off > OFFSET_MASK) break;
         out = (a & ~((intnat)OFFSET_MASK << 2)) | (off << 2);
@@ -200,7 +209,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
     if (shape == 0x84b) {
       if (fp < 2 || fp > length) break;
       intnat frame = stack[fp-2], ret = stack[fp-1];
-      if (temporary(frame) || (frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != code_seg) break;
+      if (needs_relocation(temps, frame) || (frame & 3) != 2 || (ret & 3) != 2 || (ret >> 42) != code_seg) break;
       next_fp = offset(frame); next_pc = offset(ret);
       goto complete;
     }
@@ -210,7 +219,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
       if ((rel & 3) != 1 || (stack[ap] && stack[ap] != frame) ||
           (stack[ap+1] && stack[ap+1] != ret)) break;
       next_pc = pc+(rel>>2);
-      if (!fits(next_pc - code_base, cache_size)) break;
+      if (next_pc < 0 || next_pc > OFFSET_MASK) break;
       stack[ap] = frame; stack[ap+1] = ret;
       next_ap = next_fp = ap+2;
       if (next_ap > high) high = next_ap;
@@ -224,16 +233,24 @@ general:;
     intnat op0_at = ((d & (UINT64_C(1) << 49)) ? fp : ap) + (int16_t)(offsets >> 16);
     if (!fits(dst_at, length) || !fits(op0_at, length)) break;
     intnat dst = stack[dst_at], a = stack[op0_at];
-    if (temporary(dst) || temporary(a) || (queue && (pending(dst) || pending(a)))) break;
+    if (needs_relocation(temps, dst) || needs_relocation(temps, a) || (queue && (pending(dst) || pending(a)))) break;
     int delta = (int16_t)(offsets >> 32);
     if (op == 0) {
       /* Relative conditional jump, unconditional jump and ap += immediate. */
-      if (src != 1 || !dst || !a || !fits(pc+1, program_length)) break;
-      intnat imm = program[pc+1];
+      if (!dst || !a) break;
+      intnat imm;
+      if (src == 1) {
+        if (!fits(pc+1, program_length)) break;
+        imm = program[pc+1];
+      } else {
+        intnat at = (src == 2 ? fp : ap) + delta;
+        if (src < 2 || ap_update != 1 || !fits(at, length)) break;
+        imm = stack[at];
+      }
       if ((imm & 3) != 1) break;
       if (ap_update == 1) {
         if (pc_update || result) break;
-        next_ap = ap + (imm>>2); next_pc = pc+2;
+        next_ap = ap + (imm>>2); next_pc = pc+1+(src == 1);
       } else {
         next_ap = ap + (ap_update == 2);
         if (pc_update == 3) next_pc = dst == 1 ? pc+2 : pc+(imm>>2);
@@ -256,14 +273,22 @@ general:;
       } else {
         if ((a & 3) != 2) break;
         intnat sg = a >> 42, at = offset(a) + delta;
-        if (!fits(sg, nsegs)) break;
-        value ba = Field(segs, sg);
+        value ba;
+        if (temps && sg < 0) {
+          intnat k = -sg - 1;
+          if (!fits(k, temps->count) || (uintnat)k >= Wosize_val(temps->segments) ||
+              (uintnat)k >= Wosize_val(temps->highs)) break;
+          ba = Field(temps->segments, k);
+        } else {
+          if (!fits(sg, nsegs)) break;
+          ba = Field(segs, sg);
+        }
         if (!fits(at, CAPACITY(ba))) break;
         intnat *cells = CELLS(ba);
-        if (watched) mark_watched(watched, sg, at);
+        if (watched && sg >= 0) mark_watched(watched, sg, at);
         b = cells[at];
         if (!b) {
-          int kind = Long_val(Field(flags, sg));
+          int kind = temps && sg < 0 ? 0 : Long_val(Field(flags, sg));
           /* VM segment flags 5..9 denote the five deducing builtins.
              Their input cells use ordinary write-once assignment. Only
              output offsets require a builtin-specific computation. */
@@ -315,7 +340,7 @@ general:;
           missing = cells+at; missing_at = at; missing_seg = sg;
         }
       }
-      if (temporary(b) || (queue && pending(b) && (result || !a))) break;
+      if (needs_relocation(temps, b) || (queue && pending(b) && (result || !a))) break;
       intnat value_code = b;
       if (!a) {
         if (!result || !b || !dst) break;
@@ -332,7 +357,11 @@ general:;
         copy_cell(queue, missing, b);
         if ((b & 3) == 3 && (b >> 2) == slot) ++slot;
         if (missing_seg == 1) { if (missing_at >= high) high = missing_at+1; }
-        else if (missing_at >= Long_val(Field(highs, missing_seg))) Field(highs, missing_seg) = Val_long(missing_at+1);
+        else {
+          value table = temps && missing_seg < 0 ? temps->highs : highs;
+          intnat i = temps && missing_seg < 0 ? -missing_seg - 1 : missing_seg;
+          if (missing_at >= Long_val(Field(table, i))) Field(table, i) = Val_long(missing_at+1);
+        }
         value_code = dst ? dst : b;
       } else if (!b) break;
       else if (result) {
@@ -340,6 +369,10 @@ general:;
           intnat off = offset(a) + (b >> 2);
           if ((uintnat)off > OFFSET_MASK) break;
           value_code = (a & ~((intnat)OFFSET_MASK << 2)) | (off << 2);
+        } else if (result == 1 && (b & 3) == 2 && (a & 3) == 1) {
+          intnat off = offset(b) + (a >> 2);
+          if ((uintnat)off > OFFSET_MASK) break;
+          value_code = (b & ~((intnat)OFFSET_MASK << 2)) | (off << 2);
         } else {
           if (!(a & b & 1) || result > 2) break;
           int small = 0;
@@ -394,8 +427,8 @@ complete:
 value cvm_cpu_batch(value state, value cache, value segs, value flags, value highs,
                     value trace, value pool, value nsegs, value tracing, value ped_cache) {
   return Bool_val(tracing)
-    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, 0, 0, NULL)
-    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, 0, 0, NULL);
+    ? batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, 0, 0, NULL, NULL)
+    : batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, 0, 0, NULL, NULL);
 }
 
 value cvm_cpu_batch_byte(value *argv, int argc) {
@@ -405,7 +438,7 @@ value cvm_cpu_batch_byte(value *argv, int argc) {
 
 value cvm_cpu_batch_watched(value state, value cache, value segs, value flags, value highs,
                             value trace, value pool, value nsegs, value watched, value ped_cache) {
-  return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched, 0, NULL);
+  return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched, 0, NULL, NULL);
 }
 
 value cvm_cpu_batch_watched_byte(value *argv, int argc) {
@@ -420,7 +453,7 @@ static __attribute__((noinline)) value batch_independent_poseidon(value state,va
   struct pending_poseidon queue;
   queue.count = queue.used = 0;
   return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,
-               Wosize_val(watched) ? watched : 0,pose,&queue);
+               Wosize_val(watched) ? watched : 0,pose,&queue,NULL);
 }
 
 value cvm_cpu_batch_poseidon(value state, value cache, value segs, value flags, value highs,
@@ -428,11 +461,44 @@ value cvm_cpu_batch_poseidon(value state, value cache, value segs, value flags, 
   if (Wosize_val(state) > 12 && Long_val(Field(state,12)))
     return batch_independent_poseidon(state,cache,segs,flags,highs,trace,pool,nsegs,watched,ped,pose);
   if (Wosize_val(watched))
-    return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,watched,pose,NULL);
-  return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,0,pose,NULL);
+    return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,watched,pose,NULL,NULL);
+  return batch(state,cache,segs,flags,highs,trace,pool,Long_val(nsegs),0,ped,0,pose,NULL,NULL);
 }
 
 value cvm_cpu_batch_poseidon_byte(value *v, int argc) {
   (void)argc;
   return cvm_cpu_batch_poseidon(v[0],v[1],v[2],v[3],v[4],v[5],v[6],v[7],v[8],v[9],v[10]);
+}
+
+/* Allocate the deferred Poseidon buffer only for runs which use it. */
+static __attribute__((noinline)) value batch_temporary_poseidon(
+    value state, value cache, value segs, value flags, value highs, value trace, value pool,
+    intnat nsegs, value watched, value ped, value pose, const struct temporary_segments *temps) {
+  struct pending_poseidon queue;
+  queue.count = queue.used = 0;
+  return batch(state, cache, segs, flags, highs, trace, pool, nsegs, 0,
+               ped, watched, pose, &queue, temps);
+}
+
+value cvm_cpu_batch_temporary(value state, value cache, value segs, value flags, value highs,
+    value trace, value pool, value nsegs, value watched, value ped, value pose,
+    value segments, value temp_highs, value rules) {
+  /* The private primitive receives Cpu.run's 15-word register block. */
+  struct temporary_segments temps = {rules, segments, temp_highs, Long_val(Field(state, 13))};
+
+  intnat count = Long_val(nsegs);
+  if (!Wosize_val(watched)) watched = 0;
+  if (!Wosize_val(pose)) pose = 0;
+  if (Long_val(Field(state, 14)))
+    return batch(state, cache, segs, flags, highs, trace, pool, count, 1, ped, watched, 0, NULL, &temps);
+  if (pose && Long_val(Field(state, 12)))
+    return batch_temporary_poseidon(state, cache, segs, flags, highs, trace, pool,
+                                   count, watched, ped, pose, &temps);
+  return batch(state, cache, segs, flags, highs, trace, pool, count, 0, ped, watched, pose, NULL, &temps);
+}
+
+value cvm_cpu_batch_temporary_byte(value *v, int argc) {
+  (void)argc;
+  return cvm_cpu_batch_temporary(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7],
+                                 v[8], v[9], v[10], v[11], v[12], v[13]);
 }

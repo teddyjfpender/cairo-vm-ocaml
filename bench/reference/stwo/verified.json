@@ -1,0 +1,65 @@
+[
+  {
+    "workload": "ret_opcode",
+    "steps": 15,
+    "prover_input_sha256": "e3901f26fef7e4d234c0b0698bff5bd6c85108b99a5ad7ce110a6e545ab20468",
+    "proof_sha256": "f8260d838f9e2bf66f20b44c25c53192871f1dc15f479cb4ff792ba00672f542",
+    "proof_bytes": 8647517,
+    "prover_peak_kib": 3111104,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "poseidon_builtin",
+    "steps": 239,
+    "prover_input_sha256": "54102bcfb3be47c3dcb43ee829b8c8ea2f6712ff63e6db4b38a8d8a3cd42f599",
+    "proof_sha256": "65a972a1b4da4dcff708ea4b512046c6a8f4d27f3cf3333810febac55bf6fccb",
+    "proof_bytes": 11113001,
+    "prover_peak_kib": 3234096,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "pedersen_builtin",
+    "steps": 205,
+    "prover_input_sha256": "8181a15428cc45b1a203b59f5fa14601f55eb3d4efe74ca4d2c448ac84690883",
+    "proof_sha256": "646cc44aba128036aacf9e2490cbba17f2e8be2edc1df53d0d73f1bd628c084f",
+    "proof_bytes": 10290828,
+    "prover_peak_kib": 3214384,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "genesis.boot",
+    "steps": 293211,
+    "prover_input_sha256": "ed095168cc37dda426eba8f55613e95e485ca34c769e014eb491caef9dd10574",
+    "proof_sha256": "3fdb723e0b83caf44bb0bdca2f2e7c273ceeb9f0d6c15fdb4012544dfe86a6e2",
+    "proof_bytes": 14678051,
+    "prover_peak_kib": 3761184,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "multi.boot",
+    "steps": 399910,
+    "prover_input_sha256": "126e088447b049de7b7df3be413d791eb7526184bc78551be7f6c1efdf27a7b1",
+    "proof_sha256": "8a1f4bfaead6217f19f23d221f8ebd34b037d1002ec29cab6026fed5cdd720bc",
+    "proof_bytes": 14546215,
+    "prover_peak_kib": 3913088,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "account.boot",
+    "steps": 454598,
+    "prover_input_sha256": "73bc73cd7b6bc507d599f4403c84d536504a1ca9f11c4346688640a06484b734",
+    "proof_sha256": "e1c38ac510719cb35f78408d6ca370d0d9857b1b8225deafeddfa4efe5622b57",
+    "proof_bytes": 14485353,
+    "prover_peak_kib": 4007712,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "reverted.boot",
+    "steps": 433977,
+    "prover_input_sha256": "366c270a37bc8a07eac547a71a1d3b5e73abbf6fbab31d382072d7ce34c3c062",
+    "proof_sha256": "571b082e24b7ad4980c69eff192b1f402511519005335c56c69c7fbdbf3d4974",
+    "proof_bytes": 14647244,
+    "prover_peak_kib": 4057456,
+    "verifier_exit": 0
+  }
+]

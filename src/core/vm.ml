@@ -3,6 +3,8 @@ open Errors
 open Segment
 open Builtin
 
+type 'a hint_page = 'a array array array
+
 type vm = {
   mutable segs : seg array;
   mutable nsegs : int;
@@ -17,7 +19,8 @@ type vm = {
   (* decoded instruction cache for segment 0: 0 = not decoded *)
   mutable icache : int array;
   (* trace *)
-  runtime_hints : ((int * int), (vm -> unit) array) Hashtbl.t;
+  runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
+  mutable page_hints : (vm -> unit) hint_page;
   code_pages : ((int * int), int array) Hashtbl.t;
   mutable code_seg : int;
   mutable code_base : int;
@@ -54,7 +57,7 @@ let create ~trace =
     fp = 0;
     steps = 0;
     icache = [||];
-    runtime_hints = Hashtbl.create 8;
+    runtime_hints = Hashtbl.create 8; page_hints = [||];
     code_pages = Hashtbl.create 8;
     code_seg = -1; code_base = 0; code_page = [||];
     watched = [||];

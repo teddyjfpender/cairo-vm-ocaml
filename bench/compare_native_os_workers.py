@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from compare_native_os import PRIME
+from compare_native_os import PRIME, embedded_program_digest
 
 
 def run(worker):
@@ -34,8 +34,12 @@ def main():
     args = parser.parse_args()
     if args.pairs < 1:
         parser.error("--pairs must be positive")
+    try:
+        program_hash = embedded_program_digest(args.rust, args.program)
+    except ValueError as error:
+        parser.error(str(error))
     out = csv.writer(sys.stdout, lineterminator="\n")
-    out.writerow(["case", "pair", "first", "rust_s", "ocaml_s", "speedup"])
+    out.writerow(["case", "pair", "first", "rust_s", "ocaml_s", "speedup", "program_sha256"])
     for source in args.inputs:
         with tempfile.TemporaryDirectory() as temp, ExitStack() as stack:
             path = source
@@ -61,7 +65,7 @@ def main():
                     raise ValueError(f"OS output differs for {source}")
                 if i:
                     out.writerow([source.name.split(".json")[0], i, order[0], f"{r[0]:.6f}",
-                                  f"{o[0]:.6f}", f"{r[0]/o[0]:.3f}"])
+                                  f"{o[0]:.6f}", f"{r[0]/o[0]:.3f}", program_hash])
                     sys.stdout.flush()
 
 

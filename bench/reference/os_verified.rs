@@ -8,11 +8,32 @@ use starknet_os::io::os_input::{OsHints, StarknetOsInput};
 use starknet_os::io::os_output::get_run_output;
 use starknet_os::runner::DEFAULT_OS_LAYOUT;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::Path;
 
 fn main() {
     let mut args = std::env::args_os().skip(1);
-    let input = BufReader::new(File::open(args.next().expect("OS input")).unwrap());
+    let first = args.next().expect("OS input or --worker");
+    if first == "--worker" {
+        let path = args.next().expect("OS input");
+        assert!(args.next().is_none());
+        println!("READY");
+        io::stdout().flush().unwrap();
+        for command in io::stdin().lock().lines() {
+            assert_eq!(command.unwrap(), "RUN");
+            run(Path::new(&path), None);
+            println!("DONE");
+            io::stdout().flush().unwrap();
+        }
+    } else {
+        let archive = args.next();
+        assert!(args.next().is_none());
+        run(Path::new(&first), archive.as_deref().map(Path::new));
+    }
+}
+
+fn run(path: &Path, archive: Option<&Path>) {
+    let input = BufReader::new(File::open(path).unwrap());
     let OsHints {
         os_hints_config,
         os_input:
@@ -60,17 +81,17 @@ fn main() {
     runner.read_return_values(missing).unwrap();
 
     #[cfg(feature = "oxcairo_stream")]
-    if let Some(archive) = args.next() {
+    if let Some(archive) = archive {
         runner.vm.segments.compute_effective_sizes();
         let pie = runner.oxcairo_build_pie(false).unwrap();
-        pie.oxcairo_write_stream(
-            std::path::Path::new(&archive),
-            true,
-            Some(&runner.vm.segments.memory),
-        )
-        .unwrap();
+        pie.oxcairo_write_stream(archive, true, Some(&runner.vm.segments.memory))
+            .unwrap();
     }
-    assert!(args.next().is_none(), "unexpected arguments");
+    #[cfg(not(feature = "oxcairo_stream"))]
+    assert!(
+        archive.is_none(),
+        "archive output requires the streaming feature"
+    );
     for word in output {
         println!("{word:#x}");
     }
