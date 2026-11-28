@@ -39,3 +39,17 @@ To reproduce a pair, pass both prepared witnesses and both independently qualifi
 dune exec --profile release bench/witness_decode.exe -- \
   program.json first.oxw second.oxw result.zip first-reference.zip second-reference.zip 2
 ```
+## Guarded resident worker
+
+Six paired rounds used a clean integration of worker `4f7f256` and binary input `0da2c95` on macOS arm64 (merged tree `87df9245c35c490507ae310fe519efb37e471022`). The actual `oxcairo-os-worker pie-v1` executable SHA-256 was `76961f1b0c8450b56c12b25a98bc01a7a4ec61589d7660ae2b3d23cb7000fb50`. The packed program SHA-256 was `e3ec597c011f51959f393dad2aca33f943b068031cac0f6a4fe6ad3f1a7c04b0`. Each process accepted two requests after readiness. The request interval included per-job fork, limits, secure VM execution, stored ZIP writing, SHA-256, durable publication and the JSON reply. All 96 archives matched the corresponding reference bytes. Startup medians were approximately 11 ms and are accounted separately.
+
+| First job → second job | Second, JSON input | Second, OXW1 input |
+| --- | ---: | ---: |
+| 16,000,001 → same | 71.21 ms | 67.34 ms |
+| 16,149,540 → same | 179.50 ms | 186.27 ms |
+| 16,000,001 → 16,149,540 | 168.98 ms | 162.60 ms |
+| 16,149,540 → 16,000,001 | 70.47 ms | 88.89 ms |
+
+The forked VM inherits the prepared program. Class-cache entries created inside one child belong to that child. The guarded run shows mixed format results across block sequences. [Worker receipts](guarded-jobs.jsonl)
+
+Source encoding was timed independently using the Rust fixture adapter. Each path started from the same parsed native `serde_json::Value` model and wrote a new file through flush. The initial buffered parse of the saved JSON fixture took roughly 17 and 40 ms. That parse is outside both encoding and worker intervals. JSON encoding took **5.15 / 13.71 ms** on the small/large fixtures. The reference OXW1 encoder converted the tree into CBOR values and repacked every class. That took **15.48 / 36.63 ms**. These source figures describe the supplied fixture model; native node witness assembly has a different starting representation. [Source receipts](guarded-source.jsonl)

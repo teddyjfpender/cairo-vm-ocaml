@@ -93,17 +93,36 @@ fn main() -> Result<()> {
     if file.metadata()?.len() > MAX_BYTES as u64 {
         return Err("fixture too large".into());
     }
-    let mut doc = cbor(serde_json::from_reader(BufReader::new(file))?)?;
-    frame_classes(&mut doc, "compiled_classes", true)?;
-    frame_classes(&mut doc, "deprecated_compiled_classes", false)?;
-    let payload = encode(&doc)?;
-    if payload.len() > MAX_BYTES {
-        return Err("payload too large".into());
+    let timer = std::time::Instant::now();
+    let source: Json = serde_json::from_reader(BufReader::new(file))?;
+    let parsed = timer.elapsed();
+    let encoding = std::time::Instant::now();
+    let output = File::create_new(&args[1])?;
+    let mut output = FileWriter::new(output);
+    let format = env::var("OXCAIRO_WITNESS_FORMAT").unwrap_or_else(|_| "oxw".to_string());
+    match format.as_str() {
+        "json" => serde_json::to_writer(&mut output, &source)?,
+        "oxw" => {
+            let mut doc = cbor(source)?;
+            frame_classes(&mut doc, "compiled_classes", true)?;
+            frame_classes(&mut doc, "deprecated_compiled_classes", false)?;
+            let payload = encode(&doc)?;
+            if payload.len() > MAX_BYTES {
+                return Err("payload too large".into());
+            }
+            output.write_all(b"OXW1")?;
+            output.write_all(&u32::try_from(payload.len())?.to_be_bytes())?;
+            output.write_all(&payload)?;
+        }
+        _ => return Err("expected json or oxw".into()),
     }
-    let mut output = FileWriter::new(File::create_new(&args[1])?);
-    output.write_all(b"OXW1")?;
-    output.write_all(&u32::try_from(payload.len())?.to_be_bytes())?;
-    output.write_all(&payload)?;
     output.flush()?;
+    let encode_ns = encoding.elapsed().as_nanos() as u64;
+    if env::var_os("OXCAIRO_WITNESS_TIMING").is_some() {
+        println!(
+            "{}",
+            serde_json::json!({"parse_ns":parsed.as_nanos() as u64,"encode_ns":encode_ns,"format":format})
+        );
+    }
     Ok(())
 }
