@@ -145,7 +145,7 @@ let write ?profile ?(compression_level=0) ?output_pages ?output_attributes ?(ped
     Obj
       [
         ("n_steps", int vm.steps);
-        ("n_memory_holes", int (Resources.memory_holes r));
+        ("n_memory_holes", int (Resources.pie_memory_holes r));
         ( "builtin_instance_counter",
           Obj (List.map (fun (k, b) -> (suffix k, int (Resources.used_instances r b))) (by_ord (List.map (fun b -> (b.kind, b)) builtins))) );
       ]
