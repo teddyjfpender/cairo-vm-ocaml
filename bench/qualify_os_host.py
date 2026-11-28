@@ -8,6 +8,8 @@ import re
 import subprocess
 import tempfile
 
+from os_pie_header import output_header
+
 CATEGORIES = {"cairo0-account", "declare", "revert", "large-storage"}
 FELT_PRIME = (1 << 251) + 17 * (1 << 192) + 1
 
@@ -97,7 +99,13 @@ def qualify(manifest, trusted_digest, host):
             require(checksum == reply["sha256"] == case["rust_pie"]["sha256"] and
                     reference.stat().st_size == output.stat().st_size == reply["bytes"],
                     f"complete Rust PIE differs at block {number}")
-            results.append(dict(number=number, block_hash=case["block_hash"], categories=sorted(ids),
+            # The byte comparison above makes this the published header of both engines.
+            public_root, public_number, public_hash = output_header(output)
+            require((public_root, public_number, public_hash) ==
+                    (felt(case["state_root"]), number, felt(case["block_hash"])),
+                    f"PIE public output root, block number or block hash differs at block {number}")
+            results.append(dict(number=public_number, block_hash=hex(public_hash), state_root=hex(public_root),
+                                categories=sorted(ids),
                                 source_sha256=case["source"]["sha256"], witness_sha256=case["witness"]["sha256"],
                                 bytes=reply["bytes"], sha256=checksum))
             output.unlink()
