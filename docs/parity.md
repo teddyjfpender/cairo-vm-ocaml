@@ -269,3 +269,5 @@ reproduce the pinned sequencer's five PIE members. The two multicall witnesses
 contain sixteen and sixty-four repetitions of Keccak, EC and SHA-512 calls within one
 transaction. Run the virtual suite with
 `python3 test/fixtures/os/check.py OCAML_CLI VIRTUAL_OS_JSON --virtual-os`.
+
+Native Starknet contract execution has a separate CASM hint dispatcher. The pinned sequencer forwards core hints to `cairo-lang-runner` 2.19.6, which implements `DebugPrint` and seven deprecated core variants that OxCairo currently lacks. A direct comparison confirmed that Rust accepts a serialized `AssertAllKeysUsed` hint and OxCairo rejects it. None of the eight serialized names appeared in the 33 checked-in OS witnesses examined. This gap concerns CASM contract hints during Starknet execution. The Cairo 0 CLI fixture comparison above uses a separate hint processor.
