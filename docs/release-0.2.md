@@ -2,6 +2,24 @@
 
 The release candidate runs the pinned Starknet OS, Virtual OS and aggregator from native witnesses. Secure replay and several large contract workloads exceed 10× Rust. Short native scenarios, repeated storage and some artifact-emitting workloads remain below the release target.
 
+## Performance after builtin loop and compiler changes
+
+Runtime `86fd938` was measured before including the three release-quality PRs. Timings use fresh processes unless marked warm. Rust comparisons use the stock VM v4 CLI for generic programs and production replay, and the pinned sequencer for native witnesses. The 22 scaled cases include stock and memory-bounded checked sequencer runs, identified in the raw data.
+
+| Workload | Median scenario vs Rust | Ratio of summed case times | At least 10× |
+| --- | ---: | ---: | ---: |
+| Stock OS, 70 cold scenarios | 3.18× | 12.38× | 19/70 |
+| Stock OS, 70 warm shuffled scenarios | 4.81× | 5.43× | 0/70 |
+| Scaled storage, syscalls, deployments, transfers and reverts | 11.39× | 12.31× | 18/22 |
+| Virtual OS and aggregator, public output | 7.15× | 10.36× | 2/10 |
+| Virtual OS and aggregator, output PIE | 20.56× | 22.21× | 9/10 |
+| General Cairo programs, execution | 7.51× | 7.60× | 5/17 |
+| General Cairo programs, trace and memory files | 5.74× | 5.16× | 0/17 |
+
+On the four scaled cases below the target, repeated storage at 4,096 and 8,192 invokes reached 9.75× and 9.16×, the larger mixed-syscall case reached 9.93×, and the 4,096 sequential-update case reached 9.90×. The 9,216-transaction mixed rollback case reached 10.14×. Secure replay reached 15.60× on SN_PIE_2 and 15.56× on SN_PIE_3. Emitting a compressed SN_PIE_2 archive reached 10.78×.
+
+Against the starting OCaml main on this machine, the 17-program suite took 0.949 s versus 0.942 s for execution and 2.445 s versus 2.588 s with trace and memory files. This corresponds to 1.008× execution and 0.945× traced performance. All output comparisons passed. Other projects were running on the host; case medians and summed-time ratios use the raw matched samples. [Pairs, binary digests and parity evidence](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/release/os-performance/bench/results/v0.2.0-m4-max/candidate-86fd938)
+
 ## Full compiler loader refinement
 
 At runtime `16aa093`, the median cold speedup across 70 stock sequencer scenarios was **3.25×**, and **19/70** reached 10×. The Rust case medians summed to 28.16 s, against 2.32 s for OxCairo, or **12.15×**. Each of five rounds shuffled the scenarios and the order of four engines per scenario. Every process returned the same public words. All three OCaml builds used release PGO and read the full compiler JSON.
