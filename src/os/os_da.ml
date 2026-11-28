@@ -66,6 +66,14 @@ let generate_keys entropy_source c vm =
       Felt.of_z (z_of_be (String.sub hash 0 31))) in
   set_val vm c "sn_private_keys" (gen_arg vm keys)
 
+(* The older two-field ABI has no proof-facts segment. Allocating even an
+   empty one changes relocated memory, PIE metadata and memory-hole counts. *)
+let has_tx_proof_facts c =
+  let name = "starkware.starknet.core.os.output.OsCarriedOutputs" in
+  match Hashtbl.find_opt c.prog.P.identifiers name with
+  | Some id -> List.mem_assoc "tx_proof_facts" id.P.i_members
+  | None -> fail "Missing OS output structure %s" name
+
 let register ?(entropy_source=fresh_entropy) ?(pages_enabled=ref false) ~set_pages reg =
   reg "GenerateKeysUsingSha256Hash" (generate_keys entropy_source);
   let segment vm temp = Felt.reloc ((if temp then Vm.add_temp_segment else Vm.add_segment) vm) 0 in
@@ -76,8 +84,8 @@ let register ?(entropy_source=fresh_entropy) ?(pages_enabled=ref false) ~set_pag
   reg "AllocateSegmentsForMessages" (fun c vm ->
       let to_l1 = segment vm true in
       let to_l2 = segment vm true in
-      let facts = segment vm false in
-      set_val vm c "initial_carried_outputs" (gen_arg vm [to_l1; to_l2; facts]));
+      let fields = if has_tx_proof_facts c then [to_l1; to_l2; segment vm false] else [to_l1; to_l2] in
+      set_val vm c "initial_carried_outputs" (gen_arg vm fields));
   reg "ConfigureKzgManager" (fun _ _ -> pages_enabled := true);
   reg "SetProofFactTopology" (fun c vm -> if !pages_enabled then begin
       let start = get_ptr vm c "da_start" and stop = get_ptr vm c "output_ptr" in
