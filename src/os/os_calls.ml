@@ -47,7 +47,7 @@ let current s = match s.current with Some c -> c | None -> fail "Missing OS call
 let pop kind values = match !values with
   | [] -> fail "End of OS %s iterator" kind | v :: rest -> values := rest; v
 
-let register s ~resources ~felt ~next reg =
+let register ~debug s ~resources ~felt ~next reg =
   let exit () =
     let c = current s in
     if List.exists (fun xs -> !xs <> []) [c.inner;c.deployed;c.reads;c.class_reads;c.block_reads] then
@@ -122,16 +122,20 @@ let register s ~resources ~felt ~next reg =
   let mode () = U.to_string (U.member "tracked_resource" (current s).witness) in
   reg "IsSierraGasMode" (fun c vm -> set_val vm c "is_sierra_gas_mode" (of_bool (mode () = "SierraGas")));
   reg "DebugExpectedInitialGas" (fun c vm ->
-      let call = U.member "call" (current s).witness in
-      if not (Felt.equal (felt (U.member "initial_gas" call)) (get_felt vm c "inner_remaining_gas")) then
-        fail "Inconsistent initial contract gas");
+      if debug then begin
+        let call = U.member "call" (current s).witness in
+        if not (Felt.equal (felt (U.member "initial_gas" call)) (get_felt vm c "inner_remaining_gas")) then
+          fail "Inconsistent initial contract gas"
+      end);
   reg "CheckExecutionAndExitCall" (fun c vm ->
-      let execution = U.member "execution" (current s).witness in
-      let gas = felt (U.member "gas_consumed" execution) in
-      let actual = Felt.sub (get_felt vm c "remaining_gas") (get_member vm c "entry_point_return_values" ["gas_builtin"]) in
-      let valid = if mode () = "SierraGas" then Felt.equal actual (Felt.sub gas (Felt.of_z (const_z c "ENTRY_POINT_INITIAL_BUDGET")))
-        else Felt.equal gas Felt.zero in
-      if not valid then fail "Inconsistent predicted contract gas";
+      if debug then begin
+        let execution = U.member "execution" (current s).witness in
+        let gas = felt (U.member "gas_consumed" execution) in
+        let actual = Felt.sub (get_felt vm c "remaining_gas") (get_member vm c "entry_point_return_values" ["gas_builtin"]) in
+        let valid = if mode () = "SierraGas" then Felt.equal actual (Felt.sub gas (Felt.of_z (const_z c "ENTRY_POINT_INITIAL_BUDGET")))
+          else Felt.equal gas Felt.zero in
+        if not valid then fail "Inconsistent predicted contract gas"
+      end;
       let stop = get_member vm c "entry_point_return_values" ["syscall_ptr"] in
       if s.syscall_ptr <> Some stop then fail "Inconsistent syscall end pointer";
       s.syscall_ptr <- None; exit ());

@@ -1,0 +1,40 @@
+{
+  "sequencer_revision": "1860b9850b5c51858c50c0f5038933e49f932eef",
+  "compiler": "0.14.3a3",
+  "cairo_vm": "3.2.0",
+  "programs": {
+    "os": {
+      "program_hash": "0x1420d23187254d4dcf4006fa6ad997b0728f845416bcfd1478c7e8f804fb429",
+      "compact_sha256": "794c90c23d0beda4f34bd061e34c726ddff95bf1eebb441ee2ea9af1951f3c67",
+      "full_sha256": "7cd38280aea304b1fc8a55f9f4666828818cfe8a9f7181539472512e011cee10",
+      "hint_bodies": 241,
+      "hint_inventory_sha256": "adccf340af51ba05090f7e5e8c09e70be0a45fed806f3fcad81e89a11997cf00",
+      "proof_sha256": "9a7edf1008f93f1fcaefd6faedad883f8687d6a845dae9b93a14777a19498925",
+      "bytecode_words": 16376
+    },
+    "virtual_os": {
+      "program_hash": "0x1c7be3225dfb33359b3ba9ffbe1542b7da27879b6d89f47b967e512463fd324",
+      "compact_sha256": "b1eefe1c2a550b1bce4b0c9636bcddb3c5e55f8f807ff87c4117c289d8bf34a1",
+      "full_sha256": "db26c37939bccec80ab38ae55632157e0615745059497d99c82114f1f162ac45",
+      "hint_bodies": 188,
+      "hint_inventory_sha256": "817a3f3f115967ceb227234903bcd87a5f5aa7ac38f341e1bf835e97d7f14835",
+      "proof_sha256": "e56fdd3a22f72bb18c85e48c8cc5ed61fcc0c06c7947772e90ad4c6e3acd25dd",
+      "bytecode_words": 11426
+    },
+    "aggregator": {
+      "program_hash": "0x3e4ce8340259e374200ed856e597a0c0b268d1021119d33573d7c759c5320f9",
+      "compact_sha256": "99f5a0eced2113762c3f2d64f49fc45f5cd3ae535d7ff25b1f60955c55d5057d",
+      "full_sha256": "b5c9c2f4f14e7031756b2623bd1cac1723427fb4c8239e9e59df0a1fe7e79d72",
+      "hint_bodies": 71,
+      "hint_inventory_sha256": "ffd4bf8cfb38177d3cbcaee8da2ab0de9874f8ab6ba778ce0989465bee3c692d",
+      "proof_sha256": "6d417a6bd4aa74e0c5dc81e3212dca73527cb1408dcc19e5e44fc449d383190d",
+      "bytecode_words": 3186
+    }
+  },
+  "standard_hints": {
+    "program_sha256": "33a7ea2dc1d3c7a260b8c94ecae500105de8c386d83669b0266413ac17463f01",
+    "hint_bodies": 14,
+    "trace_sha256": "76d1523e3ff5f1cf3bd8263cd1143daefe31c95c2aa34519c442290a0b64dc31",
+    "memory_sha256": "3b087e84e9fb80f14bc3080a93a4d8d3f00e2fdeff60e5157403cca24f0e83c4"
+  }
+}
