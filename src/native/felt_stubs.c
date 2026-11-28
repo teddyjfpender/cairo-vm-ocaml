@@ -329,17 +329,65 @@ intnat cvm_bits(value pool, intnat a) {
 }
 value cvm_bits_byte(value pool, value a) { return Val_long(cvm_bits(pool, Long_val(a))); }
 
+static inline int blake_word_count(const u64 x[4]) {
+  return (x[1] | x[2] | x[3] | (x[0] >> 63)) ? 8 : 2;
+}
+
+static inline uint32_t blake_word(const u64 x[4], int index) {
+  return (uint32_t)(x[index / 2] >> (32 * (index % 2)));
+}
+
 /* Encode the canonical integer as two or eight big-endian u32s. The long
    form sets bit 255. All output words are immediate OCaml integers. */
 value cvm_blake_u32_words(value pool, value code, value words) {
   if (Wosize_val(words) < 8) return Val_int(0);
   u64 x[4];
   load(pool, Long_val(code), x);
-  int count = (x[1] | x[2] | x[3] | (x[0] >> 63)) ? 8 : 2;
+  int count = blake_word_count(x);
   if (count == 8) x[3] |= UINT64_C(1) << 63;
   for (int i = 0; i < count; ++i)
-    Field(words,count-1-i) = Val_long((uint32_t)(x[i/2] >> ((i & 1) * 32)));
+    Field(words, count - 1 - i) = Val_long(blake_word(x, i));
   return Val_int(count);
+}
+
+/* Both segments are ordinary VM-owned, independently allocated bigarrays.
+   Validate the entire input before the first write. Return zero for scalar
+   fallback, negative required output length for growth, or words written. */
+value cvm_blake_unpack_fresh(value pool, value src, value dst, value bounds) {
+  const intnat first = Long_val(Field(bounds, 0));
+  const intnat count = Long_val(Field(bounds, 1));
+  const intnat offset = Long_val(Field(bounds, 2));
+  const intnat src_capacity = Caml_ba_array_val(src)->dim[0];
+  const intnat dst_capacity = Caml_ba_array_val(dst)->dim[0];
+  const intnat max_end = INT64_C(1) << 40; /* VM relocatable offset width. */
+  if (first < 0 || count <= 0 || count > src_capacity || first > src_capacity - count ||
+      offset < 0 || offset > max_end || count > (max_end - offset) / 8)
+    return Val_int(0);
+
+  const intnat *cells = (const intnat *)Caml_ba_data_val(src) + first;
+  intnat length = 0;
+  for (intnat i = 0; i < count; ++i) {
+    const intnat code = cells[i];
+    if (!(code & 1)) return Val_int(0); /* Missing or relocatable cell. */
+    if ((code & 3) == 1) {
+      length += code > 0 ? 2 : 8; /* Negative immediates are large canonical felts. */
+    } else {
+      length += blake_word_count(SLOT(pool, code >> 2));
+    }
+  }
+  if (offset + length > dst_capacity) return Val_long(-length);
+
+  intnat *out = (intnat *)Caml_ba_data_val(dst) + offset;
+  for (intnat i = 0; i < count; ++i) {
+    u64 x[4];
+    load(pool, cells[i], x);
+    const int n = blake_word_count(x);
+    if (n == 8) x[3] |= UINT64_C(1) << 63;
+    for (int j = 0; j < n; ++j)
+      out[n - 1 - j] = (intnat)blake_word(x, j) * 4 + 1; /* Felt.small */
+    out += n;
+  }
+  return Val_long(length);
 }
 
 /* compare canonical values: -1, 0, 1 */
