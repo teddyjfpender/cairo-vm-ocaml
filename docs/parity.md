@@ -64,7 +64,7 @@ both secp256 curves, deterministic CASM elliptic-curve hints, circuit evaluation
 squashing. All five archive members matched, including 50,537 memory holes. The scaled five-block fixture repeats the upstream Poseidon, Keccak, EC, secp256k1/r1, SHA and circuit invokes 16 times before advancing the state. Its 282 transactions ran 10,954,713 steps with 84,039 memory holes and matched all five sequencer PIE members. The saved reverted
 Invoke and execution-info fixtures also match. Other transaction and syscall paths remain experimental.
 
-Across 74 native inputs captured from the pinned upstream flow tests, 70 matched every Rust PIE member. The remaining four encrypted flows matched four members. Their memory contains freshly generated encryption keys and ciphertext. For all four encrypted cases, the sequencer decoded identical common OS output and plaintext state diffs from Rust and two independently seeded OCaml executions. In commitment mode the upstream validator also recomputed the KZG commitments, evaluations and challenge against each captured DA segment. The archive digests and input identities are in the [flow results](../test/fixtures/os/upstream-flow-results.csv). The checked-in suite includes deprecated calls, a meta-transaction and nested storage rollback.
+Across 74 native inputs captured from the pinned upstream flow tests, 70 matched every Rust PIE member. The remaining four encrypted flows matched four members. Their memory contains freshly generated encryption keys and ciphertext. For all four encrypted cases, the sequencer decoded identical common OS output and plaintext state diffs from Rust and two independently seeded OCaml executions. In commitment mode the upstream validator also recomputed the KZG commitments, evaluations and challenge against each captured DA segment. The archive digests and input identities are in the [flow results](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/test/fixtures/os/upstream-flow-results.csv). The checked-in suite includes deprecated calls, a meta-transaction and nested storage rollback.
 
 The saved inputs and Rust archive member digests include the upstream flow tests
 `test_initial_empty_block`, `test_load_bottom`, `test_new_account_flow` (calldata DA), and
@@ -140,7 +140,7 @@ calldata or blob DA. The four blob files also matched Rust byte for byte.
 Run `python3 test/fixtures/aggregator/check.py OCAML_CLI AGGREGATOR_JSON` with
 the compiled aggregator from sequencer commit
 `ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45`. The Rust reference entry point is
-[aggregator_reference.rs](../bench/aggregator_reference.rs).
+[aggregator_reference.rs](https://github.com/teddyjfpender/cairo-vm-ocaml/blob/e559436e2589f1a10ce4fc6b3dac7a1cdbf4379c/bench/aggregator_reference.rs).
 
 ## Native virtual OS
 
