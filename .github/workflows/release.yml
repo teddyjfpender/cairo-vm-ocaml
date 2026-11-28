@@ -72,16 +72,7 @@ jobs:
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           name="oxcairo-${TAG}-${{ matrix.target }}"
-          mkdir -p "$name"
-          if [ "$RUNNER_OS" = macOS ]; then
-            cp _build/release-cli "$name/cairo-vm-cli"
-            mkdir -p "$name/licenses"
-            cp "$OXC_OPENSSL/LICENSE.txt" "$name/licenses/openssl.txt"
-            cp "$OXC_LIBDEFLATE/COPYING" "$name/licenses/libdeflate.txt"
-          else
-            cp _build/default/bin/main.exe "$name/cairo-vm-cli"
-          fi
-          cp README.md LICENSE CHANGELOG.md "$name/"
-          tar czf "$name.tar.gz" "$name"
-          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          cli=_build/default/bin/main.exe
+          if [ "$RUNNER_OS" = macOS ]; then cli=_build/release-cli; fi
+          python3 scripts/package_release.py "$TAG" "${{ matrix.target }}" "$cli" --output-dir .
           gh release upload "$TAG" "$name.tar.gz" "$name.tar.gz.sha256" --clobber

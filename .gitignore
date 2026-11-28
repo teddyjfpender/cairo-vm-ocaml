@@ -3,3 +3,4 @@ _build/
 *.mem
 site/
 __pycache__/
+dist/
