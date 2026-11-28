@@ -16,7 +16,9 @@ if ids.select_builtin:
         match Hashtbl.find_opt c.refs name with
         | None -> false
         | Some r ->
-            match strip r.Program.r_expr with
+            (* Hintrt.binding takes the address of a top-level Deref. An
+               outer cast would make the dereferenced value the destination. *)
+            match r.Program.r_expr with
             | Program.Deref e ->
                 (match strip e with
                  | Program.Reg_fp -> offset = 0

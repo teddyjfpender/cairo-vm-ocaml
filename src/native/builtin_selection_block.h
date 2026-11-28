@@ -1,22 +1,36 @@
 /* Checked Cairo compiler block for the recursive selectable-builtin loop.
    Match decoded instructions and their literal operands regardless of program
    address. Every memory check precedes the first write. */
+/* Keep the native call bound in sync with Cpu.batch_max. */
+#define BATCH_STEPS 8192
 #define SELECT_FIRST UINT64_C(0x1c2b800080008000)
 
 /* The mask-free comparisons also reject a hint or stop marker on any interior
    instruction. Literal values live in program memory, not the decoded cache. */
-static int match_selection(value cache, intnat i, const intnat *program, intnat pc, int chosen) {
-  const value *ins = Op_val(cache) + i;
+/* inner_select_builtins, word offsets relative to the hint:
+    -6  jnz n_builtins, +4             -4  push selected_encodings; ret
+    -2  ap += 3                         0  assert choice * choice == choice
+     1  assert local_enc = *all_enc     2  assert local_ptr = *all_ptr
+     3  jnz choice, +4                  5  jmp +4
+     7  assert local_enc = *sel_enc     8  assert local_ptr = *sel_ptr
+     9  push all_enc + 1               11  push all_ptr + 1
+    13  push sel_enc + choice          14  push sel_ptr + choice
+    15  push n_builtins - 1            17  call rel -23
+    19  ret
+   The base return (-3) and caller return (19) are checked separately when
+   the process reaches the base case. */
+static int match_selection(value cache, const intnat *program, intnat pc) {
+  const value *ins = Op_val(cache) + pc;
 #define MATCH_AT(k, v) (ins[k] == Val_long(UINT64_C(v)))
-  int common = MATCH_AT(1, 0x1c0380007ff98001) && MATCH_AT(2, 0x1c0380007ffa8002) &&
-               MATCH_AT(3, 0x10f780017fff8000) && program[pc + 4] == small_code(4) &&
-               MATCH_AT(9, 0x1e1680017ff98000) && program[pc + 10] == small_code(1) &&
-               MATCH_AT(11, 0x1e1680017ffa8000) && program[pc + 12] == small_code(1) &&
-               MATCH_AT(13, 0x1e1a80007ffb8000) && MATCH_AT(14, 0x1e1a80007ffc8000) &&
-               MATCH_AT(15, 0x1e1680017ffd8000) && program[pc + 16] == small_code(-1) &&
-               MATCH_AT(17, 0x1784800180018000) && program[pc + 18] == small_code(-23);
-  return common && (chosen ? MATCH_AT(7, 0x1c0380007ffb8001) && MATCH_AT(8, 0x1c0380007ffc8002)
-                           : MATCH_AT(5, 0x108780017fff7fff) && program[pc + 6] == small_code(4));
+  return MATCH_AT(1, 0x1c0380007ff98001) && MATCH_AT(2, 0x1c0380007ffa8002) &&
+         MATCH_AT(3, 0x10f780017fff8000) && program[pc + 4] == small_code(4) &&
+         MATCH_AT(5, 0x108780017fff7fff) && program[pc + 6] == small_code(4) &&
+         MATCH_AT(7, 0x1c0380007ffb8001) && MATCH_AT(8, 0x1c0380007ffc8002) &&
+         MATCH_AT(9, 0x1e1680017ff98000) && program[pc + 10] == small_code(1) &&
+         MATCH_AT(11, 0x1e1680017ffa8000) && program[pc + 12] == small_code(1) &&
+         MATCH_AT(13, 0x1e1a80007ffb8000) && MATCH_AT(14, 0x1e1a80007ffc8000) &&
+         MATCH_AT(15, 0x1e1680017ffd8000) && program[pc + 16] == small_code(-1) &&
+         MATCH_AT(17, 0x1784800180018000) && program[pc + 18] == small_code(-23);
 #undef MATCH_AT
 }
 
@@ -29,17 +43,12 @@ static intnat *plain_slot(value segs, value flags, intnat nsegs, intnat ptr, int
   return fits(off, CAPACITY(ba)) ? CELLS(ba) + off : NULL;
 }
 
-static int select_builtin_block(value cache, intnat i, intnat cache_size, intnat pc,
-                                const intnat *program, intnat program_length, value segs,
-                                value flags, value highs, intnat nsegs, intnat *stack,
-                                intnat length, intnat ap, intnat fp, value pool, value watched,
-                                int chosen, int implicit_hint) {
-  const struct temporary_segments *temps = NULL;
-  if (pc < 6 || pc > program_length - 19 || i > cache_size - 18 || fp < 7 || fp > length - 10 ||
-      ap != fp + 3)
-    return 0;
+static int select_builtin_block(intnat pc, value segs, value flags, value highs, intnat nsegs,
+                                intnat *stack, intnat length, intnat ap, intnat fp, value pool,
+                                value watched, int chosen, int implicit_hint) {
+  if (fp < 7 || fp > length - 10 || ap != fp + 3) return 0;
   if (implicit_hint && stack[fp] && !same_value(pool, stack[fp], small_code(chosen))) return 0;
-  if (!stack[fp - 1] || needs_relocation(temps, stack[fp - 1])) return 0;
+  if (!stack[fp - 1] || needs_relocation(NULL, stack[fp - 1])) return 0;
   const intnat n = stack[fp - 3];
   if ((n & 3) != 1 || n <= small_code(0)) return 0;
   intnat ptrs[4], *slots[4], v[2], args[7];
@@ -53,7 +62,7 @@ static int select_builtin_block(value cache, intnat i, intnat cache_size, intnat
   }
   for (int k = 0; k < 2; ++k) {
     v[k] = *slots[k];
-    if (!v[k] || needs_relocation(temps, v[k])) return 0;
+    if (!v[k] || needs_relocation(NULL, v[k])) return 0;
     if (stack[fp + 1 + k] && !same_value(pool, stack[fp + 1 + k], v[k])) return 0;
     if (chosen && *slots[2 + k] && !same_value(pool, *slots[2 + k], v[k])) return 0;
   }
@@ -95,7 +104,7 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
   if (pc < 6 || pc > CAPACITY(code) - 19 || pc > size - 18 || fp < 7 || fp > len - 10 ||
       ap != fp + 3 ||
       (uint64_t)Long_val(Field(cache, pc)) != (SELECT_FIRST | (UINT64_C(1) << 61)) ||
-      !match_selection(cache, pc, program, pc, 0) || !match_selection(cache, pc, program, pc, 1) ||
+      !match_selection(cache, program, pc) ||
       Field(cache, pc - 6) != Val_long(UINT64_C(0x10f780017fff7ffd)) ||
       program[pc - 5] != small_code(4) ||
       Field(cache, pc - 2) != Val_long(UINT64_C(0x110780017fff7fff)) ||
@@ -112,7 +121,7 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
       if (stack[fp] != small_code(0) && stack[fp] != small_code(1)) break;
       chosen = stack[fp] == small_code(1);
     } else {
-      if (count + 14 > 8192 || fp < 7 || fp > len - 10 || stack[fp - 3] <= small_code(0) ||
+      if (count + 14 > BATCH_STEPS || fp < 7 || fp > len - 10 || stack[fp - 3] <= small_code(0) ||
           (stack[fp - 3] & 3) != 1)
         break;
       chosen = 0;
@@ -126,9 +135,8 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
       }
     }
     int implicit = count != 0;
-    int result = select_builtin_block(cache, pc, size, pc, program, CAPACITY(code), segs, flags,
-                                      highs, nsegs, stack, len, ap + (implicit ? 3 : 0), fp, pool,
-                                      watched, chosen, implicit);
+    int result = select_builtin_block(pc, segs, flags, highs, nsegs, stack, len,
+                                      ap + (implicit ? 3 : 0), fp, pool, watched, chosen, implicit);
     if (!result) break;
     if (implicit) {
       count += 2;
@@ -146,7 +154,7 @@ value cvm_selection_rows(value state, value cache, value segs, value flags, valu
      At zero rows remaining, the base case pushes its result and returns
      through exactly those frames. The caller's own return remains pending. */
   intnat next_pc = pc - 6;
-  if (rows && fits(ap, len) && count + rows + 2 <= 8192 && stack[fp - 3] == small_code(0) &&
+  if (rows && fits(ap, len) && count + rows + 2 <= BATCH_STEPS && stack[fp - 3] == small_code(0) &&
       pc + 19 < size && pc + 19 < CAPACITY(code) &&
       Field(cache, pc - 4) == Val_long(UINT64_C(0x1e0a7ffb7fff8000)) &&
       Field(cache, pc - 3) == Val_long(UINT64_C(0x184b7fff7fff7ffe)) &&
@@ -175,19 +183,41 @@ value cvm_selection_rows_byte(value *v, int argc) {
 }
 
 #define VALIDATE_FIRST UINT64_C(0x10f780017fff7ffd)
+#define PUSH_RANGE_CHECK UINT64_C(0x1e0a7ff97fff8000)
+#define CAIRO_RETURN UINT64_C(0x184b7fff7fff7ffe)
+
+/* Discriminate the common conditional jump before calling the full matcher.
+   An entry marker on a repeated validation row must return to Cpu.run. */
+static inline int validation_entry(value cache, intnat pc, intnat size) {
+  return Field(cache, pc) == Val_long(VALIDATE_FIRST) && pc + 4 < size &&
+         Field(cache, pc + 4) == Val_long(PUSH_RANGE_CHECK);
+}
 
 /* Repeated iterations of validate_builtins, including each call to validate_builtin.
    The four source pointers can refer to caller stack data. The range-check
-   target is a separate integer segment with the builtin's regular width. */
+   target is a separate integer segment with the builtin's regular width.
+   Word offsets relative to validate_builtins:
+    -6  assert start + delta = end     -5  assert width * quotient = delta
+    -4  assert *range_check = quotient -3  push range_check + 1; ret
+     0  jnz n_builtins, +4              2  push range_check; ret
+     4  push range_check                5  push *initial_ptrs
+     6  push *final_ptrs                7  push *widths
+     8  call rel -14                   10  push initial_ptrs + 1
+    12  push final_ptrs + 1            14  push widths + 1
+    16  push n_builtins - 1            18  call rel -18
+    20  ret
+   Offsets 2, 3 and 20 are needed only to unwind a completed recursion. */
 static __attribute__((noinline)) int
-validate_builtins_block(value cache, intnat i, intnat cache_size, intnat pc, const intnat *program,
+validate_builtins_block(value cache, intnat pc, intnat cache_size, const intnat *program,
                         intnat program_length, value segs, value flags, value highs, intnat nsegs,
                         intnat *stack, intnat length, intnat ap, intnat fp, value pool,
-                        value watched, const struct temporary_segments *temps, int available) {
-  if (i < 6 || i > cache_size - 19 || pc < 6 || pc > program_length - 20 || fp < 7 || ap < fp ||
+                        value watched, const struct temporary_segments *temps, int available,
+                        intnat *next_pc, intnat *next_ap, intnat *next_fp) {
+  const intnat initial_fp = fp;
+  if (pc < 6 || pc > cache_size - 19 || pc > program_length - 20 || fp < 7 || ap < fp ||
       ap > length - 15)
     return 0;
-  const value *d = Op_val(cache) + i;
+  const value *d = Op_val(cache) + pc;
 #define AT(k, v) (d[k] == Val_long(UINT64_C(v)))
   if (!(program[pc + 1] == small_code(4) && AT(4, 0x1e0a7ff97fff8000) &&
         AT(5, 0x1e0280007ffa8000) && AT(6, 0x1e0280007ffb8000) && AT(7, 0x1e0280007ffc8000) &&
@@ -288,5 +318,23 @@ validate_builtins_block(value cache, intnat i, intnat cache_size, intnat pc, con
         }
       }
   }
-  return count;
+  if (!count) return 0;
+  int steps = 16 * count;
+  *next_pc = pc;
+  *next_fp = fp;
+  /* Base path (test, push, return) plus count - 1 recursive returns. The
+     caller's own return is the next pc and is charged by its normal step. */
+  if (fits(ap, length) && steps + count + 2 <= available && stack[fp - 3] == small_code(0) &&
+      pc + 20 < cache_size && Field(cache, pc + 2) == Val_long(PUSH_RANGE_CHECK) &&
+      Field(cache, pc + 3) == Val_long(CAIRO_RETURN) &&
+      Field(cache, pc + 20) == Val_long(CAIRO_RETURN) &&
+      (!stack[ap] || same_value(pool, stack[ap], stack[fp - 7]))) {
+    if (!stack[ap]) stack[ap] = stack[fp - 7];
+    ap++;
+    steps += count + 2;
+    *next_fp = initial_fp;
+    *next_pc = pc + 20;
+  }
+  *next_ap = ap;
+  return steps;
 }

@@ -155,7 +155,7 @@ value batch(value state, value cache, value segs, value flags, value highs,
       high < 0 || high > length || ap < 0 || fp < 0) return Val_int(0);
   intnat last_trace = used;
   int completed = 0, permutations = 0;
-  for (; completed < 8192 && fits(pc - code_base, cache_size); ++completed) {
+  for (; completed < BATCH_STEPS && fits(pc - code_base, cache_size); ++completed) {
     if (queue && (queue->used > POSE_COPIES-8 || queue->count == POSE_JOBS)) break;
     uint64_t d = Long_val(Field(cache, pc - code_base));
     /* The caller runs the hints of the first pc only. */
@@ -256,27 +256,21 @@ general:;
       } else {
         next_ap = ap + (ap_update == 2);
         if (pc_update == 3) {
-          next_pc=dst==1?pc+2:pc+(imm>>2);
-          if(!tracing && !queue && code_seg==0 && d==VALIDATE_FIRST && dst>1 && imm==small_code(4) &&
-             Field(cache,pc)==Val_long(VALIDATE_FIRST) && pc+4<cache_size && Field(cache,pc+4)==Val_long(UINT64_C(0x1e0a7ff97fff8000))) {
-            int rows=validate_builtins_block(cache,pc,cache_size,pc,program,program_length,
-              segs,flags,highs,nsegs,stack,length,ap,fp,pool,watched,temps,8192-completed);
-            if(rows) {
-              completed+=16*rows-1; next_pc=pc; next_ap=next_fp=ap+15*rows;
-              if (fits(next_ap,length) && completed+rows+3<=8192 && stack[next_fp-3]==small_code(0) &&
-                  pc+20<cache_size && Field(cache,pc+2)==Val_long(UINT64_C(0x1e0a7ff97fff8000)) &&
-                  Field(cache,pc+3)==Val_long(UINT64_C(0x184b7fff7fff7ffe)) &&
-                  Field(cache,pc+20)==Val_long(UINT64_C(0x184b7fff7fff7ffe)) &&
-                  (!stack[next_ap] || same_value(pool,stack[next_ap],stack[next_fp-7]))) {
-                if (!stack[next_ap]) stack[next_ap]=stack[next_fp-7];
-                completed+=rows+2; next_ap++; next_fp=fp; next_pc=pc+20;
-              }
-              if(next_ap>high)high=next_ap;
+          next_pc = dst == small_code(0) ? pc + 2 : pc + (imm >> 2);
+          if (!tracing && !queue && code_seg == 0 && d == VALIDATE_FIRST &&
+              dst > small_code(0) && imm == small_code(4) &&
+              validation_entry(cache, pc, cache_size)) {
+            int steps = validate_builtins_block(cache, pc, cache_size, program, program_length,
+                segs, flags, highs, nsegs, stack, length, ap, fp, pool, watched, temps,
+                BATCH_STEPS - completed, &next_pc, &next_ap, &next_fp);
+            if (steps) {
+              /* The loop increment counts the last instruction. */
+              completed += steps - 1;
+              if (next_ap > high) high = next_ap;
               goto complete;
             }
           }
-        }
-        else if (pc_update == 2 && !result) next_pc = pc+(imm>>2);
+        } else if (pc_update == 2 && !result) next_pc = pc+(imm>>2);
         else break;
       }
       if (next_ap < 0 || next_ap > OFFSET_MASK || next_pc < 0) break;

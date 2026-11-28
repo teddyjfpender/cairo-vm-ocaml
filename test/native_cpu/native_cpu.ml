@@ -320,9 +320,9 @@ let () =
     "0x482680017ffd8000";"-1";"0x1104800180018000";"-23";"0x208b7fff7fff7ffe" |] in
   let words = Array.map (fun s-> Felt.of_z (Z.of_string s)) raw in
   let op = [0;2;3;4;6;7;8;9;11;13;14;15;17;19;20;21;23;25] in
-  let state size =
+  let state ?(rows=6) size =
     let basic = make_vm words (Array.make size Felt.empty) in
-    let segs = Array.init 6 (fun i-> if i<2 then basic.segs.(i) else seg_make 16) in
+    let segs = Array.init 6 (fun i-> if i<2 then basic.segs.(i) else seg_make (max 16 rows)) in
     let vm={basic with pc=6; ap=19; fp=16; trace_on=false; segs; nsegs=6;
             seg_flag=Array.make 6 k_plain; seg_builtin=Array.make 6 None;
             hi=Array.init 6 (fun i->if i=0 then Array.length words else 0);
@@ -330,8 +330,8 @@ let () =
     List.iter (fun i -> vm.icache.(i)<-decode_word (Felt.to_z words.(i))) op;
     vm.icache.(6)<-vm.icache.(6) lor hint_bit;
     List.iteri (fun i s-> write vm 1 (9+i) (Felt.reloc s 0)) [2;3;4;5];
-    write vm 1 13 (Felt.small 6); write vm 1 14 (Felt.reloc 1 0); write vm 1 15 (Felt.reloc 0 25);
-    for i=0 to 5 do write vm 2 i (Felt.small (i*3)); write vm 3 i (Felt.reloc 3 i) done;
+    write vm 1 13 (Felt.small rows); write vm 1 14 (Felt.reloc 1 0); write vm 1 15 (Felt.reloc 0 25);
+    for i=0 to rows-1 do write vm 2 i (Felt.small (i*3)); write vm 3 i (Felt.reloc 3 i) done;
     List.iteri (fun i n -> write vm 4 i (Felt.small n)) [0;9;15];
     vm in
   let hint vm remaining =
@@ -341,13 +341,14 @@ let () =
     write vm 1 vm.fp (if c then Felt.one else Felt.zero);
     if c then decr remaining in
   let cases = ref 0 and multi = ref 0 in
-  let verify size initial tweak =
-    let vm=state size and refvm=state size in
+  let verify ?(rows=6) size initial tweak =
+    let vm=state ~rows size and refvm=state ~rows size in
     let remaining=ref initial in hint vm remaining; let remref=ref initial in hint refvm remref;
     tweak vm; tweak refvm;
     let regs=Array.make 17 0 in
     regs.(0)<-vm.pc; regs.(1)<-vm.ap; regs.(2)<-vm.fp; regs.(3)<-vm.hi.(1); regs.(15)<- !remaining;
     let steps=select_rows regs vm.icache vm.segs vm.seg_flag vm.hi Felt.pool vm.nsegs vm.watched in
+    assert(steps<=8192);
     for i=0 to steps-1 do
       if i>0 && refvm.pc=6 then hint refvm remref;
       step_instr refvm (refvm.icache.(refvm.pc) land lnot hint_bit)
@@ -373,9 +374,9 @@ let () =
     List.iter (fun v->ignore(verify 128 3 (fun vm->write vm 5 k v))) [Felt.small 2;Felt.reloc 3 k]
   done;
   List.iter (fun s->ignore(verify 128 3 (fun vm->sset vm.segs.(1) 12 (Felt.reloc s 0)))) [0;2;3;4;5];
-  let check_run extra stop budget =
+  let check_run ?(rows=6) extra stop budget =
     let setup () =
-      let vm=state 128 and remaining=ref 3 and observed=ref 0 in
+      let vm=state ~rows (max 128 (rows*10+20)) and remaining=ref 3 and observed=ref 0 in
       sset vm.segs.(1) 15 (Felt.reloc 0 26);
       let rec action vm =
         hint vm remaining;
@@ -401,6 +402,32 @@ let () =
   List.iter (fun extra->
     List.iter (fun stop->check_run extra stop 8192) [0;2;4;6;7;9;11;13;15;20;23;25;26];
     List.iter (check_run extra 26) [0;1;2;10;12;13;25;55;77;8191;8192;10000]) [false;true];
+  (* Sweep the cutoffs for the loop body and its optional unwind. *)
+  for rows=582 to 636 do ignore(verify ~rows 7000 0 no) done;
+  List.iter (check_run ~rows:660 false 26) [8190;8191;8192;8193;8194;16384];
+  let check_reference outer_cast =
+    let open Program in
+    let vm=state 128 and scopes=Hintrt.new_scopes () in
+    Hintrt.enter scopes ["n_selected_builtins", Hintrt.Value Felt.zero];
+    let source n=Deref (Cast (Add (Reg_fp, Int (Z.of_int n)), "felt**")) in
+    let dest=Deref (Cast (Reg_fp,"felt*")) in
+    let dest=if outer_cast then Cast (dest,"felt*") else dest in
+    let references=Array.map (fun r_expr->{r_expr;r_group=0;r_offset=0})
+        [|source (-7);source (-5);dest|] in
+    let program={data=[||];builtins=[];main=None;start=None;end_=None;hints=[];
+                 references;identifiers=Hashtbl.create 0} in
+    if outer_cast then write vm 1 vm.fp (Felt.reloc 5 9);
+    let called=ref false in
+    Builtin_selection.register (fun code compile ->
+      if String.starts_with ~prefix:"#" code then begin
+        let hint={code;scopes=["test"];h_group=0;h_offset=0;ref_ids=[
+            "test.all_encodings",0;"test.selected_encodings",1;"test.select_builtin",2]} in
+        compile (Hintrt.make_ctx program scopes hint) vm;
+        called:=true
+      end);
+    assert(!called && Option.is_some vm.selection = not outer_cast);
+    assert(Felt.equal (if outer_cast then get vm 5 9 else get vm 1 vm.fp) Felt.zero) in
+  check_reference false; check_reference true;
   Printf.printf "checked %d selection states, %d fused multiple hints\n" !cases !multi
 
 external batch_watched : int array -> int array -> seg array -> flag array -> int array ->
@@ -418,7 +445,7 @@ let () =
   let ops=[0;1;2;3;5;6;8;9;10;11;12;13;14;16;18;20;22;24;26] in
   let state size count =
     let basic=make_vm words (Array.make size Felt.empty) in
-    let segs=Array.init 6 (fun k->if k<2 then basic.segs.(k) else seg_make 16) in
+    let segs=Array.init 6 (fun k->if k<2 then basic.segs.(k) else seg_make (max 16 count)) in
     let vm={basic with pc=6;fp=16;ap=17;segs;nsegs=6;trace_on=false;seg_flag=Array.make 6 k_plain;
       icache=Array.make 27 0;seg_builtin=Array.make 6 None;
       hi=Array.init 6 (fun i->if i=0 then Array.length words else 0);
@@ -427,7 +454,7 @@ let () =
     List.iteri (fun i s->write vm 1 (9+i) (Felt.reloc s 0)) [2;3;4;5];
     write vm 1 13 (Felt.small count); write vm 1 14 (Felt.reloc 1 3); write vm 1 15 (Felt.reloc 0 27);
     vm.seg_flag.(2)<-flag_of Range_check;
-    for i=0 to 8 do
+    for i=0 to max 8 (count-1) do
       let value off=if i mod 2=0 then Felt.reloc (11+i) off else Felt.small off in
       write vm 3 i (value i); write vm 4 i (value (i+i*3)); write vm 5 i (Felt.small 3)
     done; vm in
@@ -437,6 +464,7 @@ let () =
     tweak vm;tweak reference;
     let regs=[|vm.pc; vm.ap; vm.fp; vm.hi.(1);0;!Felt.pool_n;0;0;0;0;0;0;0;0;0|] in
     let count=batch_watched regs vm.icache vm.segs vm.seg_flag vm.hi vm.trace Felt.pool vm.nsegs vm.watched [||] in
+    assert(count<=8192);
     for i=0 to count-1 do
       let d=reference.icache.(reference.pc) in
       if i>0 then assert(d land hint_bit=0);
@@ -472,4 +500,8 @@ let () =
       [Felt.empty;Felt.small (-3);Felt.zero;Felt.reloc 7 4]) [3;4;5];
     List.iter (fun v ->ignore(verify 220 8 (fun vm->write vm 2 i v))) [Felt.zero;Felt.small i]
   done;
+  (* 512 full rows fill an 8192-step native batch exactly. Rows near 481
+     exercise the independent cutoff for the base case and recursive returns. *)
+  for rows=478 to 516 do ignore(verify 8000 rows no) done;
+  assert(verify 8000 512 no=8192);
   Printf.printf "checked %d validation states against scalar interpreter\n" !tests
