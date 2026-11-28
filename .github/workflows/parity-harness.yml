@@ -1,0 +1,47 @@
+name: Parity harness regressions
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  fault-injection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 test/test_parity.py -v
+
+  native-smoke:
+    runs-on: ubuntu-24.04
+    env:
+      OXCAML_SWITCH: 5.2.0+ox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: starkware-libs/cairo-vm
+          ref: 3c3f112d8a40ec465bde6b59e2c659df39b7dbc6 # v4.0.0
+          path: _rust
+      - run: sudo apt-get update && sudo apt-get install -y opam libgmp-dev autoconf automake rsync
+      - uses: actions/cache@v4
+        with:
+          path: ~/.opam
+          key: oxcaml-linux-x86_64-${{ env.OXCAML_SWITCH }}-v1
+      - name: Build and test OxCairo
+        run: |
+          git config --global maintenance.auto false
+          git config --global gc.auto 0
+          [ -d ~/.opam ] || opam init --bare -y --disable-sandboxing
+          opam switch list --short | grep -qx "$OXCAML_SWITCH" || opam switch create "$OXCAML_SWITCH" \
+            --repos ox=git+https://github.com/oxcaml/opam-repository.git,default -y
+          opam install --switch "$OXCAML_SWITCH" -y dune zarith yojson
+          opam exec --switch "$OXCAML_SWITCH" -- dune build --profile release bin/main.exe
+          opam exec --switch "$OXCAML_SWITCH" -- dune test --profile release
+      - name: Build pinned Rust CLI
+        working-directory: _rust
+        run: cargo build --locked --release -p cairo-vm-cli
+      - name: Check real execution and reviewed rejections
+        run: |
+          python3 test/parity.py _rust/target/release/cairo-vm-cli _build/default/bin/main.exe \
+            test/parity_fixtures/core --expect-rejections test/parity_fixtures/core-rejections.json --verbose

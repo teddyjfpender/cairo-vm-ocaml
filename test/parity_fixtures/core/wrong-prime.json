@@ -1,0 +1,17 @@
+{
+  "prime": "0x11",
+  "builtins": [],
+  "data": [
+    "0x208b7fff7fff7ffe"
+  ],
+  "identifiers": {
+    "__main__.main": {
+      "pc": 0,
+      "type": "function"
+    }
+  },
+  "hints": {},
+  "reference_manager": {
+    "references": []
+  }
+}
