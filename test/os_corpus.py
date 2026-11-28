@@ -119,13 +119,33 @@ print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256
         receipt = check(manifest)
         self.assertEqual(receipt["cases"][0]["sha256"], pie["sha256"])
         self.assertEqual(receipt["cases"][0]["state_root"], "0xb")
+        # A later covering anchor may have a different root (the case above).
+        # At the sampled height both L1 roots must also match the sample root.
+        exact = copy.deepcopy(manifest)
+        exact_anchor = dict(fold["l1_anchor"], covered_through=123)
+        exact["cases"][0]["fold_receipt"] = self.write("exact-fold", dict(fold, l1_anchor=exact_anchor))
+        with self.assertRaisesRegex(ValueError, "^block 123: L1 anchor at sampled height"):
+            check(exact)
+        exact_anchor.update(derived_root="0x00b", contract_root="0xb")
+        exact["cases"][0]["fold_receipt"] = self.write("exact-fold", dict(fold, l1_anchor=exact_anchor))
+        self.assertEqual(check(exact)["cases"], receipt["cases"])
+
+        for field in ("source", "witness", "rust_pie", "fold_receipt"):
+            with self.subTest(asset=field):
+                invalid = copy.deepcopy(manifest)
+                artifact = invalid["cases"][0][field]
+                invalid["cases"][0][field] = dict(artifact, sha256="0" * 64)
+                with self.assertRaisesRegex(ValueError, "^block 123: asset digest mismatch") as refused:
+                    check(invalid)
+                self.assertIn(artifact["path"], str(refused.exception))
+
         # Both engines publish the same ZIP, but the authenticated independent
         # fold and manifest may identify a different root.
         wrong = copy.deepcopy(manifest)
         wrong["cases"][0]["state_root"] = "0xe"
         changed_fold = dict(fold, derived_root="0xe", header_root="0xe")
         wrong["cases"][0]["fold_receipt"] = self.write("other-fold", changed_fold)
-        with self.assertRaisesRegex(ValueError, "PIE public output"):
+        with self.assertRaisesRegex(ValueError, "^block 123: PIE public output"):
             check(wrong)
         for offset in [3, 5]:
             words = [0, 11, 122, 123, 9, 10, 0, 1, 0, 1]
@@ -133,7 +153,7 @@ print(json.dumps(dict(schema=1,status='ok',bytes=len(data),sha256=hashlib.sha256
             changed = copy.deepcopy(manifest)
             changed["cases"][0]["rust_pie"] = self.pie(words)
             changed["cases"][0]["source"] = changed["cases"][0]["rust_pie"]
-            with self.assertRaisesRegex(ValueError, "PIE public output"):
+            with self.assertRaisesRegex(ValueError, "^block 123: PIE public output"):
                 check(changed)
         # Restore the exact original ZIP bytes for the whole-job copy observer.
         (self.root/"reference.zip").write_bytes(original_bytes)
