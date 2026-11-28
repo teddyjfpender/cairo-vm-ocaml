@@ -1,0 +1,16 @@
+{
+  "baseline_runtime": "89f3c0a9ea1142ed2acde617ec97a6d23f04805c",
+  "measured_candidate": "ac12c696b4e9c27d0b4ef61a39ec7b09c90394c9",
+  "integrated_candidate": "db2bfe685d1b363c6f1fae3796edd628caa437c3",
+  "program_sha256": "2325e4b7e440c4e5a3f5601585f1b7eb05cc13f2ce6394d5fd640c2e7d9c6ded",
+  "binary_sha256": {
+    "before": {
+      "cairo-vm-cli": "6edbf9cc0732b20e3865508e53ce31d4e3250284604d80e4d07a140e7c9d5930",
+      "native-worker": "57935b21c9b9fd63954cf5477be3ddc9ba04de787a3d78ed8eacbeb28a24d866"
+    },
+    "after": {
+      "cairo-vm-cli": "bab5888545b065aa24033fbecddb6cab797bca365b9a7cf2b186b96643a5d5c5",
+      "native-worker": "f1feb0d604b4a77cdc0fe42b832381c2aeef440eeab2e3ab0d2e90dd58f327b7"
+    }
+  }
+}
