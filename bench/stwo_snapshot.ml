@@ -1,19 +1,42 @@
 open Cairovm
 
 let () =
-  let prog = Program.load_file Sys.argv.(1) in
-  let cfg = Runner.{layout="all_cairo_stwo"; trace=true; secure_run=false;
+  let program = ref None and output = ref None and witness = ref None in
+  let layout = ref "all_cairo_stwo" and legacy = ref false in
+  let set_witness kind path =
+    if Option.is_some !witness then raise (Arg.Bad "supply one witness");
+    witness := Some (kind, path)
+  in
+  let args = [
+    "--layout", Arg.Set_string layout, "NAME proof-mode layout";
+    "--legacy", Arg.Set legacy, "allow Cairo VM 3.2 instructions";
+    "--bootloader", Arg.String (set_witness `Bootloader), "FILE bootloader task";
+    "--os", Arg.String (set_witness `Os), "FILE Starknet OS input";
+    "--virtual-os", Arg.String (set_witness `Virtual), "FILE Virtual OS input";
+    "--aggregator", Arg.String (set_witness `Aggregator), "FILE aggregator input";
+  ] in
+  let positional path = match !program, !output with
+    | None, _ -> program := Some path
+    | Some _, None -> output := Some path
+    | _ -> raise (Arg.Bad "too many paths")
+  in
+  Arg.parse args positional "stwo_snapshot PROGRAM SNAPSHOT [OPTIONS]";
+  let required = function Some p -> p | None -> invalid_arg "expected PROGRAM SNAPSHOT" in
+  let prog = Program.load_file (required !program) and destination = required !output in
+  let cfg = Runner.{layout= !layout; trace=true; secure_run=false;
                     allow_missing_builtins=true; entrypoint="main"} in
-  let runner = match Array.to_list Sys.argv with
-    | [_; _; _] | [_; _; _; "--legacy"] -> Runner.initialize ~proof:true cfg prog
-    | [_; _; _; "--bootloader"; path] -> Bootloader.initialize ~proof:true ~path cfg prog
-    | [_; _; _; "--os"; path] -> Os_hints.initialize ~proof:true ~path cfg prog
-    | _ -> invalid_arg "PROGRAM SNAPSHOT [--bootloader INPUT | --os INPUT]" in
-  runner.vm.allow_legacy_instructions <- List.mem "--legacy" (Array.to_list Sys.argv);
+  let runner = match !witness with
+    | None -> Runner.initialize ~proof:true cfg prog
+    | Some (`Bootloader,path) -> Bootloader.initialize ~proof:true ~path cfg prog
+    | Some (`Os,path) -> Os_hints.initialize ~proof:true ~path cfg prog
+    | Some (`Virtual,path) -> Os_hints.initialize ~virtual_os:true ~proof:true ~path cfg prog
+    | Some (`Aggregator,path) -> Aggregator.initialize ~proof:true ~path cfg prog
+  in
+  runner.vm.allow_legacy_instructions <- !legacy;
   Runner.run_until_end runner;
   Finalize.end_run ~disable_trace_padding:true ~fill_holes:true runner ~secure:false ~allow_missing:true;
   let vm = runner.vm in
-  Out_channel.with_open_bin Sys.argv.(2) (fun oc ->
+  Out_channel.with_open_bin destination (fun oc ->
     let fmt f = Printf.fprintf oc f in
     let sep i = if i > 0 then output_char oc ',' in
     output_string oc "{\"memory\":[";

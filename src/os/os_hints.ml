@@ -75,7 +75,7 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
       ~state_initialized:(fun () -> Option.is_some !state_entries) reg in
   let calls = Os_calls.create () and secp = Os_secp.create () in
   Deprecated_syscalls.register ~os_program calls ~felt reg;
-  let begin_transactions = Os_transactions.register ~source ~virtual_os ~calls ~block ~felt reg in
+  let begin_transactions = Os_transactions.register ~os_program ~source ~virtual_os ~calls ~block ~felt reg in
   let structures = Felt_tbl.create (List.length classes) in
   Os_class_hash.register ~accessed ~structures reg;
   Os_da.register ~set_pages reg;

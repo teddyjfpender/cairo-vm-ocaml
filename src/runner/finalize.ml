@@ -40,6 +40,16 @@ let read_return_values r ~allow_missing =
       r.exec_public <- o :: r.exec_public
     done
 
+let output_public_offsets size = function
+  | [] -> List.init size (fun offset -> offset, 0)
+  | pages ->
+      let page_ids = Array.make size 0 in
+      List.iter (fun (id, (start, length)) ->
+          if length < 0 || start < 0 || (length > 0 && (length > size || start > size - length))
+          then fail "Output page extends past the used output segment";
+          if length > 0 then Array.fill page_ids start length id) pages;
+      List.init size (fun offset -> offset, page_ids.(offset))
+
 let finalize_segments ~disable_trace_padding r =
   let size = Array.length r.prog.data in
   Hashtbl.replace r.seg_sizes 0 size;
@@ -50,7 +60,7 @@ let finalize_segments ~disable_trace_padding r =
       let _, size = try used_and_allocated ~disable_trace_padding r b with Insufficient m -> fail "Failed to finalize segments: %s" m in
       Hashtbl.replace r.seg_sizes b.base size;
       Hashtbl.replace r.public_offsets b.base
-        (if b.kind = Output then List.init (used_cells r b) (fun i -> (i, 0)) else []))
+        (if b.kind = Output then output_public_offsets (used_cells r b) r.output_pages else []))
     r.vm.builtins;
   if r.zero_seg >= 0 then begin
     Hashtbl.replace r.seg_sizes r.zero_seg r.zero_size;

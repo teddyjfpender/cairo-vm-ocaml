@@ -70,5 +70,23 @@
     "proof_bytes": 12030087,
     "prover_peak_kib": 3822192,
     "verifier_exit": 0
+  },
+  {
+    "workload": "genesis.direct",
+    "steps": 7010,
+    "prover_input_sha256": "815a8155b01b4e07bbe934e723d75f21d1a3a4bd6caccb2ee96c66e8a1d3fd50",
+    "proof_sha256": "b2fcc2f3c86d6e60b35df8cc0cfcbedf7150e47f739488bcbcdcf54daa782015",
+    "proof_bytes": 17694954,
+    "prover_peak_kib": 2643728,
+    "verifier_exit": 0
+  },
+  {
+    "workload": "multi.direct",
+    "steps": 113709,
+    "prover_input_sha256": "1838a4d91a5cc9dd9c7f0ff68c898cb7c41f169e114a97866be7e4b9a5798ec7",
+    "proof_sha256": "5c9fe65c8a61418fd053049cade05b648af5692909bdc7b71626ac9c231a534d",
+    "proof_bytes": 17513090,
+    "prover_peak_kib": 2363680,
+    "verifier_exit": 0
   }
 ]

@@ -39,3 +39,23 @@ verify --proof_path proof.json
 The saved receipts give the input and proof digests, proof lengths and sampled peak RSS. The proofs used Blake2s, the upstream canonical-small preprocessed trace, 70 FRI queries and 26 proof-of-work bits. The explicit lifting sizes bound the prover's twiddle allocation. Canonical-small excludes the EC-op builtin. The all-builtins fixture passed adapted-input equality and is outside the verified-proof table. This qualification covers the recorded upstream fixtures and four sequencer-generated OS tasks. The additional account, reverted invoke and multiblock executions also produced identical complete prover inputs from the two VMs. Use the same OS proof parameters for those tasks.
 
 The upstream `all_opcode_components` fixture uses a valid cairo-vm 3.2 generic conditional jump. Add `--legacy` to the snapshot command for this fixture. The native CLI exposes the same compatibility setting as `--allow_legacy_instructions`. The default decoder follows v4.0.0. All 1,495 steps produced the same adapted input as Rust, and the independent verifier accepted its proof with the fixture parameters.
+
+## Direct proof-mode compilation of the OS
+
+The stock sequencer embeds the execution-mode compiler image. For a direct proof, compile the pinned OS source with its Cairo 0 compiler and proof entry point. The compiler embeds source paths in its debug information. Run the following with the pinned sequencer's Cairo source directory in `CAIRO_ROOT`.
+
+```sh
+cairo-compile "$CAIRO_ROOT/starkware/starknet/core/os/os.cairo" --proof_mode \
+  --debug_info_with_source --cairo_path "$CAIRO_ROOT" --output os-proof.json
+```
+
+Install `raw_os_snapshot.rs` and `snapshot_common.rs` next to each other in the sequencer's `starknet_os/examples/` directory. Build the example with the `deserialize,testing` features. The bootloader snapshot example uses the same serializer. Run the four versioned witnesses under both layouts with the release exporter and the independent reference.
+
+```sh
+python3 bench/reference/stwo/check_raw_os.py os-proof.json \
+  _build/default/bench/stwo_snapshot.exe /path/to/raw_os_snapshot /path/to/ocaml_snapshot
+```
+
+Genesis and the multiblock witness execute directly in `all_cairo_stwo`. Both complete adapted inputs matched Rust and upstream Stwo verified both proofs with `os-params.json`. In `all_cairo`, all four raw state snapshots matched across trace rows, memory cells, builtin segments, and output page assignments. The upstream Stwo adapter rejects this layout's ECDSA builtin. In `all_cairo_stwo`, both VMs reject the direct account and reverted-transaction witnesses when the OS logger reads a missing builtin pointer. Their bootloader proofs above remain independently reproducible.
+
+The direct aggregator's four-block storage and five-block syscall witnesses also produced matching adapted inputs. The pinned prover rejected both while converting a field value to a 128-bit integer. These two are input-equality checks only.

@@ -23,9 +23,11 @@ let pop item queue =
   | head :: tail -> queue := tail; head
   | [] -> fail "End of OS %s iterator" item
 
-let register ~source ~virtual_os ~calls:call_state ~block ~felt reg =
+let register ~os_program ~source ~virtual_os ~calls:call_state ~block ~felt reg =
   let txs = ref [] and infos = ref [] and active = ref None and info = ref None in
   let calls = ref [] in
+  let offsets = lazy (Os_resources.builtin_offsets os_program) in
+  let resources = Os_resources.snapshot offsets and entering = ref None in
   let next_tx () = Json_reader.from_offset source (U.to_int (pop "transaction" txs)) in
   let tx () = match !active with Some t -> t | None -> fail "Missing active OS transaction" in
   let tx_info () = match !info with Some i -> i | None -> fail "Missing active execution info" in
@@ -47,8 +49,11 @@ let register ~source ~virtual_os ~calls:call_state ~block ~felt reg =
       active := Some t;
       let name = match t.kind with "Invoke" -> "INVOKE_FUNCTION" | "Declare" -> "DECLARE"
         | "DeployAccount" -> "DEPLOY_ACCOUNT" | "L1Handler" -> "L1_HANDLER" | _ -> fail "Unknown transaction type" in
-      set_val vm c "tx_type" (Os_block_hash.ascii name));
-  Os_calls.register call_state ~felt ~next:(fun () -> pop "call info" calls) reg;
+      set_val vm c "tx_type" (Os_block_hash.ascii name);
+      if Option.is_some !entering then fail "Already in OS transaction";
+      entering := Some (resources c vm));
+  let check_calls_closed = Os_calls.register call_state ~resources ~felt
+      ~next:(fun () -> pop "call info" calls) reg in
   let start () =
     if !info <> None then fail "Execution info already active";
     let item = pop "transaction execution info" infos in
@@ -68,7 +73,12 @@ let register ~source ~virtual_os ~calls:call_state ~block ~felt reg =
   reg "StartTx" (fun _ _ -> start ());
   reg "EndTx" (fun _ _ -> finish ());
   reg "SkipTx" (fun _ _ -> start (); finish ());
-  reg "ExitTx" (fun c vm -> ignore (get_ptr vm c "range_check_ptr"));
+  reg "ExitTx" (fun c vm -> match !entering with
+      | None -> fail "Exit before entering OS transaction"
+      | Some first ->
+          check_calls_closed ();
+          Os_resources.check_progress first (resources c vm);
+          entering := None);
   reg "TxVersion" (fun c vm -> set_val vm c "tx_version" (tx ()).version);
   reg "ContractAddress" (fun c vm ->
       let t = tx () in

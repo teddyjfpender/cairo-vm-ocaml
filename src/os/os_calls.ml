@@ -47,19 +47,21 @@ let current s = match s.current with Some c -> c | None -> fail "Missing OS call
 let pop kind values = match !values with
   | [] -> fail "End of OS %s iterator" kind | v :: rest -> values := rest; v
 
-let register s ~felt ~next reg =
+let register s ~resources ~felt ~next reg =
   let exit () =
     let c = current s in
     if List.exists (fun xs -> !xs <> []) [c.inner;c.deployed;c.reads;c.class_reads;c.block_reads] then
       fail "Unconsumed call execution witnesses";
     s.current <- None in
   let logged = ref [] in
-  let selector c vm = ignore (get_ptr vm c "range_check_ptr"); get_felt vm c "selector" in
-  let enter_syscall c vm = logged := selector c vm :: !logged in
+  let selector c vm = get_felt vm c "selector" in
+  let enter_syscall c vm = logged := (selector c vm, resources c vm) :: !logged in
   reg "LogEnterSyscall" enter_syscall;
   reg "OsLoggerEnterSyscallPrepareExitSyscall" enter_syscall;
   reg "OsLoggerExitSyscall" (fun c vm ->
-      if not (Felt.equal (pop "logged syscalls" logged) (selector c vm)) then fail "Unexpected syscall exit");
+      let expected, first = pop "logged syscalls" logged in
+      if not (Felt.equal expected (selector c vm)) then fail "Unexpected syscall exit";
+      Os_resources.check_progress first (resources c vm));
   let check_response prefix c vm =
     let first = get_member vm c "response" [prefix ^ "retdata_start"] in
     let last = get_member vm c "response" [prefix ^ "retdata_end"] in
@@ -132,4 +134,5 @@ let register s ~felt ~next reg =
       if not valid then fail "Inconsistent predicted contract gas";
       let stop = get_member vm c "entry_point_return_values" ["syscall_ptr"] in
       if s.syscall_ptr <> Some stop then fail "Inconsistent syscall end pointer";
-      s.syscall_ptr <- None; exit ())
+      s.syscall_ptr <- None; exit ());
+  fun () -> if !logged <> [] then fail "Unclosed syscalls at transaction exit"
