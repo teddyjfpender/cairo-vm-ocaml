@@ -1,0 +1,18 @@
+[package]
+name = "oxcairo-pie-archive"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Pinned Cairo PIE container compressor without a Cairo VM dependency"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+zip = { version = "=0.6.6", default-features = false, features = ["deflate"] }
+flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+miniz_oxide = "=0.8.9"
+
+[profile.release]
+panic = "abort"

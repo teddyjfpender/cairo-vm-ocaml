@@ -176,7 +176,7 @@ def child(stage, parent):
     env = {"PATH": "", "LC_ALL": "C", "OXCAIRO_HOST_DETERMINISTIC": "1", "OXCAIRO_HOST_MEMORY_BYTES": str(lim["memory_bytes"])}
     exe = Path(__file__).absolute().with_name("cairo-vm-cli")
     argv = [str(exe), *arguments, "--layout", "all_cairo", "--max_steps", str(lim["steps"]),
-            "--cairo_pie_output", str(stage / "out")]
+            "--pie_profile", "rust-3.2", "--cairo_pie_output", str(stage / "out")]
     if sys.platform != "darwin":
         os.execve(exe, argv, env)
     # macOS lacks Linux's parent-death signal. Keep a parent for the native

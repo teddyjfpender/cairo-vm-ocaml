@@ -297,9 +297,9 @@ let run ?source ?(allow_legacy_instructions=false) ~layout ~trace ~secure ~allow
   if secure then check_compatibility r pie ~cell_count ~pages:!pages ~attributes:!attributes;
   { runner = r; output_pages = !pages; output_attributes = !attributes; pedersen_extra = !pedersen_extra }
 
-let write_output ?compression_level ~secure ~merge_extra_segments result path =
+let write_output ?profile ?compression_level ~secure ~merge_extra_segments result path =
   let main = Option.get result.runner.prog.main in
-  Pie.write ?compression_level ~output_pages:result.output_pages ~output_attributes:result.output_attributes
+  Pie.write ?profile ?compression_level ~output_pages:result.output_pages ~output_attributes:result.output_attributes
     ~pedersen_extra:result.pedersen_extra result.runner ~main ~secure ~merge_extra_segments path
 
 let replay_file ?(layout = "all_cairo") ?trace ?memory ?output path =
