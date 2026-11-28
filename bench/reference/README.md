@@ -66,3 +66,5 @@ python3 bench/compare_native_os.py --kind virtual-os --mode both --pairs 5 \
   --max-rss-mib 2048 --rust /path/to/related_workers --ocaml /path/to/cairo-vm-cli \
   --program /path/to/virtual_os_bytes test/fixtures/os/virtual-multicall-64.json.gz
 ```
+
+For native runs that emit both relocated trace and relocated memory, install `os_traced.rs` as a sequencer example and build it with `deserialize,testing`. Run `os_traced os WITNESS OUTPUT_DIRECTORY` or select `virtual-os` or `aggregator`. This diagnostic uses Cairo VM's secure execution, the pinned sequencer hint processor, relocation and the upstream binary encoders. It writes `trace.bin` and `memory.bin` and prints public output. Compare against the corresponding OxCairo input flag with `--layout all_cairo --trace_file trace.bin --memory_file memory.bin --print_output`. Trace entries occupy 24 bytes and populated memory entries occupy 40 bytes. Record the two engines' output hashes and sizes before releasing temporary files.

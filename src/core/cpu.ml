@@ -388,7 +388,7 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm (hints : (vm -> unit) array arra
   if cached <> 0 then vm.icache.(stop_pc) <- cached lor hint_bit;
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
-  let poseidon = if vm.trace_on then None else List.find_opt (fun b -> b.kind = Poseidon) vm.builtins in
+  let poseidon = List.find_opt (fun b -> b.kind = Poseidon) vm.builtins in
   let registers = Array.make 15 0 in
   registers.(14) <- Bool.to_int vm.trace_on;
   let first = vm.steps in

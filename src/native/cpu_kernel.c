@@ -438,6 +438,8 @@ value cvm_cpu_batch_byte(value *argv, int argc) {
 
 value cvm_cpu_batch_watched(value state, value cache, value segs, value flags, value highs,
                             value trace, value pool, value nsegs, value watched, value ped_cache) {
+  if (Wosize_val(state) > 14 && Long_val(Field(state, 14)))
+    return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped_cache, watched, 0, NULL, NULL);
   return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 0, ped_cache, watched, 0, NULL, NULL);
 }
 
@@ -458,6 +460,9 @@ static __attribute__((noinline)) value batch_independent_poseidon(value state,va
 
 value cvm_cpu_batch_poseidon(value state, value cache, value segs, value flags, value highs,
                              value trace, value pool, value nsegs, value watched, value ped, value pose) {
+  if (Wosize_val(state) > 14 && Long_val(Field(state, 14)))
+    return batch(state, cache, segs, flags, highs, trace, pool, Long_val(nsegs), 1, ped,
+                 Wosize_val(watched) ? watched : 0, pose, NULL, NULL);
   if (Wosize_val(state) > 12 && Long_val(Field(state,12)))
     return batch_independent_poseidon(state,cache,segs,flags,highs,trace,pool,nsegs,watched,ped,pose);
   if (Wosize_val(watched))
@@ -490,7 +495,7 @@ value cvm_cpu_batch_temporary(value state, value cache, value segs, value flags,
   if (!Wosize_val(watched)) watched = 0;
   if (!Wosize_val(pose)) pose = 0;
   if (Long_val(Field(state, 14)))
-    return batch(state, cache, segs, flags, highs, trace, pool, count, 1, ped, watched, 0, NULL, &temps);
+    return batch(state, cache, segs, flags, highs, trace, pool, count, 1, ped, watched, pose, NULL, &temps);
   if (pose && Long_val(Field(state, 12)))
     return batch_temporary_poseidon(state, cache, segs, flags, highs, trace, pool,
                                    count, watched, ped, pose, &temps);

@@ -142,8 +142,8 @@ let () =
 
 (* Install CASM hints after the contract's instruction page has been decoded.
    Both jumps stay in the same segment and cross the native batch boundary. *)
-let () =
-  let vm = create ~trace:false in
+let check_watched_code trace =
+  let vm = create ~trace in
   ignore (add_segment vm); ignore (add_segment vm);
   let code = add_segment vm in
   let jump = Felt.of_z (Z.of_string "0x10780017fff7fff") in
@@ -162,7 +162,15 @@ let () =
   assert (vm.pc = 0 && counters = [|9000; 9000|]);
   for i = 0 to 3 do assert (watched_range vm (Felt.reloc code i) 1) done;
   assert (not (watched_range vm (Felt.reloc code 4) 1));
-  assert (vm.tlen = 0)
+  if trace then begin
+    assert (vm.tlen = 26200);
+    for i = 0 to vm.tlen - 1 do
+      let next, seg, pc, ap, fp = Resources.trace_entry vm.trace i in
+      assert (next = i+1 && seg = code && pc = 2 * (i mod 2) && ap = 1 && fp = 1)
+    done
+  end else assert (vm.tlen = 0)
+
+let () = List.iter check_watched_code [false; true]
 
 let () =
   let vm = create ~trace:false in

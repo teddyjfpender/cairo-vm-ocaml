@@ -140,14 +140,18 @@ let register ?on_da ~os_program ~watch ~accessed ~set_pages {document=hints; sou
 
 let initialize_input ?on_da ?image ?layout_def ?(record_trace=true) ~proof hints cfg prog =
   let runner = ref None in
-  let watch = not (record_trace || cfg.Runner.trace || proof) in
+  let trace = record_trace || cfg.Runner.trace || proof in
+  (* Execution-mode class witnesses only query segment ranges registered while
+     loading CASM. Track these directly even when the caller also wants a trace.
+     Proof-mode resource accounting still consumes the complete trace. *)
+  let watch = not proof in
   let accessed ptr length =
     let r = Option.get !runner in
     if watch then Vm.watched_range r.Runner.vm ptr length else Resources.range_accessed r ptr length in
   let set_pages pages attributes =
     let r = Option.get !runner in r.output_pages <- pages; r.output_attributes <- attributes in
   let compile_hint = register ?on_da ~os_program:prog ~watch ~accessed ~set_pages hints in
-  let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof { cfg with Runner.trace = not watch } prog in
+  let r = Runner.initialize ?image ?layout_def ~compile_hint ~proof { cfg with Runner.trace = trace } prog in
   runner := Some r;
   r
 
