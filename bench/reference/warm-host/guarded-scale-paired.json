@@ -1,0 +1,22 @@
+[
+  {
+    "case": "100-1",
+    "paired_stored_ratio": 2.417946909416375,
+    "paired_ox_codec_ratio": 1.3057953986778623
+  },
+  {
+    "case": "1000-1",
+    "paired_stored_ratio": 2.963322010545503,
+    "paired_ox_codec_ratio": 1.0700475682465205
+  },
+  {
+    "case": "1000-4",
+    "paired_stored_ratio": 2.8272953439195243,
+    "paired_ox_codec_ratio": 1.1472081187034624
+  },
+  {
+    "case": "500-1",
+    "paired_stored_ratio": 3.0663217419257607,
+    "paired_ox_codec_ratio": 1.0015863201917792
+  }
+]

@@ -44,3 +44,16 @@ Two independent worker launches per arm and shape measured request two after the
 The interval runs from submission of the prepared JSON witness through return of a complete PIE. These two workers run in process. The separately measured guarded interface adds per-job isolation, archive hashing, atomic replacement and durability. Scale medians use two independent second-job pairs per point. The small sample and local filesystem matter when interpreting closely spaced results.
 
 To regenerate, apply scale-witness.patch to the pinned sequencer checkout. Run the release test with the deserialize feature, setting SCALE_TX, SCALE_BLOCKS and SCALE_OUTPUT to the desired count, block count and a fresh output file. Use the native Cairo 2.19.5 compiler for the flow contract when preparing the witness. Hex-encode the ASCII value of os_hints_config.chain_info.chain_id for the wire format accepted by both consumers. The generator's program crate used previously built assets in this experiment. OS execution for both comparison arms used the identical 17,259-word node OS in the paired worker benchmark. Use the native warm-host controller and product Rust reference from [the paired comparison](https://github.com/teddyjfpender/cairo-vm-ocaml/pull/92).
+
+### Guarded endpoint and compression choice
+
+A separate run used one process sequence per case and arm. Following a first request, the controller measured three more submissions and checked every canonical PIE member against the frozen Rust archive. All 48 requests matched. The OxCairo endpoint enforces its job limits and returns after hashing, syncing and atomically publishing. The Rust worker returns after close. Stored-to-stored ratios are medians of within-request ratios.
+
+| Transactions and blocks | Rust stored ms | Guarded OxCairo stored ms | Paired stored speedup | Guarded OxCairo fast-1 ms |
+| --- | ---: | ---: | ---: | ---: |
+| 100 in one | 222 | 92 | 2.42× | 71 |
+| 500 in one | 724 | 211 | 3.07× | 219 |
+| 1,000 in one | 1,238 | 421 | 2.96× | 392 |
+| 1,000 in four | 1,542 | 481 | 2.83× | 448 |
+
+On the single block with 1,000 transfers, fast-1 reduced the archive from 290.23 MB to 43.74 MB. The 500-transfer case had slower median latency with fast-1 despite its smaller archive. Compression acceptance depends on the downstream consumer.
