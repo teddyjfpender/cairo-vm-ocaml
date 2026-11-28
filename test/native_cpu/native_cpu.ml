@@ -309,3 +309,167 @@ let () =
   Cpu.step vm;
   assert (vm.pc = 4 && vm.steps = 2);
   assert (Array.length vm.icache = 0 || vm.icache.(0) = 0)
+external select_rows : int array -> int array -> seg array -> flag array -> int array ->
+  Felt.pool -> int -> Bytes.t array -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
+
+let () =
+  let raw = [| "0x20780017fff7ffd";"4";"0x480a7ffb7fff8000";"0x208b7fff7fff7ffe";
+    "0x40780017fff7fff";"3";"0x404b800080008000";"0x400380007ff98001";"0x400380007ffa8002";
+    "0x20780017fff8000";"4";"0x10780017fff7fff";"4";"0x400380007ffb8001";"0x400380007ffc8002";
+    "0x482680017ff98000";"1";"0x482680017ffa8000";"1";"0x482a80007ffb8000";"0x482a80007ffc8000";
+    "0x482680017ffd8000";"-1";"0x1104800180018000";"-23";"0x208b7fff7fff7ffe" |] in
+  let words = Array.map (fun s-> Felt.of_z (Z.of_string s)) raw in
+  let op = [0;2;3;4;6;7;8;9;11;13;14;15;17;19;20;21;23;25] in
+  let state size =
+    let basic = make_vm words (Array.make size Felt.empty) in
+    let segs = Array.init 6 (fun i-> if i<2 then basic.segs.(i) else seg_make 16) in
+    let vm={basic with pc=6; ap=19; fp=16; trace_on=false; segs; nsegs=6;
+            seg_flag=Array.make 6 k_plain; seg_builtin=Array.make 6 None;
+            hi=Array.init 6 (fun i->if i=0 then Array.length words else 0);
+            watched=Array.init 6 (fun _->Bytes.make 16 '\000'); icache=Array.make 26 0} in
+    List.iter (fun i -> vm.icache.(i)<-decode_word (Felt.to_z words.(i))) op;
+    vm.icache.(6)<-vm.icache.(6) lor hint_bit;
+    List.iteri (fun i s-> write vm 1 (9+i) (Felt.reloc s 0)) [2;3;4;5];
+    write vm 1 13 (Felt.small 6); write vm 1 14 (Felt.reloc 1 0); write vm 1 15 (Felt.reloc 0 25);
+    for i=0 to 5 do write vm 2 i (Felt.small (i*3)); write vm 3 i (Felt.reloc 3 i) done;
+    List.iteri (fun i n -> write vm 4 i (Felt.small n)) [0;9;15];
+    vm in
+  let hint vm remaining =
+    let ptr i=get vm 1 (vm.fp+i) in
+    let readptr i=let v=ptr i in get vm (Felt.rseg v) (Felt.roff v) in
+    let c= !remaining>0 && Felt.equal (readptr (-7)) (readptr (-5)) in
+    write vm 1 vm.fp (if c then Felt.one else Felt.zero);
+    if c then decr remaining in
+  let cases = ref 0 and multi = ref 0 in
+  let verify size initial tweak =
+    let vm=state size and refvm=state size in
+    let remaining=ref initial in hint vm remaining; let remref=ref initial in hint refvm remref;
+    tweak vm; tweak refvm;
+    let regs=Array.make 17 0 in
+    regs.(0)<-vm.pc; regs.(1)<-vm.ap; regs.(2)<-vm.fp; regs.(3)<-vm.hi.(1); regs.(15)<- !remaining;
+    let steps=select_rows regs vm.icache vm.segs vm.seg_flag vm.hi Felt.pool vm.nsegs vm.watched in
+    for i=0 to steps-1 do
+      if i>0 && refvm.pc=6 then hint refvm remref;
+      step_instr refvm (refvm.icache.(refvm.pc) land lnot hint_bit)
+    done;
+    assert(regs.(15)= !remref && regs.(0)=refvm.pc && regs.(1)=refvm.ap &&
+           regs.(2)=refvm.fp && regs.(3)=refvm.hi.(1));
+    vm.hi.(1)<-regs.(3);
+    Array.iteri (fun k seg ->
+      assert(vm.hi.(k)=refvm.hi.(k)); assert(vm.watched.(k)=refvm.watched.(k));
+      for i=0 to slen seg-1 do assert(Felt.equal (sget seg i) (sget refvm.segs.(k) i)) done) vm.segs;
+    incr cases; if regs.(16)>0 then incr multi;
+    steps in
+  let no _=() in
+  assert(verify 128 3 no>60);
+  List.iter (fun s-> List.iter (fun n -> ignore(verify s n no)) [0;1;2;3;7]) [24;25;26;35;36;45;66;128];
+  for k=0 to 25 do ignore(verify 128 3 (fun vm->vm.icache.(k)<-vm.icache.(k) lor hint_bit)) done;
+  for k=17 to 85 do
+    List.iter (fun v -> ignore(verify 128 3 (fun vm->write vm 1 k v)))
+      [Felt.one;Felt.small (-2);Felt.reloc 1 0]
+  done;
+  for k=0 to 5 do
+    List.iter (fun s-> ignore(verify 128 3 (fun vm->sset vm.segs.(s) k Felt.empty))) [2;3;4];
+    List.iter (fun v->ignore(verify 128 3 (fun vm->write vm 5 k v))) [Felt.small 2;Felt.reloc 3 k]
+  done;
+  List.iter (fun s->ignore(verify 128 3 (fun vm->sset vm.segs.(1) 12 (Felt.reloc s 0)))) [0;2;3;4;5];
+  let check_run extra stop budget =
+    let setup () =
+      let vm=state 128 and remaining=ref 3 and observed=ref 0 in
+      sset vm.segs.(1) 15 (Felt.reloc 0 26);
+      let rec action vm =
+        hint vm remaining;
+        vm.selection_remaining <- !remaining;
+        vm.selection <- armed
+      and descriptor={action;publish=(fun n->remaining:=n)}
+      and armed=Some descriptor in
+      let handlers=Array.make 26 [||] in
+      handlers.(6)<-(if extra then [|action;(fun _->incr observed)|] else [|action|]);
+      vm,remaining,observed,handlers in
+    let vm,n,o,handlers=setup() and reference,nr,orr,refhandlers=setup() in
+    run ~stop:(0,stop) ~steps:budget vm handlers;
+    while reference.pc<>stop && reference.steps<budget do
+      Array.iter (fun f->f reference) refhandlers.(reference.pc);
+      step_instr reference (reference.icache.(reference.pc) land lnot hint_bit)
+    done;
+    assert(vm.pc=reference.pc && vm.fp=reference.fp && vm.ap=reference.ap &&
+           vm.steps=reference.steps && vm.hi=reference.hi && vm.watched=reference.watched &&
+           !n= !nr && !o= !orr && vm.selection=None);
+    Array.iteri (fun k seg->for i=0 to slen seg-1 do
+        assert(Felt.equal (sget seg i) (sget reference.segs.(k) i))
+      done) vm.segs in
+  List.iter (fun extra->
+    List.iter (fun stop->check_run extra stop 8192) [0;2;4;6;7;9;11;13;15;20;23;25;26];
+    List.iter (check_run extra 26) [0;1;2;10;12;13;25;55;77;8191;8192;10000]) [false;true];
+  Printf.printf "checked %d selection states, %d fused multiple hints\n" !cases !multi
+
+external batch_watched : int array -> int array -> seg array -> flag array -> int array ->
+  seg -> Felt.pool -> int -> Bytes.t array -> Felt.t array -> int =
+  "cvm_cpu_batch_watched_byte" "cvm_cpu_batch_watched" [@@noalloc]
+
+let () =
+  let raw=[|"0x48297ffb80007ffc";"0x48487ffd80007fff";"0x400280007ffa7fff";
+    "0x482680017ffa8000";"1";"0x208b7fff7fff7ffe";"0x20780017fff7ffd";"4";"0x480a7ff97fff8000";
+    "0x208b7fff7fff7ffe";"0x480a7ff97fff8000";"0x480280007ffa8000";"0x480280007ffb8000";
+    "0x480280007ffc8000";"0x1104800180018000";"-14";"0x482680017ffa8000";"1";
+    "0x482680017ffb8000";"1";"0x482680017ffc8000";"1";"0x482680017ffd8000";"-1";
+    "0x1104800180018000";"-18";"0x208b7fff7fff7ffe"|] in
+  let words=Array.map (fun s->Felt.of_z (Z.of_string s)) raw in
+  let ops=[0;1;2;3;5;6;8;9;10;11;12;13;14;16;18;20;22;24;26] in
+  let state size count =
+    let basic=make_vm words (Array.make size Felt.empty) in
+    let segs=Array.init 6 (fun k->if k<2 then basic.segs.(k) else seg_make 16) in
+    let vm={basic with pc=6;fp=16;ap=17;segs;nsegs=6;trace_on=false;seg_flag=Array.make 6 k_plain;
+      icache=Array.make 27 0;seg_builtin=Array.make 6 None;
+      hi=Array.init 6 (fun i->if i=0 then Array.length words else 0);
+      watched=Array.init 6 (fun _->Bytes.make 16 '\000')} in
+    List.iter (fun i->vm.icache.(i)<-decode_word (Felt.to_z words.(i))) ops;
+    List.iteri (fun i s->write vm 1 (9+i) (Felt.reloc s 0)) [2;3;4;5];
+    write vm 1 13 (Felt.small count); write vm 1 14 (Felt.reloc 1 3); write vm 1 15 (Felt.reloc 0 27);
+    vm.seg_flag.(2)<-flag_of Range_check;
+    for i=0 to 8 do
+      let value off=if i mod 2=0 then Felt.reloc (11+i) off else Felt.small off in
+      write vm 3 i (value i); write vm 4 i (value (i+i*3)); write vm 5 i (Felt.small 3)
+    done; vm in
+  let tests=ref 0 in
+  let verify size n tweak =
+    let vm=state size n and reference=state size n in
+    tweak vm;tweak reference;
+    let regs=[|vm.pc; vm.ap; vm.fp; vm.hi.(1);0;!Felt.pool_n;0;0;0;0;0;0;0;0;0|] in
+    let count=batch_watched regs vm.icache vm.segs vm.seg_flag vm.hi vm.trace Felt.pool vm.nsegs vm.watched [||] in
+    for i=0 to count-1 do
+      let d=reference.icache.(reference.pc) in
+      if i>0 then assert(d land hint_bit=0);
+      step_instr reference (d land lnot hint_bit)
+    done;
+    vm.hi.(1)<-regs.(3);
+    assert(regs.(0)=reference.pc && regs.(1)=reference.ap && regs.(2)=reference.fp && vm.hi=reference.hi);
+    Array.iteri (fun k seg ->
+      Bytes.iteri (fun i bit ->
+        let actual=Bytes.get vm.watched.(k) i in
+        if actual<>bit then begin
+          (* The native interpreter can probe the next indirect operand before
+             returning it to scalar deduction. It can mark only that address. *)
+          assert(bit='\000' && actual='\001');
+          let d=reference.icache.(reference.pc) in
+          assert((d lsr 50) land 3=0);
+          let base=if d land (1 lsl 49)<>0 then reference.fp else reference.ap in
+          let ptr=get reference 1 (base+((d lsr 16) land 0xffff)-32768) in
+          assert(Felt.is_reloc ptr && Felt.rseg ptr=k &&
+                 Felt.roff ptr+((d lsr 32) land 0xffff)-32768=i)
+        end) reference.watched.(k);
+      for i=0 to slen seg-1 do assert(Felt.equal (sget seg i) (sget reference.segs.(k) i)) done) vm.segs;
+    incr tests; count in
+  let no _=() in
+  assert(verify 220 8 no>128);
+  List.iter (fun size -> List.iter (fun n->ignore(verify size n no)) [0;1;2;5;8]) [22;32;47;63;78;93;110;220];
+  List.iter (fun k->ignore(verify 220 8 (fun vm->vm.icache.(k)<-vm.icache.(k) lor hint_bit))) ops;
+  for i=17 to 120 do
+    List.iter (fun v->ignore(verify 220 8 (fun vm->write vm 1 i v))) [Felt.one;Felt.small (-1);Felt.reloc 1 2]
+  done;
+  for i=0 to 7 do
+    List.iter (fun s-> List.iter (fun v->ignore(verify 220 8 (fun vm->sset vm.segs.(s) i v)))
+      [Felt.empty;Felt.small (-3);Felt.zero;Felt.reloc 7 4]) [3;4;5];
+    List.iter (fun v ->ignore(verify 220 8 (fun vm->write vm 2 i v))) [Felt.zero;Felt.small i]
+  done;
+  Printf.printf "checked %d validation states against scalar interpreter\n" !tests

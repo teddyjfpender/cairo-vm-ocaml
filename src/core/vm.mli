@@ -23,6 +23,8 @@ type vm = {
   mutable fp : int;
   mutable steps : int;
   mutable icache : int array;  (** decoded words of segment 0, 0 = not decoded *)
+  mutable selection : selection option;
+  mutable selection_remaining : int;  (** count published by the last selection hint *)
   runtime_hints : ((int * int), (vm -> unit) hint_page) Hashtbl.t;
   mutable page_hints : (vm -> unit) hint_page;
   code_pages : ((int * int), int array) Hashtbl.t;
@@ -44,6 +46,11 @@ type vm = {
   mutable relocating : bool;
       (** reads translate temporary relocatables when a rule exists *)
   mutable had_temp : bool;
+}
+
+and selection = {
+  action : vm -> unit;
+  publish : int -> unit;
 }
 
 val create : trace:bool -> vm

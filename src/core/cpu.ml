@@ -359,6 +359,9 @@ external cpu_batch_temporary : int array -> int array -> seg array -> flag array
   seg -> pool -> int -> Bytes.t array -> Felt.t array -> Felt.t array -> seg array -> int array -> Felt.t array -> int
   = "cvm_cpu_batch_temporary_byte" "cvm_cpu_batch_temporary" [@@noalloc]
 
+external selection_rows : int array -> int array -> seg array -> flag array -> int array ->
+  pool -> int -> Bytes.t array -> int = "cvm_selection_rows_byte" "cvm_selection_rows" [@@noalloc]
+
 let register_runtime_hints vm ~segment ~pc handlers =
   if segment <= 0 || not (seg_ok vm segment) || pc < 0 then fail "Invalid runtime hint location";
   (* Group hints by instruction page. Allocate only the occupied groups
@@ -389,13 +392,14 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
   let nh = Array.length hints in
   let pedersen = List.find_opt (fun b -> b.kind = Pedersen) vm.builtins in
   let poseidon = List.find_opt (fun b -> b.kind = Poseidon) vm.builtins in
-  let registers = Array.make 15 0 in
+  let registers = Array.make 17 0 in
   registers.(14) <- Bool.to_int vm.trace_on;
   let first = vm.steps in
   while not (vm.pc_seg = stop_seg && vm.pc = stop_pc) && vm.steps - first < steps do
     let pc = vm.pc in
     let hinted = vm.pc_seg = 0 && pc >= 0 && pc < nh && Array.length (Array.unsafe_get hints pc) <> 0 in
     if hinted then begin
+      vm.selection <- None;
       incr hint_steps;
       Array.iter (fun h -> h vm) (Array.unsafe_get hints pc)
     end;
@@ -416,8 +420,24 @@ let run_inner ~stop ~steps vm (hints : (vm -> unit) array array) =
         registers.(10) <- vm.pc_seg;
         registers.(11) <- if vm.pc_seg = 0 then 0 else vm.code_base;
         let ped_cache = match pedersen with Some b -> b.cache | None -> [||] in
+        (* Repeated selection is legal only when the hint that just ran is
+           the sole handler here. Its compiled binding and the C instruction
+           matcher independently verify the Cairo frame and bytecode. *)
+        let recurred =
+          match vm.selection with
+          | Some descriptor when hinted && not vm.trace_on && Array.length hints.(pc) = 1 &&
+                                 hints.(pc).(0) == descriptor.action ->
+              vm.selection <- None;
+              registers.(15) <- vm.selection_remaining;
+              registers.(16) <- 0;
+              let count = selection_rows registers cache vm.segs vm.seg_flag vm.hi pool vm.nsegs vm.watched in
+              if registers.(15) <> vm.selection_remaining then descriptor.publish registers.(15);
+              hint_steps := !hint_steps + registers.(16);
+              count
+          | _ -> 0 in
         let count =
-          if vm.ntsegs > 0 then begin
+          if recurred > 0 then recurred
+          else if vm.ntsegs > 0 then begin
             registers.(13) <- vm.ntsegs;
             let pose = match poseidon with Some b -> b.cache | None -> [||] in
             cpu_batch_temporary registers cache vm.segs vm.seg_flag vm.hi vm.trace pool vm.nsegs
@@ -453,4 +473,4 @@ let run ?(stop = (0, -1)) ?(steps = max_int) vm hints =
      matching end hint. Restore the caller's cache mode on every return. *)
   let previous = batch_pedersen_cache_active () in
   Fun.protect (fun () -> run_inner ~stop ~steps vm hints)
-    ~finally:(fun () -> ignore (batch_pedersen_cache previous))
+    ~finally:(fun () -> vm.selection <- None; ignore (batch_pedersen_cache previous))
