@@ -104,6 +104,7 @@ and emits a JSON line with `status: "ready"` and `program_sha256`. Use a digest
 from the operator's qualified revision manifest. For a packed program, pin the
 digest produced by the trusted packing procedure above. The operator selects
 the program and digest on the command line. Requests cannot change either.
+On Linux with v0.3.0, set `OXCAIRO_HOST_MEMORY_BYTES=4294967296` in the worker environment before launch for the default 4 GiB operator ceiling. Use the configured ceiling in bytes if it is smaller. An unbounded startup reservation can otherwise cause the first job to return `memory_limit`.
 The installed host directly executes its sibling `oxcairo-os-worker pie-v1`
 for this protocol. The warm path requires no Python interpreter.
 
@@ -133,8 +134,7 @@ check. The worker hashes and syncs its completed file before publication, then
 syncs the destination directory. Memory accounting includes the inherited
 runtime and program. Linux applies an address-space cap, and macOS samples
 resident memory. Set the memory budget for both the template and the job.
-`publication` supports `stored`, `rust-3.2`, `os-host-production`, and the default
-`os-host-standard`, as described above.
+In v0.3.0, resident `publication` accepts `stored`, `rust-3.2`, and the default `os-host-standard`. The single-request host also supports `os-host-production`. The resident worker gained that profile on main after the v0.3.0 tag.
 The worker also accepts `fast-1` for level-one deflate with separate extra
 segments. Its uncompressed contents match the stored profile. Record the
 chosen codec and linked compression library when comparing archive digests.

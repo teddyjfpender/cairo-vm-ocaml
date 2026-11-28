@@ -28,6 +28,8 @@ nav:
   - Getting started: getting-started.md
   - Learn:
       - Overview: learn/index.md
+      - Walk through a VM in OCaml: vm-walkthrough.md
+      - Generate and replay a PIE: pie-walkthrough.md
       - 1. The Cairo machine: learn/cairo-machine.md
       - 2. Values and Felt.t: learn/values.md
       - 3. Memory and segments: learn/memory.md
@@ -36,6 +38,7 @@ nav:
       - 6. Runs, relocation and proofs: learn/runs-and-proofs.md
   - Architecture: architecture.md
   - Reference:
+      - Version 0.3 release: release-0.3.md
       - Version 0.2 qualification: release-0.2.md
       - VM execution contract: EXECUTION_CONTRACT.md
       - OS host protocol: os-host.md

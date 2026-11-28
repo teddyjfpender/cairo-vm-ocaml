@@ -3,6 +3,8 @@
 These chapters explain how a Cairo VM works and how this one is built. Each builds on the one
 before, and each ends with exercises and worked solutions.
 
+Follow a runnable example through [instructions, registers and memory](../vm-walkthrough.md), then [generate and replay an OS PIE](../pie-walkthrough.md).
+
 | Chapter | You will learn |
 | --- | --- |
 | [1. The Cairo machine](cairo-machine.md) | field elements, write-once memory, the three registers, the step |

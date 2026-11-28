@@ -40,23 +40,24 @@ Each of the first two instructions occupies two program cells. The second cell h
 
 ## Run it through the typed OCaml API
 
-Define a small Dune executable linked against the repository's public `cairo-vm-ocaml` library.
+Save this stanza as `walkthrough/dune`. It links against the public `cairo-vm-ocaml` library.
 
-```sh
-cat > walkthrough/dune <<'DUNE'
+```lisp
 (executable
  (name inspect)
  (libraries cairo-vm-ocaml))
-DUNE
+```
 
-cat > walkthrough/inspect.ml <<'OCAML'
+Save the following as `walkthrough/inspect.ml`. Each trace row gives the registers before a step. The runner also exposes the final write-once memory, so you can look up the values those registers addressed.
+
+```ocaml
 open Cairovm
 
 let () =
   let program : Program.t = Program.load_file Sys.argv.(1) in
   let config = { Cairo_run.default_config with trace = true } in
   let run : Runner.t = Cairo_run.run ~config program in
-  let vm = run.vm in
+  let vm : Vm.vm = run.vm in
 
   let rec print_steps step cursor =
     if cursor < vm.tlen then begin
@@ -69,7 +70,7 @@ let () =
   print_steps 0 0;
 
   for offset = 0 to vm.ap - 1 do
-    let cell = Vm.read vm 1 offset in
+    let cell : Felt.t = Vm.read vm 1 offset in
     let value =
       if cell = Felt.empty then "empty"
       else if Felt.is_reloc cell then
@@ -79,8 +80,9 @@ let () =
     Printf.printf "memory[1:%d] = %s\n" offset value
   done;
   Printf.printf "%d steps\n" vm.steps
-OCAML
+```
 
+```sh
 dune exec --profile release walkthrough/inspect.exe -- walkthrough/add.json
 ```
 
