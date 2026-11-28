@@ -6,6 +6,10 @@
 - Replay large OS PIEs with bounded memory, stream output archives, and embed secure replay through the versioned C API. The binary distribution includes the CLI, shared library and C header.
 - Verify ten Stwo proofs, including direct OS genesis and multiblock proofs and four OS tasks inside the proof-mode bootloader. Independent Rust runs supply the reference execution artifacts.
 - Load large compiler programs faster, reuse prepared programs between requests, and track class memory accesses directly during traced OS execution. End-to-end comparisons cover cold processes, persistent workers, artifact generation and large PIEs. Performance on repeated storage and short native scenarios remains below the across-the-board 10× goal. [0.2 qualification](docs/release-0.2.md)
+- Accept omitted, null and empty attributes on historical Cairo 0 witnesses. OS and syscall hints share canonical field decoding and advance directly through multiblock witnesses.
+- Require positive output and artifact evidence or matching reviewed diagnostics in differential tests. CI exercises missing artifacts, timeouts, crashes and oracle disagreements.
+- Match Rust secure replay on reordered PIE memory and identical duplicates, including streamed input. Conflicting duplicates and missing cells fail validation.
+- Include the proposed byte-oriented Rust replay API, C header and wrapper examples. The shipped C API uses file paths. [Snapshot ABI proposal](docs/proposals/pie-snapshot/README.md)
 
 ## 0.1.0 (2026-11-27)
 
