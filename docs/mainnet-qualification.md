@@ -13,7 +13,7 @@ The manifest is JSON with `schema` equal to 1, `chain_id` equal to `SN_MAIN`, `c
 
 - `number`, `block_hash` and `state_root` from the mainnet header
 - `categories`, chosen from `cairo0-account`, `declare`, `revert` and `large-storage`, and `declared_compiler_versions` for declares
-- `witness`, `rust_pie` and `fold_receipt` artifacts
+- Recorded raw block `source`, `witness`, `rust_pie` and `fold_receipt` artifacts
 
 The state-fold receipt records `chain_id`, `number`, `block_hash`, `derived_root` and `header_root` for the sampled block. Its `l1_anchor` records the anchor block as `covered_through`, the Ethereum `transaction_hash`, and the independently computed `derived_root` and L1-observed `contract_root` at that anchor. A later anchor covers an earlier block through a verified contiguous fold. State roots and block hashes are hexadecimal Stark field elements. Archive and witness digests identify the exact bytes used.
 

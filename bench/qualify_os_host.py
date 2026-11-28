@@ -70,6 +70,7 @@ def qualify(manifest, trusted_digest, host):
             require(type(anchor["covered_through"]) is int and anchor["covered_through"] >= number and
                     re.fullmatch("0x[0-9a-fA-F]{64}", anchor["transaction_hash"]), "missing covering L1 anchor")
             require(felt(anchor["derived_root"]) == felt(anchor["contract_root"]), "L1 anchor root mismatch")
+            asset(root, case["source"])
             witness = asset(root, case["witness"])
             reference = asset(root, case["rust_pie"])
             output = Path(directory) / f"{number}.zip"
@@ -85,6 +86,7 @@ def qualify(manifest, trusted_digest, host):
                     reference.stat().st_size == output.stat().st_size == reply["bytes"],
                     f"complete Rust PIE differs at block {number}")
             results.append(dict(number=number, block_hash=case["block_hash"], categories=sorted(ids),
+                                source_sha256=case["source"]["sha256"], witness_sha256=case["witness"]["sha256"],
                                 bytes=reply["bytes"], sha256=checksum))
             output.unlink()
     require(categories == CATEGORIES and len(compiler_versions) >= 2, "incomplete workload or compiler coverage")

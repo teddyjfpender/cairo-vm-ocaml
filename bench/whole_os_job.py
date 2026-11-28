@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Measure two complete OS-host commands on identical recorded block source inputs."""
 import argparse
+from contextlib import suppress
 import json
+import os
+import signal
 from pathlib import Path
 import platform
 import random
@@ -20,8 +23,16 @@ def run_arm(command, archive, destination, scratch, expected, timeout):
     scratch.mkdir()
     usage = scratch / "usage.txt"
     start = time.monotonic_ns()
-    proc = subprocess.run(["/usr/bin/time", "-f", "%M", "-o", str(usage), "--", *args],
-                          cwd=scratch, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, timeout=timeout)
+    with subprocess.Popen(["/usr/bin/time", "-f", "%M", "-o", str(usage), "--", *args],
+                          cwd=scratch, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                          start_new_session=True) as proc:
+        try:
+            proc.wait(timeout=timeout)
+        finally:
+            if proc.poll() is None:
+                with suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
     elapsed = time.monotonic_ns() - start
     require(proc.returncode == 0, f"job exited {proc.returncode}")
     require(digest(destination) == expected, "published PIE differs from authenticated reference")
@@ -38,7 +49,7 @@ def measure(plan_file, rounds, seed, timeout, out):
     qualification = json.loads(asset(root, plan["qualification"]).read_bytes())
     require(qualification["manifest_sha256"] == source_hash and qualification["chain_id"] == "SN_MAIN",
             "qualification does not cover plan manifest")
-    qualified = {case["number"]: case["sha256"] for case in qualification["cases"]}
+    qualified = {case["number"]: case for case in qualification["cases"]}
     cases = plan["cases"]
     require(cases and len(cases) == len(qualified) and {case["number"] for case in cases} == qualified.keys(),
             "whole jobs must cover every qualified case exactly once")
@@ -58,6 +69,9 @@ def measure(plan_file, rounds, seed, timeout, out):
     rng = random.Random(seed)
     rows = []
     inputs = {case["number"]: asset(root, case["source"]) for case in cases}
+    for case in cases:
+        require(case["source"]["sha256"] == qualified[case["number"]]["source_sha256"],
+                "raw source differs from the qualified block")
     with tempfile.TemporaryDirectory(dir=out.parent) as work:
         temp = Path(work)
         for rnd in range(rounds):
@@ -70,7 +84,7 @@ def measure(plan_file, rounds, seed, timeout, out):
                     with tempfile.TemporaryDirectory(dir=temp) as run:
                         directory = Path(run)
                         sample = run_arm(commands[arm], inputs[number], directory / "block.zip",
-                                         directory / "work", qualified[number], timeout)
+                                         directory / "work", qualified[number]["sha256"], timeout)
                     rows.append(dict(round=rnd, number=number, arm=arm, **sample))
     totals = {arm: 0 for arm in arms}
     cases_summary = []
