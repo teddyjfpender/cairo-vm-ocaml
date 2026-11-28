@@ -26,6 +26,13 @@ jobs:
           python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/starknet-os.json" \
             --only genesis --only account --only storage-2048
 
+      - name: Reproduce virtual OS and aggregator outputs
+        run: |
+          gzip -dc test/fixtures/programs/virtual-os.json.gz > "$RUNNER_TEMP/virtual-os.json"
+          gzip -dc test/fixtures/programs/aggregator.json.gz > "$RUNNER_TEMP/aggregator.json"
+          python3 test/fixtures/os/check.py _build/default/bin/main.exe "$RUNNER_TEMP/virtual-os.json" --virtual-os
+          python3 test/fixtures/aggregator/check.py _build/default/bin/main.exe "$RUNNER_TEMP/aggregator.json" --only storage4
+
       - uses: actions/checkout@v4
         if: runner.os == 'Linux'
         with:

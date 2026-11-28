@@ -51,10 +51,11 @@ def embedded_program_digest(binary, program):
              mmap.mmap(executable.fileno(), 0, access=mmap.ACCESS_READ) as image:
             prefix = data[:1024]
             start = image.find(prefix)
+            chunk_size = 1024 * 1024
             while start >= 0:
                 if start + len(data) <= len(image) and all(
-                    image[start+i:start+min(i+1048576,len(data))] == data[i:i+1048576]
-                    for i in range(0, len(data), 1048576)
+                    image[start + i:start + min(i + chunk_size, len(data))] == data[i:i + chunk_size]
+                    for i in range(0, len(data), chunk_size)
                 ):
                     return hashlib.sha256(data).hexdigest()
                 start = image.find(prefix, start+1)

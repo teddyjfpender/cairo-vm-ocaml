@@ -47,6 +47,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("binary", type=Path)
     parser.add_argument("program", type=Path)
+    cases = ("storage4", "syscalls5", "storage-2048-blocks", "sequential-4096-updates", "scattered-4096-updates")
+    parser.add_argument("--only", action="append", choices=cases, help="check a named input (repeatable)")
     args = parser.parse_args()
-    for name in ("storage4", "syscalls5", "storage-2048-blocks", "sequential-4096-updates", "scattered-4096-updates"):
+    for name in args.only or cases:
         compare(args.binary.resolve(), args.program.resolve(), Path(__file__).with_name(name + ".json"))
