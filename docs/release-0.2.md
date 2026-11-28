@@ -8,7 +8,8 @@ Runtime `d884acc` runs the pinned Starknet OS, Virtual OS and aggregator from na
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Cold, full compiler, heavier concurrent load | 39.04 s | 4.97 s | 7.85× | **2.18×** | 19/70 |
 | Cold, full compiler, lighter concurrent load | 28.07 s | 2.84 s | 9.89× | **2.68×** | 19/70 |
-| Cold, compiler packed once | 36.27 s | 2.87 s | 12.65× | **3.76×** | 19/70 |
+| Cold, packed compiler, heavier concurrent load | 36.27 s | 2.87 s | 12.65× | **3.76×** | 19/70 |
+| Cold, packed compiler, lighter concurrent load | 28.22 s | 1.76 s | 16.07× | **4.48×** | 19/70 |
 | Warm, same witness after warmup | 6.02 s | 1.03 s | 5.83× | **5.30×** | 0/70 |
 | Warm, five shuffled traversals | 8.97 s | 1.48 s | 6.06× | **5.80×** | 3/70 |
 
@@ -23,7 +24,9 @@ Each workload gets one vote in the median. The suite-time ratio weights workload
 | 8,192 repeated storage invokes | checked sequencer | 7.592 s | 0.867 s | **8.87×** |
 | 4,096 scattered writes | checked sequencer | 14.270 s | 0.854 s | **16.79×** |
 | Five blocks of mixed syscalls, 64 rounds | checked sequencer | 9.046 s | 0.890 s | **10.18×** |
+| 8,192 STRK transfers, 16 recipients | checked sequencer | 10.465 s | 1.000 s | **10.40×** |
 | 4,096 STRK transfers, 4,096 recipients | checked sequencer | 17.299 s | 0.949 s | **18.19×** |
+| 9,216 transactions, including 6,144 reverts | checked sequencer | 7.902 s | 0.833 s | **9.47×** |
 | Virtual OS, 312 nested calls, public output | stock sequencer | 0.508 s | 0.085 s | **6.01×** |
 | Virtual OS, same witness, full PIE | stock sequencer | 3.078 s | 0.145 s | **21.30×** |
 | Aggregator, 2,048 blocks, public output | stock sequencer | 0.354 s | 0.036 s | **9.92×** |
@@ -37,9 +40,10 @@ Compared directly with the earlier traced-kernel checkpoint `e559436`, the final
 
 Both Linux and macOS CI passed on the runtime revision. The four historical production archives reproduced complete traces, relocated memory, output and archive contents. All seven native trace/memory cases matched Rust in every pair. Ten complete Stwo prover inputs reproduced the independently verified Rust digests, and all ten proof files passed the upstream verifier.
 
-[Release candidate measurements and reproduction commands](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/e384368af01d4fb98de12bacd0854cf3d895dad1/bench/results/v0.2.0-m4-max/candidate-d884acc) · [Hosted checks for this runtime](https://github.com/teddyjfpender/cairo-vm-ocaml/actions/runs/46110168349) · [Run the packaged OS worker](getting-started.md#run-successive-blocks-in-one-process)
+[Release candidate measurements and reproduction commands](https://github.com/teddyjfpender/cairo-vm-ocaml/tree/ff6fbc0bd363b99b2e9097b307b83cfa4eb02998/bench/results/v0.2.0-m4-max/candidate-d884acc) · [Hosted checks for this runtime](https://github.com/teddyjfpender/cairo-vm-ocaml/actions/runs/46110168349) · [Run the packaged OS worker](getting-started.md#run-successive-blocks-in-one-process)
 
 ## Earlier checkpoint
+
 The measurements below were taken at runtime checkpoint `e559436` on the M4 Max.
 
 ### Native Starknet OS
