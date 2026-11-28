@@ -60,7 +60,8 @@ let () =
       ("--proof_mode", Arg.Set proof, " run in canonical proof mode");
       ("--air_public_input", Arg.String (fun s -> air_public := Some s), "FILE  write the AIR public input (proof mode)");
       ("--air_private_input", Arg.String (fun s -> air_private := Some s), "FILE  write the AIR private input (proof mode)");
-      ("--pie_profile", Arg.Symbol (["fast"; "rust-3.2"], (function
+      ("--pie_profile", Arg.Symbol (["fast"; "rust-3.2"; "os-host-production"], (function
+          | "os-host-production" -> archive_profile := Pie_zip.Os_host_production
           | "rust-3.2" -> archive_profile := Pie_zip.Rust_3_2
           | _ -> archive_profile := Pie_zip.Fast)), "PROFILE  Cairo PIE archive encoding");
       ("--pie_compression_level", Arg.Int (fun n -> explicit_level := true; compression_level := n), "N  PIE compression, 0 stores and 1-9 deflate");
@@ -116,8 +117,9 @@ let () =
   if !disable_trace_padding && not !proof then usage_error "--disable_trace_padding requires --proof_mode";
   if Option.is_some !max_steps && (!proof || (not !from_pie && Option.is_none !os_hints)) then
     usage_error "--max_steps requires OS execution or PIE replay";
-  if !archive_profile = Pie_zip.Rust_3_2 && !explicit_level then
-    usage_error "--pie_profile rust-3.2 fixes the compression level";
+  if !archive_profile <> Pie_zip.Fast && !explicit_level then
+    usage_error "the selected --pie_profile fixes the compression level";
+  if !archive_profile = Pie_zip.Os_host_production then merge_extra := true;
   if !compression_level < 0 || !compression_level > 9 then usage_error "PIE compression level must be between 0 and 9";
   if !pie_out <> None && (!proof || !air_public <> None || !air_private <> None) then
     usage_error "--cairo_pie_output cannot be used with --proof_mode or the AIR inputs";

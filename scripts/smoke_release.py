@@ -67,6 +67,29 @@ def main():
             actual = hashlib.sha256(Path(request["output"]).read_bytes()).hexdigest()
             if json.loads(result)["sha256"] != expected_zip or actual != expected_zip:
                 raise SystemExit("installed Apollo host output differs from the complete merged Rust archive")
+        # Independent production publisher goldens on public stock-Rust PIEs.
+        # Apollo genesis fits one range. The account fixture crosses a four-range batch.
+        account = work / "account.json"
+        account.write_bytes(gzip.decompress((fixtures / "os/account.json.gz").read_bytes()))
+        for revision, image, hints, expected_hash in (
+            (job["revision"], compiled, historical, "3834cc9c97797b03b4df8a047d89b03d73c2716501915e1419e591b8aefb9551"),
+            ("ffdf1f9e1485753ccc35b860b24dfdc68fe8bf45", program, account, "b5b1ab081e167255c2280ecb91de23c7f6720af56cf73b42b0846904dc9f938a"),
+        ):
+            production = work / "production.zip"
+            request = dict(schema=1, revision=revision, program=str(image), witness=str(hints),
+                           output=str(production), publication="os-host-production")
+            raw = subprocess.check_output([package / "oxcairo-os-host", "v1"], input=json.dumps(request).encode())
+            if json.loads(raw)["sha256"] != expected_hash or hashlib.sha256(production.read_bytes()).hexdigest() != expected_hash:
+                raise SystemExit("complete production ZIP differs from the independent reference")
+            with zipfile.ZipFile(production) as archive_file:
+                if archive_file.testzip() is not None:
+                    raise SystemExit("production ZIP failed member validation")
+            previous = production.read_bytes()
+            request["limits"] = {"output_bytes": 64}
+            refused = subprocess.run([package / "oxcairo-os-host", "v1"], input=json.dumps(request).encode(),
+                                     capture_output=True)
+            if refused.returncode != 23 or json.loads(refused.stdout)["code"] != "output_limit" or production.read_bytes() != previous:
+                raise SystemExit("production output limit did not preserve the prior archive")
         env = {"HOME": directory, "PATH": "", "LC_ALL": "C"}
         pie = work / "genesis.zip"
         output = subprocess.check_output(
