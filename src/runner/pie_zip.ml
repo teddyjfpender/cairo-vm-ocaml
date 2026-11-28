@@ -1,5 +1,5 @@
 (* Emit ZIP32 headers after streaming each member. The compressed path uses
-   at most four independent 256 KiB DEFLATE blocks at a time. *)
+   at most eight independent 256 KiB DEFLATE blocks at a time. *)
 open Errors
 
 external crc_update : int -> bytes -> int -> int = "cvm_pie_crc_update"
@@ -8,7 +8,7 @@ external deflate : bytes -> int -> bytes -> int array -> int array -> int -> int
 
 let block_size = 256 * 1024
 let stride = block_size + block_size / 16 + 128
-let blocks = 4
+let blocks = 8
 
 type compressor = {
   input : bytes;
