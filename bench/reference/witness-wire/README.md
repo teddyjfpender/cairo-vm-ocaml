@@ -53,3 +53,15 @@ Six paired rounds used a clean integration of worker `4f7f256` and binary input 
 The forked VM inherits the prepared program. Class-cache entries created inside one child belong to that child. The guarded run shows mixed format results across block sequences. [Worker receipts](guarded-jobs.jsonl)
 
 Source encoding was timed independently using the Rust fixture adapter. Each path started from the same parsed native `serde_json::Value` model and wrote a new file through flush. The initial buffered parse of the saved JSON fixture took roughly 17 and 40 ms. That parse is outside both encoding and worker intervals. JSON encoding took **5.15 / 13.71 ms** on the small/large fixtures. The reference OXW1 encoder converted the tree into CBOR values and repacked every class. That took **15.48 / 36.63 ms**. These source figures describe the supplied fixture model; native node witness assembly has a different starting representation. [Source receipts](guarded-source.jsonl)
+## Direct source encoding
+
+The Rust producer now defaults to a writer that emits wire bytes directly from the already materialized witness. It writes length-delimited class maps and words into the output buffer, validates each hex nibble, and checks field range. The independent cbor4ii encoder remains available with `OXCAIRO_WITNESS_FORMAT=oxw`.
+
+Six fresh, rotating three-way rounds repeated the source comparison. Each format started with the same in-memory witness value and wrote a new file through flush. No class or serialization cache was prepopulated.
+
+| Mainnet block | JSON writer | Reference OXW1 writer | Direct OXW1 writer |
+| ---: | ---: | ---: | ---: |
+| 16,000,001 | 6.51 ms | 19.12 ms | **3.09 ms** |
+| 16,149,540 | 15.95 ms | 45.50 ms | **7.52 ms** |
+
+The direct encoder took about 47% of JSON encoding time on both blocks. Every binary result matched the retained OxCaml frame byte for byte. The fixture-source JSON parse medians were 18.6–18.9 ms for the smaller block and 43.3–43.9 ms for the larger one. Parsing is excluded from every encoding interval. These changes improve source serialization; the guarded worker still receives the same wire bytes. [Raw encoding receipts](direct-source.jsonl)

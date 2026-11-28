@@ -1,5 +1,6 @@
 //! Independent OXW1 producer for integral reference fixtures.
 //! A native host can build the same ordered values from its witness directly.
+mod direct;
 use cbor4ii::core::{enc::Encode, utils::BufWriter, Value};
 use serde_json::Value as Json;
 use std::{
@@ -90,7 +91,8 @@ fn main() -> Result<()> {
         return Err("usage: witness-interop INPUT.json NEW_OUTPUT.oxw".into());
     }
     let file = File::open(&args[0])?;
-    if file.metadata()?.len() > MAX_BYTES as u64 {
+    let source_size = file.metadata()?.len();
+    if source_size > MAX_BYTES as u64 {
         return Err("fixture too large".into());
     }
     let timer = std::time::Instant::now();
@@ -99,9 +101,15 @@ fn main() -> Result<()> {
     let encoding = std::time::Instant::now();
     let output = File::create_new(&args[1])?;
     let mut output = FileWriter::new(output);
-    let format = env::var("OXCAIRO_WITNESS_FORMAT").unwrap_or_else(|_| "oxw".to_string());
+    let format = env::var("OXCAIRO_WITNESS_FORMAT").unwrap_or_else(|_| "direct".to_string());
     match format.as_str() {
         "json" => serde_json::to_writer(&mut output, &source)?,
+        "direct" => {
+            let payload = direct::encode(&source, source_size as usize * 3 / 5)?;
+            output.write_all(b"OXW1")?;
+            output.write_all(&u32::try_from(payload.len())?.to_be_bytes())?;
+            output.write_all(&payload)?;
+        }
         "oxw" => {
             let mut doc = cbor(source)?;
             frame_classes(&mut doc, "compiled_classes", true)?;
@@ -114,7 +122,7 @@ fn main() -> Result<()> {
             output.write_all(&u32::try_from(payload.len())?.to_be_bytes())?;
             output.write_all(&payload)?;
         }
-        _ => return Err("expected json or oxw".into()),
+        _ => return Err("expected json, direct or oxw".into()),
     }
     output.flush()?;
     let encode_ns = encoding.elapsed().as_nanos() as u64;
